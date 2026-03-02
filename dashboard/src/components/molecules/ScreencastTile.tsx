@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
 interface Props {
-  instanceId: string
+  instancePort: string
   tabId: string
   label: string
   url: string
@@ -13,7 +13,7 @@ interface Props {
 type Status = 'connecting' | 'streaming' | 'error'
 
 export default function ScreencastTile({
-  instanceId,
+  instancePort,
   tabId,
   label,
   url,
@@ -34,9 +34,8 @@ export default function ScreencastTile({
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // Connect to screencast WebSocket
-    const wsProto = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const wsUrl = `${wsProto}//${window.location.host}/instances/${instanceId}/screencast?tabId=${encodeURIComponent(tabId)}&quality=${quality}&maxWidth=${maxWidth}&fps=${fps}`
+    // Connect directly to instance's screencast WebSocket
+    const wsUrl = `ws://localhost:${instancePort}/screencast?tabId=${encodeURIComponent(tabId)}&quality=${quality}&maxWidth=${maxWidth}&fps=${fps}`
 
     const socket = new WebSocket(wsUrl)
     socket.binaryType = 'arraybuffer'
@@ -83,7 +82,7 @@ export default function ScreencastTile({
       socket.close()
       socketRef.current = null
     }
-  }, [instanceId, tabId, quality, maxWidth, fps])
+  }, [instancePort, tabId, quality, maxWidth, fps])
 
   const statusColor =
     status === 'streaming'

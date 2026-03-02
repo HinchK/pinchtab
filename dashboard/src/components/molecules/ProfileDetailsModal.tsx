@@ -221,7 +221,7 @@ export default function ProfileDetailsModal({
                     {tabs.map((tab) => (
                       <ScreencastTile
                         key={tab.id}
-                        instanceId={instance.id}
+                        instancePort={instance.port}
                         tabId={tab.id}
                         label={tab.title?.slice(0, 20) || tab.id.slice(0, 8)}
                         url={tab.url}
