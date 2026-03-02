@@ -153,17 +153,9 @@ export default function MonitoringPage() {
   const selectedTabs = selectedId ? currentTabs[selectedId] || [] : [];
   const runningInstances = instances.filter((i) => i.status === "running");
 
-  if (instances.length === 0) {
-    return (
-      <div className="flex flex-1 items-center justify-center p-4">
-        <EmptyState title="Waiting for instances..." icon="📡" />
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-1 flex-col gap-4 overflow-auto p-4">
-      {/* Chart */}
+      {/* Chart - always show, even with no instances (displays server metrics) */}
       <TabsChart
         data={tabsChartData}
         memoryData={memoryEnabled ? memoryChartData : undefined}
@@ -176,79 +168,91 @@ export default function MonitoringPage() {
         onSelectInstance={setSelectedId}
       />
 
-      {/* Bottom section */}
-      <div className="flex flex-1 gap-4 overflow-hidden">
-        {/* Instance list */}
-        <div className="w-64 shrink-0 overflow-auto rounded-lg border border-border-subtle bg-bg-surface">
-          <div className="border-b border-border-subtle p-3">
-            <h3 className="text-sm font-semibold text-text-secondary">
-              Instances ({instances.length})
-            </h3>
-          </div>
-          <div className="p-2">
-            {instances.map((inst) => (
-              <InstanceListItem
-                key={inst.id}
-                instance={inst}
-                tabCount={currentTabs[inst.id]?.length ?? 0}
-                memoryMB={memoryEnabled ? currentMemory[inst.id] : undefined}
-                selected={selectedId === inst.id}
-                onClick={() => setSelectedId(inst.id)}
-              />
-            ))}
-          </div>
+      {instances.length === 0 && (
+        <div className="flex flex-1 items-center justify-center">
+          <EmptyState
+            title="No instances yet"
+            description="Start a profile to see instance data"
+            icon="📡"
+          />
         </div>
+      )}
 
-        {/* Selected instance details */}
-        <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-border-subtle bg-bg-surface">
-          {selectedInstance ? (
-            <>
-              <div className="flex items-center justify-between border-b border-border-subtle p-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-text-primary">
-                    {selectedInstance.profileName}
-                  </h3>
-                  <div className="text-xs text-text-muted">
-                    Port {selectedInstance.port} ·{" "}
-                    {selectedInstance.headless ? "Headless" : "Headed"}
-                  </div>
-                </div>
-                {selectedInstance.status === "running" && (
-                  <Button
-                    size="sm"
-                    variant="danger"
-                    onClick={() => handleStop(selectedInstance.id)}
-                  >
-                    Stop
-                  </Button>
-                )}
-              </div>
-
-              {/* Tabs list */}
-              <div className="flex-1 overflow-auto p-3">
-                <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">
-                  Open Tabs ({selectedTabs.length})
-                </h4>
-                {selectedTabs.length === 0 ? (
-                  <div className="py-8 text-center text-sm text-text-muted">
-                    No tabs open
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {selectedTabs.map((tab) => (
-                      <TabItem key={tab.id} tab={tab} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
-              Select an instance to view details
+      {/* Bottom section - only show when instances exist */}
+      {instances.length > 0 && (
+        <div className="flex flex-1 gap-4 overflow-hidden">
+          {/* Instance list */}
+          <div className="w-64 shrink-0 overflow-auto rounded-lg border border-border-subtle bg-bg-surface">
+            <div className="border-b border-border-subtle p-3">
+              <h3 className="text-sm font-semibold text-text-secondary">
+                Instances ({instances.length})
+              </h3>
             </div>
-          )}
+            <div className="p-2">
+              {instances.map((inst) => (
+                <InstanceListItem
+                  key={inst.id}
+                  instance={inst}
+                  tabCount={currentTabs[inst.id]?.length ?? 0}
+                  memoryMB={memoryEnabled ? currentMemory[inst.id] : undefined}
+                  selected={selectedId === inst.id}
+                  onClick={() => setSelectedId(inst.id)}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Selected instance details */}
+          <div className="flex flex-1 flex-col overflow-hidden rounded-lg border border-border-subtle bg-bg-surface">
+            {selectedInstance ? (
+              <>
+                <div className="flex items-center justify-between border-b border-border-subtle p-3">
+                  <div>
+                    <h3 className="text-sm font-semibold text-text-primary">
+                      {selectedInstance.profileName}
+                    </h3>
+                    <div className="text-xs text-text-muted">
+                      Port {selectedInstance.port} ·{" "}
+                      {selectedInstance.headless ? "Headless" : "Headed"}
+                    </div>
+                  </div>
+                  {selectedInstance.status === "running" && (
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      onClick={() => handleStop(selectedInstance.id)}
+                    >
+                      Stop
+                    </Button>
+                  )}
+                </div>
+
+                {/* Tabs list */}
+                <div className="flex-1 overflow-auto p-3">
+                  <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-text-muted">
+                    Open Tabs ({selectedTabs.length})
+                  </h4>
+                  {selectedTabs.length === 0 ? (
+                    <div className="py-8 text-center text-sm text-text-muted">
+                      No tabs open
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {selectedTabs.map((tab) => (
+                        <TabItem key={tab.id} tab={tab} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
+                Select an instance to view details
+              </div>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }
