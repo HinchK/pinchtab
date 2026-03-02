@@ -99,7 +99,7 @@ export default function ScreencastTile({
           <span className="font-mono text-xs text-text-secondary">{label}</span>
           <div className={`h-2 w-2 rounded-full ${statusColor}`} />
         </div>
-        <span className="max-w-[200px] truncate text-xs text-text-muted">{url}</span>
+        <span className="max-w-50 truncate text-xs text-text-muted">{url}</span>
       </div>
 
       {/* Canvas */}

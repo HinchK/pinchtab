@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Modal, Button, Input } from '../atoms'
 import ScreencastTile from './ScreencastTile'
+import TabItem from './TabItem'
 import type { Profile, Instance, InstanceTab, Agent } from '../../generated/types'
 import * as api from '../../services/api'
 
@@ -256,12 +257,7 @@ export default function ProfileDetailsModal({
               ) : (
                 <div className="space-y-1">
                   {tabs.map((tab) => (
-                    <div key={tab.id} className="border-b border-border-subtle py-2">
-                      <div className="truncate text-sm text-text-primary">
-                        {tab.title || 'Untitled'}
-                      </div>
-                      <div className="truncate text-xs text-text-muted">{tab.url}</div>
-                    </div>
+                    <TabItem key={tab.id} tab={tab} compact />
                   ))}
                 </div>
               )}

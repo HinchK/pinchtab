@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useAppStore } from '../stores/useAppStore'
-import { Card, EmptyState, Badge, Button } from '../components/atoms'
-import TabsChart from '../components/molecules/TabsChart'
+import { EmptyState, Button } from '../components/atoms'
+import { TabsChart, InstanceListItem, TabItem } from '../components/molecules'
 import type { InstanceTab } from '../generated/types'
 import * as api from '../services/api'
 
@@ -128,44 +128,13 @@ export default function MonitoringPage() {
           </div>
           <div className="p-2">
             {instances.map((inst) => (
-              <button
+              <InstanceListItem
                 key={inst.id}
+                instance={inst}
+                tabCount={currentTabs[inst.id]?.length ?? 0}
+                selected={selectedId === inst.id}
                 onClick={() => setSelectedId(inst.id)}
-                className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-all ${
-                  selectedId === inst.id
-                    ? 'bg-primary/10 border border-primary'
-                    : 'border border-transparent hover:bg-bg-elevated'
-                }`}
-              >
-                <div
-                  className={`h-2 w-2 rounded-full ${
-                    inst.status === 'running'
-                      ? 'bg-success'
-                      : inst.status === 'error'
-                        ? 'bg-destructive'
-                        : 'bg-text-muted'
-                  }`}
-                />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium text-text-primary">
-                    {inst.profileName}
-                  </div>
-                  <div className="text-xs text-text-muted">
-                    :{inst.port} · {currentTabs[inst.id]?.length ?? 0} tabs
-                  </div>
-                </div>
-                <Badge
-                  variant={
-                    inst.status === 'running'
-                      ? 'success'
-                      : inst.status === 'error'
-                        ? 'danger'
-                        : 'default'
-                  }
-                >
-                  {inst.status}
-                </Badge>
-              </button>
+              />
             ))}
           </div>
         </div>
@@ -207,14 +176,7 @@ export default function MonitoringPage() {
                 ) : (
                   <div className="space-y-1">
                     {selectedTabs.map((tab) => (
-                      <Card key={tab.id} className="p-2">
-                        <div className="truncate text-sm text-text-primary">
-                          {tab.title || 'Untitled'}
-                        </div>
-                        <div className="truncate text-xs text-text-muted">
-                          {tab.url}
-                        </div>
-                      </Card>
+                      <TabItem key={tab.id} tab={tab} />
                     ))}
                   </div>
                 )}
