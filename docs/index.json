@@ -28,7 +28,8 @@
     "guides/agent-optimization.md",
     "guides/memory-monitoring.md",
     "guides/data-storage.md",
-    "guides/raspberry-pi.md"
+    "guides/raspberry-pi.md",
+    "guides/ai-code-review.md"
   ],
   "proposals": [
     "proposals/default-instance.md",
