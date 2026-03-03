@@ -12,13 +12,34 @@ import (
 )
 
 // userConfigDir returns the OS-appropriate app config directory.
+// For backwards compatibility, if ~/.pinchtab exists and the new location
+// doesn't, it returns ~/.pinchtab.
 func userConfigDir() string {
+	h, _ := os.UserHomeDir()
+	legacyPath := filepath.Join(h, ".pinchtab")
+
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		h, _ := os.UserHomeDir()
-		return filepath.Join(h, ".pinchtab")
+		return legacyPath
 	}
-	return filepath.Join(configDir, "pinchtab")
+
+	newPath := filepath.Join(configDir, "pinchtab")
+
+	// Backwards compatibility: if legacy location exists and new doesn't, use legacy
+	if dirExists(legacyPath) && !dirExists(newPath) {
+		return legacyPath
+	}
+
+	return newPath
+}
+
+// dirExists checks if a directory exists
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 type ActionTracker struct {

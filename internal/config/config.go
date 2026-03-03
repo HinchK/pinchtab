@@ -72,7 +72,11 @@ func envBoolOr(key string, fallback bool) bool {
 	}
 }
 
+// homeDir returns the user's home directory, checking $HOME first for container compatibility
 func homeDir() string {
+	if home := os.Getenv("HOME"); home != "" {
+		return home
+	}
 	h, _ := os.UserHomeDir()
 	return h
 }
@@ -80,13 +84,41 @@ func homeDir() string {
 // userConfigDir returns the OS-appropriate app config directory:
 // - macOS: ~/Library/Application Support/pinchtab
 // - Linux: ~/.config/pinchtab (or $XDG_CONFIG_HOME/pinchtab)
-// Falls back to ~/.pinchtab if os.UserConfigDir() fails.
+// - Windows: %APPDATA%\pinchtab
+//
+// For backwards compatibility, if ~/.pinchtab exists and the new location
+// doesn't, it returns ~/.pinchtab (allowing seamless migration).
 func userConfigDir() string {
+	home := homeDir()
+	legacyPath := filepath.Join(home, ".pinchtab")
+
+	// Try to get OS-appropriate config directory
 	configDir, err := os.UserConfigDir()
 	if err != nil {
-		return filepath.Join(homeDir(), ".pinchtab")
+		// Fallback to legacy location if UserConfigDir fails
+		return legacyPath
 	}
-	return filepath.Join(configDir, "pinchtab")
+
+	newPath := filepath.Join(configDir, "pinchtab")
+
+	// Backwards compatibility: if legacy location exists and new doesn't, use legacy
+	legacyExists := dirExists(legacyPath)
+	newExists := dirExists(newPath)
+
+	if legacyExists && !newExists {
+		return legacyPath
+	}
+
+	return newPath
+}
+
+// dirExists checks if a directory exists
+func dirExists(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
 }
 
 func (c *RuntimeConfig) ListenAddr() string {
