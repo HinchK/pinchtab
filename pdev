@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # pdev — Pinchtab developer toolkit
-# Usage: pdev [command]    Run a command directly
-#        pdev              Interactive picker
+# Usage: pdev [command] [sub]    Run a command directly
+#        pdev                    Interactive picker
 
 cd "$(dirname "$0")"
 
@@ -11,18 +11,21 @@ BOLD=$'\033[1m'
 ACCENT=$'\033[38;2;251;191;36m'
 MUTED=$'\033[38;2;90;100;128m'
 SUCCESS=$'\033[38;2;0;229;204m'
+ERROR=$'\033[38;2;230;57;70m'
 NC=$'\033[0m'
 
 # ── Commands ─────────────────────────────────────────────────────────
-# name:emoji:description:script
+# name:emoji:description
 COMMANDS=(
-  "check:🧪:Run pre-push checks (format, vet, build, test, lint):scripts/check.sh"
-  "dev:🚀:Build & run with dashboard:scripts/dev.sh"
-  "doctor:🩺:Verify & setup dev environment:scripts/doctor.sh"
-  "dashboard:📦:Build React dashboard:scripts/build-dashboard.sh"
-  "security:🔒:Run gosec security scan:scripts/check-gosec.sh"
-  "docs:📖:Check docs JSON structure:scripts/check-docs-json.sh"
-  "hooks:🪝:Install git hooks:scripts/install-hooks.sh"
+  "check:🧪:Run all checks (Go + Dashboard)"
+  "check go:🧪:Run Go checks only (format, vet, build, test, lint)"
+  "check dashboard:🧪:Run Dashboard checks only (prettier, typecheck, vitest)"
+  "dev:🚀:Build & run with dashboard"
+  "doctor:🩺:Verify & setup dev environment"
+  "dashboard:📦:Build React dashboard"
+  "security:🔒:Run gosec security scan"
+  "docs:📖:Check docs JSON structure"
+  "hooks:🪝:Install git hooks"
 )
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -32,34 +35,61 @@ show_help() {
   echo "  ${ACCENT}${BOLD}🦀 Pinchtab Dev${NC}"
   echo ""
   for cmd in "${COMMANDS[@]}"; do
-    IFS=':' read -r name emoji desc script <<< "$cmd"
-    printf "  ${SUCCESS}%s${NC}  ${BOLD}%-12s${NC} ${MUTED}%s${NC}\n" "$emoji" "$name" "$desc"
+    IFS=':' read -r name emoji desc <<< "$cmd"
+    printf "  ${SUCCESS}%s${NC}  ${BOLD}%-20s${NC} ${MUTED}%s${NC}\n" "$emoji" "$name" "$desc"
   done
   echo ""
-  echo "  ${MUTED}Usage: pdev [command]${NC}"
+  echo "  ${MUTED}Usage: pdev [command] [sub]${NC}"
   echo ""
 }
 
 run_command() {
   local target="$1"
-  for cmd in "${COMMANDS[@]}"; do
-    IFS=':' read -r name emoji desc script <<< "$cmd"
-    if [ "$name" = "$target" ]; then
+
+  echo ""
+
+  case "$target" in
+    "check")
+      echo "  ${ACCENT}${BOLD}🧪 Running all checks (Go + Dashboard)${NC}"
       echo ""
-      echo "  ${ACCENT}${BOLD}$emoji $desc${NC}"
+      bash scripts/check.sh
+      local go_exit=$?
       echo ""
-      exec bash "$script"
-    fi
-  done
-  echo "  Unknown command: $target"
-  show_help
-  exit 1
+      echo "  ${ACCENT}${BOLD}🧪 Dashboard checks${NC}"
+      echo ""
+      bash scripts/check-dashboard.sh
+      local dash_exit=$?
+      if [ $go_exit -ne 0 ] || [ $dash_exit -ne 0 ]; then exit 1; fi
+      exit 0
+      ;;
+    "check go")
+      echo "  ${ACCENT}${BOLD}🧪 Go checks${NC}"
+      echo ""
+      exec bash scripts/check.sh
+      ;;
+    "check dashboard")
+      echo "  ${ACCENT}${BOLD}🧪 Dashboard checks${NC}"
+      echo ""
+      exec bash scripts/check-dashboard.sh
+      ;;
+    "dev")          exec bash scripts/dev.sh ;;
+    "doctor")       exec bash scripts/doctor.sh ;;
+    "dashboard")    exec bash scripts/build-dashboard.sh ;;
+    "security")     exec bash scripts/check-gosec.sh ;;
+    "docs")         exec bash scripts/check-docs-json.sh ;;
+    "hooks")        exec bash scripts/install-hooks.sh ;;
+    *)
+      echo "  ${ERROR}Unknown command: $target${NC}"
+      show_help
+      exit 1
+      ;;
+  esac
 }
 
 pick_with_gum() {
   local options=()
   for cmd in "${COMMANDS[@]}"; do
-    IFS=':' read -r name emoji desc script <<< "$cmd"
+    IFS=':' read -r name emoji desc <<< "$cmd"
     options+=("$emoji  $name — $desc")
   done
 
@@ -70,9 +100,9 @@ pick_with_gum() {
     --cursor.foreground "#00e5cc" \
     --selected.foreground "#00e5cc")
 
-  # Extract command name from choice
+  # Extract command name from choice (between emoji+spaces and " —")
   local picked
-  picked=$(echo "$choice" | sed 's/^.*  //' | cut -d' ' -f1)
+  picked=$(echo "$choice" | sed 's/^.*  //' | sed 's/ —.*//')
   run_command "$picked"
 }
 
@@ -84,8 +114,8 @@ pick_with_select() {
   local names=()
   local i=1
   for cmd in "${COMMANDS[@]}"; do
-    IFS=':' read -r name emoji desc script <<< "$cmd"
-    printf "  ${MUTED}[%d]${NC} ${SUCCESS}%s${NC}  ${BOLD}%-12s${NC} %s\n" "$i" "$emoji" "$name" "$desc"
+    IFS=':' read -r name emoji desc <<< "$cmd"
+    printf "  ${MUTED}[%d]${NC} ${SUCCESS}%s${NC}  ${BOLD}%-20s${NC} %s\n" "$i" "$emoji" "$name" "$desc"
     names+=("$name")
     i=$((i + 1))
   done
@@ -104,10 +134,17 @@ pick_with_select() {
 
 # ── Main ─────────────────────────────────────────────────────────────
 
-# Direct command
+# Direct command with optional subcommand
 if [ $# -gt 0 ]; then
   case "$1" in
     -h|--help|help) show_help; exit 0 ;;
+    check)
+      if [ $# -gt 1 ]; then
+        run_command "check $2"
+      else
+        run_command "check"
+      fi
+      ;;
     *) run_command "$1" ;;
   esac
 fi
