@@ -84,6 +84,7 @@ jobs:
           BRIDGE_NO_RESTORE: "true"
           PINCHTAB_TEST_PORT: "19867"
           PINCHTAB_TEST_RETRY: "true"
+          PINCHTAB_ALLOW_EVALUATE: "true"
 
       - name: 📋 Add summary
         if: always()
@@ -147,6 +148,7 @@ jobs:
           BRIDGE_NO_RESTORE: "true"
           PINCHTAB_TEST_PORT: "19868"
           PINCHTAB_TEST_RETRY: "true"
+          PINCHTAB_ALLOW_EVALUATE: "true"
 
       - name: 📋 Add summary
         if: always()
