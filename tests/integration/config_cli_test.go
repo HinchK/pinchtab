@@ -14,10 +14,16 @@ import (
 // TestConfigCLI_Init tests `pinchtab config init`
 func TestConfigCLI_Init(t *testing.T) {
 	tmpDir := t.TempDir()
-	configPath := filepath.Join(tmpDir, "config.json")
+	// config init writes to userConfigDir() which is $HOME/.pinchtab on macOS (legacy path)
+	// or ~/Library/Application Support/pinchtab (new path). Create the legacy dir so it's used.
+	legacyDir := filepath.Join(tmpDir, ".pinchtab")
+	if err := os.MkdirAll(legacyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(legacyDir, "config.json")
 
 	cmd := exec.Command(server.BinaryPath, "config", "init")
-	cmd.Env = append(filterTestEnv(), "PINCHTAB_CONFIG="+configPath, "HOME="+tmpDir)
+	cmd.Env = append(filterTestEnv(), "HOME="+tmpDir)
 
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -27,7 +33,7 @@ func TestConfigCLI_Init(t *testing.T) {
 	// Verify file was created
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		t.Fatalf("config file not created: %v", err)
+		t.Fatalf("config file not created at %s: %v\nOutput: %s", configPath, err, out)
 	}
 
 	// Verify it's valid nested JSON

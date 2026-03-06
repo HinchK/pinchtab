@@ -25,13 +25,25 @@ const (
 // ServerConfig mirrors key fields from internal/config.RuntimeConfig for test setup.
 // Only includes fields commonly overridden in tests.
 type ServerConfig struct {
-	Port              string // default: "19867"
+	// Server
+	Port string // default: "19867"
+
+	// Chrome
 	Headless          bool   // default: true
 	Stealth           string // default: "light"
-	TabEvictionPolicy string // default: "" (uses config default: "reject")
-	Strategy          string // default: "" (uses config default: "simple")
-	AllocationPolicy  string // default: "" (uses config default: "fcfs")
 	MaxTabs           int    // default: 0 (uses config default: 20)
+	TabEvictionPolicy string // default: "" (uses config default: "reject")
+
+	// Security - all default to true for tests (unlike production defaults)
+	AllowEvaluate   bool // default: true (tests need this)
+	AllowMacro      bool // default: false
+	AllowScreencast bool // default: false
+	AllowDownload   bool // default: false
+	AllowUpload     bool // default: false
+
+	// Orchestrator
+	Strategy         string // default: "" (uses config default: "simple")
+	AllocationPolicy string // default: "" (uses config default: "fcfs")
 }
 
 func DefaultConfig() ServerConfig {
@@ -40,9 +52,10 @@ func DefaultConfig() ServerConfig {
 		port = "19867"
 	}
 	return ServerConfig{
-		Port:     port,
-		Headless: true,
-		Stealth:  "light",
+		Port:          port,
+		Headless:      true,
+		Stealth:       "light",
+		AllowEvaluate: true, // tests need evaluate for assertions
 	}
 }
 
@@ -102,6 +115,8 @@ func StartServer(cfg ServerConfig) (*Server, error) {
 
 	// Strip existing BRIDGE_*/PINCHTAB_* to avoid test pollution from host config
 	env := filterEnv(os.Environ(), "BRIDGE_", "PINCHTAB_")
+
+	// Core server config
 	env = append(env,
 		"PINCHTAB_PORT="+cfg.Port,
 		"PINCHTAB_HEADLESS="+boolStr(cfg.Headless),
@@ -110,7 +125,17 @@ func StartServer(cfg ServerConfig) (*Server, error) {
 		"PINCHTAB_STATE_DIR="+s.StateDir,
 		"PINCHTAB_PROFILE_DIR="+s.ProfileDir,
 	)
-	// Optional config overrides
+
+	// Security flags from ServerConfig
+	env = append(env,
+		"PINCHTAB_ALLOW_EVALUATE="+boolStr(cfg.AllowEvaluate),
+		"PINCHTAB_ALLOW_MACRO="+boolStr(cfg.AllowMacro),
+		"PINCHTAB_ALLOW_SCREENCAST="+boolStr(cfg.AllowScreencast),
+		"PINCHTAB_ALLOW_DOWNLOAD="+boolStr(cfg.AllowDownload),
+		"PINCHTAB_ALLOW_UPLOAD="+boolStr(cfg.AllowUpload),
+	)
+
+	// Optional config overrides (only set if non-default)
 	if cfg.TabEvictionPolicy != "" {
 		env = append(env, "PINCHTAB_TAB_EVICTION_POLICY="+cfg.TabEvictionPolicy)
 	}
@@ -123,20 +148,10 @@ func StartServer(cfg ServerConfig) (*Server, error) {
 	if cfg.MaxTabs > 0 {
 		env = append(env, fmt.Sprintf("PINCHTAB_MAX_TABS=%d", cfg.MaxTabs))
 	}
+
+	// Chrome binary from host (for CI environments)
 	if bin := os.Getenv("CHROME_BINARY"); bin != "" {
 		env = append(env, "CHROME_BINARY="+bin)
-	}
-	// Pass through feature gates for integration tests
-	for _, gate := range []string{
-		"PINCHTAB_ALLOW_EVALUATE",
-		"PINCHTAB_ALLOW_MACRO",
-		"PINCHTAB_ALLOW_SCREENCAST",
-		"PINCHTAB_ALLOW_DOWNLOAD",
-		"PINCHTAB_ALLOW_UPLOAD",
-	} {
-		if v := os.Getenv(gate); v != "" {
-			env = append(env, gate+"="+v)
-		}
 	}
 
 	s.cmd = exec.Command(s.BinaryPath) // #nosec G204 -- BinaryPath is from os.MkdirTemp, not user input
