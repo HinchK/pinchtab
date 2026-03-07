@@ -129,6 +129,10 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install tygo
+        if: needs.changes.outputs.go == 'true'
+        run: go install github.com/gzuidhof/tygo@latest
+
       - name: Build dashboard
         if: needs.changes.outputs.go == 'true'
         run: |

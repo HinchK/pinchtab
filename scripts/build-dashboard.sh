@@ -4,6 +4,15 @@ set -e
 
 cd "$(dirname "$0")/.."
 
+echo "📦 Building React dashboard..."
+cd dashboard
+
+# Install deps if needed (must happen before prettier)
+if [ ! -d "node_modules" ]; then
+  echo "📥 Installing dependencies..."
+  bun install --frozen-lockfile
+fi
+
 # Generate TypeScript types from Go structs (ensures types are in sync)
 TYGO="${GOPATH:-$HOME/go}/bin/tygo"
 if [ -x "$TYGO" ]; then
@@ -21,19 +30,8 @@ else
 fi
 
 # Normalize tygo output with prettier so generation doesn't dirty git
-if [ -f "dashboard/src/generated/types.ts" ]; then
-  cd dashboard
+if [ -f "src/generated/types.ts" ]; then
   npx prettier --write src/generated/types.ts 2>/dev/null || true
-  cd ..
-fi
-
-echo "📦 Building React dashboard..."
-cd dashboard
-
-# Install deps if needed
-if [ ! -d "node_modules" ]; then
-  echo "📥 Installing dependencies..."
-  bun install --frozen-lockfile
 fi
 
 bun run build

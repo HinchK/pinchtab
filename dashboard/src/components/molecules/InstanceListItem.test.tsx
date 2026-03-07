@@ -12,6 +12,7 @@ const mockInstance: Instance = {
   headless: false,
   status: "running",
   startTime: new Date().toISOString(),
+  attached: false,
 };
 
 describe("InstanceListItem", () => {

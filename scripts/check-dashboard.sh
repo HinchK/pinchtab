@@ -46,6 +46,22 @@ if [ ! -d "node_modules" ]; then
   $RUN install 2>&1 | tail -1
 fi
 
+# Check tygo types are in sync (if tygo is installed)
+TYGO="${GOPATH:-$HOME/go}/bin/tygo"
+if [ -x "$TYGO" ] || command -v tygo &>/dev/null; then
+  section "Types (tygo)"
+  TYGO_CMD="${TYGO:-tygo}"
+  if [ -x "$TYGO" ]; then TYGO_CMD="$TYGO"; fi
+  $TYGO_CMD generate 2>/dev/null
+  npx prettier --write src/generated/types.ts 2>/dev/null || true
+  if git diff --quiet -- src/generated/types.ts 2>/dev/null; then
+    ok "Types in sync"
+  else
+    fail "Types out of sync" "Run: cd dashboard && tygo generate && npx prettier --write src/generated/types.ts"
+    exit 1
+  fi
+fi
+
 section "TypeScript"
 if $RUN run typecheck 2>&1; then
   ok "Type check"

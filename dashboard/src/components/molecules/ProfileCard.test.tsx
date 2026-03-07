@@ -22,6 +22,7 @@ const mockRunningInstance: Instance = {
   headless: false,
   status: "running",
   startTime: new Date().toISOString(),
+  attached: false,
 };
 
 const mockErrorInstance: Instance = {
