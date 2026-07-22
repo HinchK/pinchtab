@@ -265,17 +265,12 @@ func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor Action
 	}
 }
 
-// trySemantic executes semantic /find-driven action planning first.
-// For high-level intents it runs a small multi-step semantic flow.
 func (as *AutoSolver) trySemantic(ctx context.Context, page Page, executor ActionExecutor, intent *Intent) (bool, *AttemptEntry) {
 	entry := &AttemptEntry{Solver: "semantic"}
 	semanticStart := time.Now()
 
 	if as.semantic == nil {
-		entry.Status = StatusSkipped
-		entry.Error = "semantic engine not configured"
-		entry.Duration = time.Since(semanticStart)
-		return false, entry
+		return as.finishSemantic(entry, semanticStart, StatusSkipped, "semantic engine not configured")
 	}
 
 	semanticCtx, cancel := context.WithTimeout(ctx, as.config.SolverTimeout)
@@ -292,8 +287,7 @@ func (as *AutoSolver) trySemantic(ctx context.Context, page Page, executor Actio
 
 	for step := 0; step < stepBudget; step++ {
 		if step > 0 {
-			nextIntent, detectErr := as.detectIntent(semanticCtx, page)
-			if detectErr != nil {
+			if nextIntent, detectErr := as.detectIntent(semanticCtx, page); detectErr != nil {
 				slog.Debug("autosolver: semantic step intent refresh failed",
 					"step", step+1,
 					"error", detectErr)
@@ -303,76 +297,81 @@ func (as *AutoSolver) trySemantic(ctx context.Context, page Page, executor Actio
 		}
 
 		if intentTypeOf(currentIntent) == IntentNormal {
-			entry.Status = StatusSolved
-			entry.Duration = time.Since(semanticStart)
-			return true, entry
+			return as.finishSemantic(entry, semanticStart, StatusSolved, "")
 		}
 
-		suggested, err := as.semantic.SuggestAction(semanticCtx, page, currentIntent)
+		action, err := as.planSemanticStep(semanticCtx, page, currentIntent, step)
 		if err != nil {
-			entry.Status = StatusFailed
-			entry.Error = fmt.Sprintf("semantic suggest action: %v", err)
-			entry.Duration = time.Since(semanticStart)
-			return false, entry
+			return as.finishSemantic(entry, semanticStart, StatusFailed, err.Error())
 		}
 
-		planned := as.planSemanticAction(currentIntent, step, suggested)
-		action, err := as.prepareSemanticAction(semanticCtx, page, currentIntent, step, planned)
-		if err != nil {
-			slog.Debug("autosolver: semantic action preparation failed",
-				"step", step+1,
-				"intent", intentTypeOf(currentIntent),
-				"error", err)
-			entry.Status = StatusFailed
-			entry.Error = fmt.Sprintf("prepare semantic action: %v", err)
-			entry.Duration = time.Since(semanticStart)
-			return false, entry
-		}
-
-		if err := executeSuggestedAction(semanticCtx, executor, action); err != nil {
-			healedAction, healErr := as.selfHealSemanticAction(semanticCtx, page, currentIntent, step, action)
-			if healErr != nil {
-				entry.Status = StatusFailed
-				entry.Error = fmt.Sprintf("execute semantic action: %v; self-heal failed: %v", err, healErr)
-				entry.Duration = time.Since(semanticStart)
-				return false, entry
-			}
-
-			if err := executeSuggestedAction(semanticCtx, executor, healedAction); err != nil {
-				entry.Status = StatusFailed
-				entry.Error = fmt.Sprintf("execute semantic self-heal action: %v", err)
-				entry.Duration = time.Since(semanticStart)
-				return false, entry
-			}
+		if err := as.executeSemanticStep(semanticCtx, page, executor, currentIntent, step, action); err != nil {
+			return as.finishSemantic(entry, semanticStart, StatusFailed, err.Error())
 		}
 
 		actionsExecuted++
 
-		postIntent, detectErr := as.detectIntent(semanticCtx, page)
-		if detectErr != nil {
+		if postIntent, detectErr := as.detectIntent(semanticCtx, page); detectErr != nil {
 			slog.Debug("autosolver: semantic post-step intent detection failed",
 				"step", step+1,
 				"error", detectErr)
 		} else {
 			currentIntent = postIntent
 			if currentIntent.Type == IntentNormal {
-				entry.Status = StatusSolved
-				entry.Duration = time.Since(semanticStart)
-				return true, entry
+				return as.finishSemantic(entry, semanticStart, StatusSolved, "")
 			}
 		}
 	}
 
 	if isHighLevelIntent(initialIntentType) && actionsExecuted > 0 {
-		entry.Status = StatusSolved
-		entry.Duration = time.Since(semanticStart)
-		return true, entry
+		return as.finishSemantic(entry, semanticStart, StatusSolved, "")
 	}
 
-	entry.Status = StatusFailed
-	entry.Error = fmt.Sprintf("semantic flow exhausted for intent %q", initialIntentType)
-	entry.Duration = time.Since(semanticStart)
-	return false, entry
+	return as.finishSemantic(entry, semanticStart, StatusFailed, fmt.Sprintf("semantic flow exhausted for intent %q", initialIntentType))
+}
+
+func (as *AutoSolver) finishSemantic(entry *AttemptEntry, start time.Time, status SolverStatus, errMsg string) (bool, *AttemptEntry) {
+	entry.Status = status
+	entry.Error = errMsg
+	entry.Duration = time.Since(start)
+	return status == StatusSolved, entry
+}
+
+func (as *AutoSolver) planSemanticStep(ctx context.Context, page Page, intent *Intent, step int) (*SuggestedAction, error) {
+	suggested, err := as.semantic.SuggestAction(ctx, page, intent)
+	if err != nil {
+		return nil, fmt.Errorf("semantic suggest action: %w", err)
+	}
+
+	planned := as.planSemanticAction(intent, step, suggested)
+	action, err := as.prepareSemanticAction(ctx, page, intent, step, planned)
+	if err != nil {
+		slog.Debug("autosolver: semantic action preparation failed",
+			"step", step+1,
+			"intent", intentTypeOf(intent),
+			"error", err)
+		return nil, fmt.Errorf("prepare semantic action: %w", err)
+	}
+
+	return action, nil
+}
+
+func (as *AutoSolver) executeSemanticStep(ctx context.Context, page Page, executor ActionExecutor, intent *Intent, step int, action *SuggestedAction) error {
+	err := executeSuggestedAction(ctx, executor, action)
+	if err == nil {
+		return nil
+	}
+
+	healed, healErr := as.selfHealSemanticAction(ctx, page, intent, step, action)
+	if healErr != nil {
+		return fmt.Errorf("execute semantic action: %v; self-heal failed: %v", err, healErr)
+	}
+
+	if execErr := executeSuggestedAction(ctx, executor, healed); execErr != nil {
+		return fmt.Errorf("execute semantic self-heal action: %v", execErr)
+	}
+
+	return nil
 }
 
 type semanticFlowStep struct {
