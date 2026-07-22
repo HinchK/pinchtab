@@ -116,20 +116,39 @@ func rejectMultiStepSubmitClicks(w http.ResponseWriter, actions []bridge.ActionR
 	return true
 }
 
-// dialogAwareActionError shapes a per-action error message: it surfaces a blocking
-// dialog's own message, or a hint when a click timed out with a pending dialog,
-// otherwise the caller-supplied fallback.
-func (h *Handlers) dialogAwareActionError(err error, kind, tabID, fallback string) string {
+type dialogBlockingError struct {
+	message    string
+	suggestion string
+	dialogType string
+	dialogText string
+}
+
+func (h *Handlers) mapDialogBlockingError(err error, kind, tabID string) (dialogBlockingError, bool) {
 	var dialogErr *bridge.ErrDialogBlocking
 	if errors.As(err, &dialogErr) {
-		return err.Error()
+		return dialogBlockingError{
+			message:    err.Error(),
+			suggestion: "use --dialog-action accept or --dialog-action dismiss",
+			dialogType: dialogErr.DialogType,
+			dialogText: dialogErr.DialogMessage,
+		}, true
 	}
 	if isClickTimeoutWithPendingDialog(err, kind, tabID, h.Bridge) {
-		dm := h.Bridge.GetDialogManager()
-		if ds := dm.GetPending(tabID); ds != nil {
-			return fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q) — use --dialog-action accept|dismiss",
-				kind, ds.Type, ds.Message)
+		if ds := h.Bridge.GetDialogManager().GetPending(tabID); ds != nil {
+			return dialogBlockingError{
+				message:    fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q)", kind, ds.Type, ds.Message),
+				suggestion: "use --dialog-action accept or --dialog-action dismiss",
+				dialogType: ds.Type,
+				dialogText: ds.Message,
+			}, true
 		}
+	}
+	return dialogBlockingError{}, false
+}
+
+func (h *Handlers) dialogAwareActionError(err error, kind, tabID, fallback string) string {
+	if db, ok := h.mapDialogBlockingError(err, kind, tabID); ok {
+		return db.message
 	}
 	return fallback
 }
@@ -176,7 +195,7 @@ func (h *Handlers) runResolvedActionStep(
 	return actionResult{Index: index, Success: true, Result: res}, nextCtx, nextTabID
 }
 
-func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
+func decodeActionRequest(w http.ResponseWriter, r *http.Request) (bridge.ActionRequest, bool) {
 	var req bridge.ActionRequest
 	if r.Method == http.MethodGet {
 		q := r.URL.Query()
@@ -217,15 +236,23 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		req.Browser = q.Get("browser")
 		if err := d.Err(); err != nil {
 			httpx.Error(w, 400, err)
-			return
+			return bridge.ActionRequest{}, false
 		}
-	} else {
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-			httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
-			return
-		}
-		req.Kind = bridge.CanonicalActionKind(req.Kind)
-		req.DialogAction = strings.ToLower(strings.TrimSpace(req.DialogAction))
+		return req, true
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
+		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
+		return bridge.ActionRequest{}, false
+	}
+	req.Kind = bridge.CanonicalActionKind(req.Kind)
+	req.DialogAction = strings.ToLower(strings.TrimSpace(req.DialogAction))
+	return req, true
+}
+
+func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeActionRequest(w, r)
+	if !ok {
+		return
 	}
 
 	routing, ok := h.resolveBrowserForRequest(w, r, req.TabID, strings.TrimSpace(req.Browser), browsers.RequestIntent{
@@ -242,7 +269,6 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 
 	req.Browser = resolvedBrowser
 
-	// Single endpoint returns 400 for bad input, unlike batch which returns 200 with per-action errors.
 	if req.Kind == "" {
 		httpx.Error(w, 400, fmt.Errorf("missing required field 'kind'"))
 		return
@@ -341,16 +367,10 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache intent before execution so recovery can reconstruct the query.
-	// Only cache when the ref IS in the snapshot — otherwise we'd overwrite
-	// the richer /find-cached entry (which has the Query) with a blank one.
 	if req.Ref != "" && h.Recovery != nil && !refMissing {
 		h.cacheActionIntent(resolvedTabID, req)
 	}
 
-	// If ref was not in snapshot cache, attempt semantic recovery before
-	// returning 404. This handles the common case where a page reload
-	// cleared the snapshot (DeleteRefCache) but the intent is still cached.
 	if refMissing && (req.Ref == "" || h.Recovery == nil) {
 		httpx.Error(w, 404, fmt.Errorf("ref %s not found - take a /snapshot first", req.Ref))
 		return
@@ -412,24 +432,11 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			httpx.ErrorCode(w, http.StatusForbidden, "idpi_blocked", actionErr.Error(), false, nil)
 			return
 		}
-		var dialogErr *bridge.ErrDialogBlocking
-		if errors.As(actionErr, &dialogErr) {
-			httpx.ErrorCode(w, 500, "dialog_blocking", actionErr.Error(), false, map[string]any{
-				"suggestion":     "use --dialog-action accept or --dialog-action dismiss",
-				"dialog_type":    dialogErr.DialogType,
-				"dialog_message": dialogErr.DialogMessage,
-			})
-			return
-		}
-		if isClickTimeoutWithPendingDialog(actionErr, req.Kind, resolvedTabID, h.Bridge) {
-			dm := h.Bridge.GetDialogManager()
-			dialogState := dm.GetPending(resolvedTabID)
-			msg := fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q)",
-				req.Kind, dialogState.Type, dialogState.Message)
-			httpx.ErrorCode(w, 500, "dialog_blocking", msg, false, map[string]any{
-				"suggestion":     "use --dialog-action accept or --dialog-action dismiss",
-				"dialog_type":    dialogState.Type,
-				"dialog_message": dialogState.Message,
+		if db, ok := h.mapDialogBlockingError(actionErr, req.Kind, resolvedTabID); ok {
+			httpx.ErrorCode(w, 500, "dialog_blocking", db.message, false, map[string]any{
+				"suggestion":     db.suggestion,
+				"dialog_type":    db.dialogType,
+				"dialog_message": db.dialogText,
 			})
 			return
 		}
@@ -450,16 +457,10 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if actionBackend != "static" {
 		h.maybeAutoSolve(tCtx, resolvedTabID, autoSolverTriggerAction)
-		// Banner dismissal only makes sense when the click triggered a
-		// navigation (waitNav settles us on a fresh page). Without waitNav we
-		// skip — the caller is interacting within the current document and
-		// any banner has either been dismissed already or is irrelevant.
 		if req.WaitNav && req.DismissBanners {
 			h.dismissBanners(tCtx, resolvedTabID, true)
 		}
 	}
-	// If the click opened (and auto-switched to) a new tab, point the
-	// request-scoped current tab at it so the next action lands there.
 	if switched := switchedTabFromActionResult(result); switched != "" {
 		h.setCurrentTabForRequest(r, switched)
 		markCreatedTab(w, switched)
