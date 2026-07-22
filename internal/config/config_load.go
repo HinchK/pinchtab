@@ -344,194 +344,207 @@ func finalizeProfileConfig(cfg *RuntimeConfig) {
 }
 
 func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
-	if fc.Server.Port != "" {
-		cfg.Port = fc.Server.Port
+	applyServerConfig(cfg, fc.Server)
+	applySecurityConfig(cfg, fc.Security)
+	applyObservabilityConfig(cfg, fc.Observability)
+	applySessionsConfig(cfg, fc.Sessions)
+	applyBrowserConfig(cfg, &fc.Browser, fc.Browsers)
+	applyInstanceDefaultsConfig(cfg, &fc.InstanceDefaults)
+	applyProfilesConfig(cfg, fc.Profiles)
+	applyMultiInstanceConfig(cfg, fc.MultiInstance)
+	applyTimeoutsConfig(cfg, fc.Timeouts)
+	applySchedulerConfig(cfg, fc.Scheduler)
+	applyAutoSolverConfig(cfg, fc.AutoSolver)
+}
+
+func applyServerConfig(cfg *RuntimeConfig, s ServerConfig) {
+	if s.Port != "" {
+		cfg.Port = s.Port
 	}
-	if fc.Server.Bind != "" {
-		cfg.Bind = fc.Server.Bind
+	if s.Bind != "" {
+		cfg.Bind = s.Bind
 	}
 	if os.Getenv("PINCHTAB_TOKEN") == "" {
-		cfg.Token = fc.Server.Token
+		cfg.Token = s.Token
 	}
-	if fc.Server.StateDir != "" {
-		cfg.StateDir = fc.Server.StateDir
+	if s.StateDir != "" {
+		cfg.StateDir = s.StateDir
 	}
-	if fc.Server.NetworkBufferSize != nil && *fc.Server.NetworkBufferSize > 0 {
-		cfg.NetworkBufferSize = ClampNetworkBufferSize(*fc.Server.NetworkBufferSize)
+	if s.NetworkBufferSize != nil && *s.NetworkBufferSize > 0 {
+		cfg.NetworkBufferSize = ClampNetworkBufferSize(*s.NetworkBufferSize)
 	}
-	if fc.Server.RetainNetworkBodies != nil {
-		cfg.RetainNetworkBodies = *fc.Server.RetainNetworkBodies
+	if s.RetainNetworkBodies != nil {
+		cfg.RetainNetworkBodies = *s.RetainNetworkBodies
 	}
-	if fc.Server.RetainNetworkBodyMaxBytes != nil && *fc.Server.RetainNetworkBodyMaxBytes >= 0 {
-		cfg.RetainNetworkBodyMaxBytes = *fc.Server.RetainNetworkBodyMaxBytes
+	if s.RetainNetworkBodyMaxBytes != nil && *s.RetainNetworkBodyMaxBytes >= 0 {
+		cfg.RetainNetworkBodyMaxBytes = *s.RetainNetworkBodyMaxBytes
 	}
-	if fc.Server.TrustProxyHeaders != nil {
-		cfg.TrustProxyHeaders = *fc.Server.TrustProxyHeaders
+	if s.TrustProxyHeaders != nil {
+		cfg.TrustProxyHeaders = *s.TrustProxyHeaders
 	}
-	cfg.CookieSecure = fc.Server.CookieSecure
-	if fc.Security.AllowEvaluate != nil {
-		cfg.AllowEvaluate = *fc.Security.AllowEvaluate
-	}
-	if fc.Security.AllowMacro != nil {
-		cfg.AllowMacro = *fc.Security.AllowMacro
-	}
-	if fc.Security.AllowScreencast != nil {
-		cfg.AllowScreencast = *fc.Security.AllowScreencast
-	}
-	if fc.Security.AllowDownload != nil {
-		cfg.AllowDownload = *fc.Security.AllowDownload
-	}
-	if fc.Security.AllowCookies != nil {
-		cfg.AllowCookies = *fc.Security.AllowCookies
-	}
-	if fc.Security.AllowNetworkIntercept != nil {
-		cfg.AllowNetworkIntercept = *fc.Security.AllowNetworkIntercept
-	}
-	if fc.Security.AllowFileScheme != nil {
-		cfg.AllowFileScheme = *fc.Security.AllowFileScheme
-	}
-	cfg.DownloadAllowedDomains = append([]string(nil), fc.Security.DownloadAllowedDomains...)
-	if fc.Security.DownloadMaxBytes != nil {
-		cfg.DownloadMaxBytes = clampPositiveLimit(*fc.Security.DownloadMaxBytes, DefaultDownloadMaxBytes, MaxDownloadMaxBytes)
-	}
-	if fc.Security.AllowUpload != nil {
-		cfg.AllowUpload = *fc.Security.AllowUpload
-	}
-	if fc.Security.AllowClipboard != nil {
-		cfg.AllowClipboard = *fc.Security.AllowClipboard
-	}
-	if fc.Security.AllowStateExport != nil {
-		cfg.AllowStateExport = *fc.Security.AllowStateExport
-	}
-	if fc.Security.StateEncryptionKey != nil {
-		cfg.StateEncryptionKey = *fc.Security.StateEncryptionKey
-	}
-	if fc.Security.EnableActionGuards != nil {
-		cfg.EnableActionGuards = *fc.Security.EnableActionGuards
-	}
-	if fc.Security.UploadMaxRequestBytes != nil {
-		cfg.UploadMaxRequestBytes = clampPositiveLimit(*fc.Security.UploadMaxRequestBytes, DefaultUploadMaxRequestBytes, MaxUploadMaxRequestBytes)
-	}
-	if fc.Security.UploadMaxFiles != nil {
-		cfg.UploadMaxFiles = clampPositiveLimit(*fc.Security.UploadMaxFiles, DefaultUploadMaxFiles, MaxUploadMaxFiles)
-	}
-	if fc.Security.UploadMaxFileBytes != nil {
-		cfg.UploadMaxFileBytes = clampPositiveLimit(*fc.Security.UploadMaxFileBytes, DefaultUploadMaxFileBytes, MaxUploadMaxFileBytes)
-	}
-	if fc.Security.UploadMaxTotalBytes != nil {
-		cfg.UploadMaxTotalBytes = clampPositiveLimit(*fc.Security.UploadMaxTotalBytes, DefaultUploadMaxTotalBytes, MaxUploadMaxTotalBytes)
-	}
-	if fc.Security.MaxRedirects != nil {
-		cfg.MaxRedirects = *fc.Security.MaxRedirects
-	}
-	// Attach fields (Enabled/ForwardProxyAuth/AllowHosts/AllowSchemes) are applied
-	// once, below, with conditional AllowHosts/AllowSchemes so omitting them in the
-	// file keeps the seeded defaults instead of clobbering them with an empty list.
-	cfg.TrustedProxyCIDRs = append([]string(nil), fc.Security.TrustedProxyCIDRs...)
-	cfg.TrustedResolveCIDRs = append([]string(nil), fc.Security.TrustedResolveCIDRs...)
-	if fc.Security.TrustLoopbackProxy != nil {
-		cfg.TrustLoopbackProxy = *fc.Security.TrustLoopbackProxy
-	}
-	// IDPI – copy the whole struct; individual fields have safe zero-value defaults.
-	cfg.IDPI = fc.Security.IDPI
-	cfg.AllowedDomains = effectiveSecurityAllowedDomains(fc.Security)
-	if fc.Observability.Activity.Enabled != nil {
-		cfg.Observability.Activity.Enabled = *fc.Observability.Activity.Enabled
-	}
-	if fc.Observability.Activity.SessionIdleSec != nil {
-		cfg.Observability.Activity.SessionIdleSec = *fc.Observability.Activity.SessionIdleSec
-	}
-	if fc.Observability.Activity.RetentionDays != nil {
-		cfg.Observability.Activity.RetentionDays = *fc.Observability.Activity.RetentionDays
-	}
-	if fc.Observability.Activity.Events.Dashboard != nil {
-		cfg.Observability.Activity.Events.Dashboard = *fc.Observability.Activity.Events.Dashboard
-	}
-	if fc.Observability.Activity.Events.Server != nil {
-		cfg.Observability.Activity.Events.Server = *fc.Observability.Activity.Events.Server
-	}
-	if fc.Observability.Activity.Events.Bridge != nil {
-		cfg.Observability.Activity.Events.Bridge = *fc.Observability.Activity.Events.Bridge
-	}
-	if fc.Observability.Activity.Events.Orchestrator != nil {
-		cfg.Observability.Activity.Events.Orchestrator = *fc.Observability.Activity.Events.Orchestrator
-	}
-	if fc.Observability.Activity.Events.Scheduler != nil {
-		cfg.Observability.Activity.Events.Scheduler = *fc.Observability.Activity.Events.Scheduler
-	}
-	if fc.Observability.Activity.Events.MCP != nil {
-		cfg.Observability.Activity.Events.MCP = *fc.Observability.Activity.Events.MCP
-	}
-	if fc.Observability.Activity.Events.Other != nil {
-		cfg.Observability.Activity.Events.Other = *fc.Observability.Activity.Events.Other
-	}
-	if fc.Sessions.Dashboard.Persist != nil {
-		cfg.Sessions.Dashboard.Persist = *fc.Sessions.Dashboard.Persist
-	}
-	if fc.Sessions.Dashboard.IdleTimeoutSec != nil && *fc.Sessions.Dashboard.IdleTimeoutSec > 0 {
-		cfg.Sessions.Dashboard.IdleTimeout = time.Duration(*fc.Sessions.Dashboard.IdleTimeoutSec) * time.Second
-	}
-	if fc.Sessions.Dashboard.MaxLifetimeSec != nil && *fc.Sessions.Dashboard.MaxLifetimeSec > 0 {
-		cfg.Sessions.Dashboard.MaxLifetime = time.Duration(*fc.Sessions.Dashboard.MaxLifetimeSec) * time.Second
-	}
-	if fc.Sessions.Dashboard.ElevationWindowSec != nil && *fc.Sessions.Dashboard.ElevationWindowSec > 0 {
-		cfg.Sessions.Dashboard.ElevationWindow = time.Duration(*fc.Sessions.Dashboard.ElevationWindowSec) * time.Second
-	}
-	if fc.Sessions.Dashboard.PersistElevationAcrossRestart != nil {
-		cfg.Sessions.Dashboard.PersistElevationAcrossRestart = *fc.Sessions.Dashboard.PersistElevationAcrossRestart
-	}
-	if fc.Sessions.Dashboard.RequireElevation != nil {
-		cfg.Sessions.Dashboard.RequireElevation = *fc.Sessions.Dashboard.RequireElevation
-	}
+	cfg.CookieSecure = s.CookieSecure
+}
 
-	if fc.Sessions.Agent.Enabled != nil {
-		cfg.Sessions.Agent.Enabled = *fc.Sessions.Agent.Enabled
+func applySecurityConfig(cfg *RuntimeConfig, s SecurityConfig) {
+	if s.AllowEvaluate != nil {
+		cfg.AllowEvaluate = *s.AllowEvaluate
 	}
-	if fc.Sessions.Agent.Mode != "" {
-		cfg.Sessions.Agent.Mode = fc.Sessions.Agent.Mode
+	if s.AllowMacro != nil {
+		cfg.AllowMacro = *s.AllowMacro
 	}
-	if fc.Sessions.Agent.IdleTimeoutSec != nil && *fc.Sessions.Agent.IdleTimeoutSec > 0 {
-		cfg.Sessions.Agent.IdleTimeout = time.Duration(*fc.Sessions.Agent.IdleTimeoutSec) * time.Second
+	if s.AllowScreencast != nil {
+		cfg.AllowScreencast = *s.AllowScreencast
 	}
-	if fc.Sessions.Agent.MaxLifetimeSec != nil && *fc.Sessions.Agent.MaxLifetimeSec > 0 {
-		cfg.Sessions.Agent.MaxLifetime = time.Duration(*fc.Sessions.Agent.MaxLifetimeSec) * time.Second
+	if s.AllowDownload != nil {
+		cfg.AllowDownload = *s.AllowDownload
 	}
+	if s.AllowCookies != nil {
+		cfg.AllowCookies = *s.AllowCookies
+	}
+	if s.AllowNetworkIntercept != nil {
+		cfg.AllowNetworkIntercept = *s.AllowNetworkIntercept
+	}
+	if s.AllowFileScheme != nil {
+		cfg.AllowFileScheme = *s.AllowFileScheme
+	}
+	cfg.DownloadAllowedDomains = append([]string(nil), s.DownloadAllowedDomains...)
+	if s.DownloadMaxBytes != nil {
+		cfg.DownloadMaxBytes = clampPositiveLimit(*s.DownloadMaxBytes, DefaultDownloadMaxBytes, MaxDownloadMaxBytes)
+	}
+	if s.AllowUpload != nil {
+		cfg.AllowUpload = *s.AllowUpload
+	}
+	if s.AllowClipboard != nil {
+		cfg.AllowClipboard = *s.AllowClipboard
+	}
+	if s.AllowStateExport != nil {
+		cfg.AllowStateExport = *s.AllowStateExport
+	}
+	if s.StateEncryptionKey != nil {
+		cfg.StateEncryptionKey = *s.StateEncryptionKey
+	}
+	if s.EnableActionGuards != nil {
+		cfg.EnableActionGuards = *s.EnableActionGuards
+	}
+	if s.UploadMaxRequestBytes != nil {
+		cfg.UploadMaxRequestBytes = clampPositiveLimit(*s.UploadMaxRequestBytes, DefaultUploadMaxRequestBytes, MaxUploadMaxRequestBytes)
+	}
+	if s.UploadMaxFiles != nil {
+		cfg.UploadMaxFiles = clampPositiveLimit(*s.UploadMaxFiles, DefaultUploadMaxFiles, MaxUploadMaxFiles)
+	}
+	if s.UploadMaxFileBytes != nil {
+		cfg.UploadMaxFileBytes = clampPositiveLimit(*s.UploadMaxFileBytes, DefaultUploadMaxFileBytes, MaxUploadMaxFileBytes)
+	}
+	if s.UploadMaxTotalBytes != nil {
+		cfg.UploadMaxTotalBytes = clampPositiveLimit(*s.UploadMaxTotalBytes, DefaultUploadMaxTotalBytes, MaxUploadMaxTotalBytes)
+	}
+	if s.MaxRedirects != nil {
+		cfg.MaxRedirects = *s.MaxRedirects
+	}
+	cfg.TrustedProxyCIDRs = append([]string(nil), s.TrustedProxyCIDRs...)
+	cfg.TrustedResolveCIDRs = append([]string(nil), s.TrustedResolveCIDRs...)
+	if s.TrustLoopbackProxy != nil {
+		cfg.TrustLoopbackProxy = *s.TrustLoopbackProxy
+	}
+	cfg.IDPI = s.IDPI
+	cfg.AllowedDomains = effectiveSecurityAllowedDomains(s)
+	if s.Attach.Enabled != nil {
+		cfg.AttachEnabled = *s.Attach.Enabled
+	}
+	if s.Attach.ForwardProxyAuth != nil {
+		cfg.AttachForwardProxyAuth = *s.Attach.ForwardProxyAuth
+	}
+	if len(s.Attach.AllowHosts) > 0 {
+		cfg.AttachAllowHosts = append([]string(nil), s.Attach.AllowHosts...)
+	}
+	if len(s.Attach.AllowSchemes) > 0 {
+		cfg.AttachAllowSchemes = append([]string(nil), s.Attach.AllowSchemes...)
+	}
+}
 
-	// Migration shim must run before consuming legacy provider/binary/cloak fields below.
-	synthesized, conflict := migrateLegacyBrowserConfig(&fc.Browser, fc.Browsers.Default)
+func applyObservabilityConfig(cfg *RuntimeConfig, o ObservabilityFileConfig) {
+	if o.Activity.Enabled != nil {
+		cfg.Observability.Activity.Enabled = *o.Activity.Enabled
+	}
+	if o.Activity.SessionIdleSec != nil {
+		cfg.Observability.Activity.SessionIdleSec = *o.Activity.SessionIdleSec
+	}
+	if o.Activity.RetentionDays != nil {
+		cfg.Observability.Activity.RetentionDays = *o.Activity.RetentionDays
+	}
+	if o.Activity.Events.Dashboard != nil {
+		cfg.Observability.Activity.Events.Dashboard = *o.Activity.Events.Dashboard
+	}
+	if o.Activity.Events.Server != nil {
+		cfg.Observability.Activity.Events.Server = *o.Activity.Events.Server
+	}
+	if o.Activity.Events.Bridge != nil {
+		cfg.Observability.Activity.Events.Bridge = *o.Activity.Events.Bridge
+	}
+	if o.Activity.Events.Orchestrator != nil {
+		cfg.Observability.Activity.Events.Orchestrator = *o.Activity.Events.Orchestrator
+	}
+	if o.Activity.Events.Scheduler != nil {
+		cfg.Observability.Activity.Events.Scheduler = *o.Activity.Events.Scheduler
+	}
+	if o.Activity.Events.MCP != nil {
+		cfg.Observability.Activity.Events.MCP = *o.Activity.Events.MCP
+	}
+	if o.Activity.Events.Other != nil {
+		cfg.Observability.Activity.Events.Other = *o.Activity.Events.Other
+	}
+}
+
+func applySessionsConfig(cfg *RuntimeConfig, s SessionsFileConfig) {
+	if s.Dashboard.Persist != nil {
+		cfg.Sessions.Dashboard.Persist = *s.Dashboard.Persist
+	}
+	if s.Dashboard.IdleTimeoutSec != nil && *s.Dashboard.IdleTimeoutSec > 0 {
+		cfg.Sessions.Dashboard.IdleTimeout = time.Duration(*s.Dashboard.IdleTimeoutSec) * time.Second
+	}
+	if s.Dashboard.MaxLifetimeSec != nil && *s.Dashboard.MaxLifetimeSec > 0 {
+		cfg.Sessions.Dashboard.MaxLifetime = time.Duration(*s.Dashboard.MaxLifetimeSec) * time.Second
+	}
+	if s.Dashboard.ElevationWindowSec != nil && *s.Dashboard.ElevationWindowSec > 0 {
+		cfg.Sessions.Dashboard.ElevationWindow = time.Duration(*s.Dashboard.ElevationWindowSec) * time.Second
+	}
+	if s.Dashboard.PersistElevationAcrossRestart != nil {
+		cfg.Sessions.Dashboard.PersistElevationAcrossRestart = *s.Dashboard.PersistElevationAcrossRestart
+	}
+	if s.Dashboard.RequireElevation != nil {
+		cfg.Sessions.Dashboard.RequireElevation = *s.Dashboard.RequireElevation
+	}
+	if s.Agent.Enabled != nil {
+		cfg.Sessions.Agent.Enabled = *s.Agent.Enabled
+	}
+	if s.Agent.Mode != "" {
+		cfg.Sessions.Agent.Mode = s.Agent.Mode
+	}
+	if s.Agent.IdleTimeoutSec != nil && *s.Agent.IdleTimeoutSec > 0 {
+		cfg.Sessions.Agent.IdleTimeout = time.Duration(*s.Agent.IdleTimeoutSec) * time.Second
+	}
+	if s.Agent.MaxLifetimeSec != nil && *s.Agent.MaxLifetimeSec > 0 {
+		cfg.Sessions.Agent.MaxLifetime = time.Duration(*s.Agent.MaxLifetimeSec) * time.Second
+	}
+}
+
+func applyBrowserConfig(cfg *RuntimeConfig, browser *BrowserConfig, browsersCfg BrowsersConfig) {
+	synthesized, conflict := migrateLegacyBrowserConfig(browser, browsersCfg.Default)
 	if conflict {
 		slog.Warn("config has both browser.targets and legacy browser.binary/extraFlags/cloak/proxy set; targets are used as authored (no legacy synthesis), but the legacy fields still seed the base runtime config that target resolution overlays per-field")
 	} else if synthesized {
 		slog.Debug("migrated legacy browser config into browser.targets.default")
 	}
-	// Assigned unconditionally — unlike most fields below, which only apply
-	// when present, a reload must be able to REMOVE targets: stale routing
-	// (and the proxy credentials inside targets) staying live after the user
-	// deleted them is dangerous. Absent blocks clear to zero values; the
-	// migration shim above re-synthesizes targets for legacy-only files first.
-	cfg.Targets = cloneBrowserTargetsConfig(fc.Browser.Targets)
-	cfg.DefaultTarget = fc.Browser.DefaultTarget
-	cfg.FallbackOrder = append([]string(nil), fc.Browser.FallbackOrder...)
-	cfg.TargetsSynthesized = synthesized && len(fc.Browser.Targets) > 0
+	cfg.Targets = cloneBrowserTargetsConfig(browser.Targets)
+	cfg.DefaultTarget = browser.DefaultTarget
+	cfg.FallbackOrder = append([]string(nil), browser.FallbackOrder...)
+	cfg.TargetsSynthesized = synthesized && len(browser.Targets) > 0
 
-	// Resolve the effective browser provider: browsers.default is the
-	// authoritative source. browser.provider and server.engine are no longer
-	// supported (rejected at validation time), so a target synthesized from
-	// those legacy fields must not select the provider either. A USER-AUTHORED
-	// default target, however, is the user's provider choice — forcing chrome
-	// would contradict it and destructively "reconcile" it on the next
-	// FileConfigFromRuntime round-trip.
-	if fc.Browsers.Default != "" {
-		// Store the canonical lowercased form so logs, the doctor header, and
-		// FileConfigFromRuntime round-trips stay consistent ("Cloak" -> "cloak").
-		// Keep an unknown value as-is (don't NormalizeBrowser) so the warning
-		// below and the launch-time chrome fallback still apply.
-		cfg.DefaultBrowser = strings.ToLower(strings.TrimSpace(fc.Browsers.Default))
-		// Launch paths coerce unknown providers to chrome via
-		// NormalizeBrowser; name that consequence loudly at load time.
-		if _, ok := browsers.Get(strings.ToLower(strings.TrimSpace(fc.Browsers.Default))); !ok {
+	if browsersCfg.Default != "" {
+		cfg.DefaultBrowser = strings.ToLower(strings.TrimSpace(browsersCfg.Default))
+		if _, ok := browsers.Get(strings.ToLower(strings.TrimSpace(browsersCfg.Default))); !ok {
 			slog.Warn("browsers.default is not a known browser; launches will fall back to chrome",
-				"configured", fc.Browsers.Default, "known", browsers.IDs())
+				"configured", browsersCfg.Default, "known", browsers.IDs())
 		}
 	} else if name := ResolveDefaultTarget(cfg); name != "" && !cfg.TargetsSynthesized && cfg.Targets[name].Provider != "" {
 		cfg.DefaultBrowser = NormalizeBrowser(cfg.Targets[name].Provider)
@@ -539,102 +552,99 @@ func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
 		cfg.DefaultBrowser = DefaultBrowserForSystem()
 	}
 
-	// Apply native-stealth default when the winning provider supports it.
-	if b, ok := browsers.Get(strings.ToLower(cfg.DefaultBrowser)); ok && b.Capabilities().Has(browsers.CapNativeStealth) && fc.Browser.Cloak.DisableDefaultStealthArgs == nil {
+	if b, ok := browsers.Get(strings.ToLower(cfg.DefaultBrowser)); ok && b.Capabilities().Has(browsers.CapNativeStealth) && browser.Cloak.DisableDefaultStealthArgs == nil {
 		cfg.Cloak.DisableDefaultStealthArgs = true
 	}
 
-	if fc.Browser.BrowserVersion != "" {
-		cfg.BrowserVersion = fc.Browser.BrowserVersion
+	if browser.BrowserVersion != "" {
+		cfg.BrowserVersion = browser.BrowserVersion
 	}
-	if fc.Browser.BrowserBinary != "" {
-		cfg.BrowserBinary = fc.Browser.BrowserBinary
+	if browser.BrowserBinary != "" {
+		cfg.BrowserBinary = browser.BrowserBinary
 	}
-	if fc.Browser.BrowserDebugPort != nil && *fc.Browser.BrowserDebugPort > 0 {
-		cfg.BrowserDebugPort = *fc.Browser.BrowserDebugPort
+	if browser.BrowserDebugPort != nil && *browser.BrowserDebugPort > 0 {
+		cfg.BrowserDebugPort = *browser.BrowserDebugPort
 	}
-	if fc.Browser.BrowserExtraFlags != "" {
-		cfg.BrowserExtraFlags = SanitizeBrowserExtraFlags(fc.Browser.BrowserExtraFlags)
+	if browser.BrowserExtraFlags != "" {
+		cfg.BrowserExtraFlags = SanitizeBrowserExtraFlags(browser.BrowserExtraFlags)
 	}
-	applyCloakBrowserConfigToRuntime(cfg, fc.Browser.Cloak)
-	// Assigned unconditionally (see Targets above): removing browser.proxy
-	// from the file must clear the runtime proxy — leaving stale credentials
-	// live in a long-running process is worse than the asymmetry with the
-	// presence-guarded fields around this one.
+	applyCloakBrowserConfigToRuntime(cfg, browser.Cloak)
 	cfg.Proxy = BrowserProxyConfig{
-		Server:     fc.Browser.Proxy.Server,
-		BypassList: append([]string(nil), fc.Browser.Proxy.BypassList...),
-		Username:   fc.Browser.Proxy.Username,
-		Password:   fc.Browser.Proxy.Password,
+		Server:     browser.Proxy.Server,
+		BypassList: append([]string(nil), browser.Proxy.BypassList...),
+		Username:   browser.Proxy.Username,
+		Password:   browser.Proxy.Password,
 	}
-	if fc.Browser.Proxy.Geo != nil {
-		geoCopy := *fc.Browser.Proxy.Geo
+	if browser.Proxy.Geo != nil {
+		geoCopy := *browser.Proxy.Geo
 		cfg.Proxy.Geo = &geoCopy
 	}
-	if fc.Browser.ExtensionPaths != nil {
-		cfg.ExtensionPaths = append([]string(nil), fc.Browser.ExtensionPaths...)
+	if browser.ExtensionPaths != nil {
+		cfg.ExtensionPaths = append([]string(nil), browser.ExtensionPaths...)
 	}
 
-	if len(fc.Browsers.Available) > 0 {
-		cfg.BrowsersAvailable = make([]string, len(fc.Browsers.Available))
-		copy(cfg.BrowsersAvailable, fc.Browsers.Available)
+	if len(browsersCfg.Available) > 0 {
+		cfg.BrowsersAvailable = make([]string, len(browsersCfg.Available))
+		copy(cfg.BrowsersAvailable, browsersCfg.Available)
 	} else if cfg.DefaultBrowser != "" {
 		cfg.BrowsersAvailable = []string{cfg.DefaultBrowser}
 	} else {
 		cfg.BrowsersAvailable = []string{"chrome"}
 	}
+}
 
-	if fc.InstanceDefaults.Headless != nil && fc.InstanceDefaults.Mode == "" {
-		if *fc.InstanceDefaults.Headless {
-			fc.InstanceDefaults.Mode = "headless"
+func applyInstanceDefaultsConfig(cfg *RuntimeConfig, d *InstanceDefaultsConfig) {
+	if d.Headless != nil && d.Mode == "" {
+		if *d.Headless {
+			d.Mode = "headless"
 		} else {
-			fc.InstanceDefaults.Mode = "headed"
+			d.Mode = "headed"
 		}
 	}
-	if fc.InstanceDefaults.Mode != "" {
-		cfg.Headless = modeToHeadless(fc.InstanceDefaults.Mode, cfg.Headless)
+	if d.Mode != "" {
+		cfg.Headless = modeToHeadless(d.Mode, cfg.Headless)
 		cfg.HeadlessSet = true
 	}
-	if fc.InstanceDefaults.NoRestore != nil {
-		cfg.NoRestore = *fc.InstanceDefaults.NoRestore
+	if d.NoRestore != nil {
+		cfg.NoRestore = *d.NoRestore
 	}
-	if fc.InstanceDefaults.Timezone != "" {
-		cfg.Timezone = fc.InstanceDefaults.Timezone
+	if d.Timezone != "" {
+		cfg.Timezone = d.Timezone
 	}
-	if fc.InstanceDefaults.BlockImages != nil {
-		cfg.BlockImages = *fc.InstanceDefaults.BlockImages
+	if d.BlockImages != nil {
+		cfg.BlockImages = *d.BlockImages
 	}
-	if fc.InstanceDefaults.BlockMedia != nil {
-		cfg.BlockMedia = *fc.InstanceDefaults.BlockMedia
+	if d.BlockMedia != nil {
+		cfg.BlockMedia = *d.BlockMedia
 	}
-	if fc.InstanceDefaults.BlockAds != nil {
-		cfg.BlockAds = *fc.InstanceDefaults.BlockAds
+	if d.BlockAds != nil {
+		cfg.BlockAds = *d.BlockAds
 	}
-	if fc.InstanceDefaults.MaxTabs != nil {
-		cfg.MaxTabs = *fc.InstanceDefaults.MaxTabs
+	if d.MaxTabs != nil {
+		cfg.MaxTabs = *d.MaxTabs
 	}
-	if fc.InstanceDefaults.MaxParallelTabs != nil {
-		cfg.MaxParallelTabs = *fc.InstanceDefaults.MaxParallelTabs
+	if d.MaxParallelTabs != nil {
+		cfg.MaxParallelTabs = *d.MaxParallelTabs
 	}
-	if fc.InstanceDefaults.UserAgent != "" {
-		cfg.UserAgent = fc.InstanceDefaults.UserAgent
+	if d.UserAgent != "" {
+		cfg.UserAgent = d.UserAgent
 	}
-	if fc.InstanceDefaults.NoAnimations != nil {
-		cfg.NoAnimations = *fc.InstanceDefaults.NoAnimations
+	if d.NoAnimations != nil {
+		cfg.NoAnimations = *d.NoAnimations
 	}
-	if fc.InstanceDefaults.CaptureAllowActivation != nil {
-		cfg.CaptureAllowActivation = *fc.InstanceDefaults.CaptureAllowActivation
+	if d.CaptureAllowActivation != nil {
+		cfg.CaptureAllowActivation = *d.CaptureAllowActivation
 	}
-	if fc.InstanceDefaults.Humanize != nil {
-		cfg.Humanize = *fc.InstanceDefaults.Humanize
+	if d.Humanize != nil {
+		cfg.Humanize = *d.Humanize
 	}
-	if fc.InstanceDefaults.StealthLevel != "" {
-		cfg.StealthLevel = fc.InstanceDefaults.StealthLevel
+	if d.StealthLevel != "" {
+		cfg.StealthLevel = d.StealthLevel
 	}
-	if fc.InstanceDefaults.TabEvictionPolicy != "" {
-		cfg.TabEvictionPolicy = fc.InstanceDefaults.TabEvictionPolicy
+	if d.TabEvictionPolicy != "" {
+		cfg.TabEvictionPolicy = d.TabEvictionPolicy
 	}
-	if tp := fc.InstanceDefaults.TabPolicy; tp != nil {
+	if tp := d.TabPolicy; tp != nil {
 		if tp.Eviction != "" {
 			cfg.TabEvictionPolicy = tp.Eviction
 		}
@@ -648,147 +658,143 @@ func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
 			cfg.TabRestore = *tp.Restore
 		}
 	}
-	// Clamp to a sane minimum to avoid races between handler return and timer fire.
 	if cfg.TabLifecyclePolicy == "close_idle" && cfg.TabCloseDelay < time.Second {
 		cfg.TabCloseDelay = time.Second
 	}
-	if fc.InstanceDefaults.DialogAutoAccept != nil {
-		cfg.DialogAutoAccept = *fc.InstanceDefaults.DialogAutoAccept
+	if d.DialogAutoAccept != nil {
+		cfg.DialogAutoAccept = *d.DialogAutoAccept
 	}
+}
 
-	if fc.Profiles.BaseDir != "" {
-		cfg.ProfilesBaseDir = fc.Profiles.BaseDir
+func applyProfilesConfig(cfg *RuntimeConfig, p ProfilesConfig) {
+	if p.BaseDir != "" {
+		cfg.ProfilesBaseDir = p.BaseDir
 	}
-	if fc.Profiles.DefaultProfile != "" {
-		cfg.DefaultProfile = fc.Profiles.DefaultProfile
+	if p.DefaultProfile != "" {
+		cfg.DefaultProfile = p.DefaultProfile
 	}
 	cfg.ProfileDir = ""
+}
 
-	if fc.MultiInstance.Strategy != "" {
-		cfg.Strategy = fc.MultiInstance.Strategy
+func applyMultiInstanceConfig(cfg *RuntimeConfig, m MultiInstanceConfig) {
+	if m.Strategy != "" {
+		cfg.Strategy = m.Strategy
 	}
-	if fc.MultiInstance.AllocationPolicy != "" {
-		cfg.AllocationPolicy = fc.MultiInstance.AllocationPolicy
+	if m.AllocationPolicy != "" {
+		cfg.AllocationPolicy = m.AllocationPolicy
 	}
-	if fc.MultiInstance.InstancePortStart != nil {
-		cfg.InstancePortStart = *fc.MultiInstance.InstancePortStart
+	if m.InstancePortStart != nil {
+		cfg.InstancePortStart = *m.InstancePortStart
 	}
-	if fc.MultiInstance.InstancePortEnd != nil {
-		cfg.InstancePortEnd = *fc.MultiInstance.InstancePortEnd
+	if m.InstancePortEnd != nil {
+		cfg.InstancePortEnd = *m.InstancePortEnd
 	}
-	if fc.MultiInstance.Restart.MaxRestarts != nil {
-		cfg.RestartMaxRestarts = *fc.MultiInstance.Restart.MaxRestarts
+	if m.Restart.MaxRestarts != nil {
+		cfg.RestartMaxRestarts = *m.Restart.MaxRestarts
 	}
-	if fc.MultiInstance.Restart.InitBackoffSec != nil {
-		cfg.RestartInitBackoff = time.Duration(*fc.MultiInstance.Restart.InitBackoffSec) * time.Second
+	if m.Restart.InitBackoffSec != nil {
+		cfg.RestartInitBackoff = time.Duration(*m.Restart.InitBackoffSec) * time.Second
 	}
-	if fc.MultiInstance.Restart.MaxBackoffSec != nil {
-		cfg.RestartMaxBackoff = time.Duration(*fc.MultiInstance.Restart.MaxBackoffSec) * time.Second
+	if m.Restart.MaxBackoffSec != nil {
+		cfg.RestartMaxBackoff = time.Duration(*m.Restart.MaxBackoffSec) * time.Second
 	}
-	if fc.MultiInstance.Restart.StableAfterSec != nil {
-		cfg.RestartStableAfter = time.Duration(*fc.MultiInstance.Restart.StableAfterSec) * time.Second
+	if m.Restart.StableAfterSec != nil {
+		cfg.RestartStableAfter = time.Duration(*m.Restart.StableAfterSec) * time.Second
 	}
+}
 
-	if fc.Security.Attach.Enabled != nil {
-		cfg.AttachEnabled = *fc.Security.Attach.Enabled
+func applyTimeoutsConfig(cfg *RuntimeConfig, t TimeoutsConfig) {
+	if t.ActionSec > 0 {
+		cfg.ActionTimeout = time.Duration(t.ActionSec) * time.Second
 	}
-	if fc.Security.Attach.ForwardProxyAuth != nil {
-		cfg.AttachForwardProxyAuth = *fc.Security.Attach.ForwardProxyAuth
+	if t.NavigateSec > 0 {
+		cfg.NavigateTimeout = time.Duration(t.NavigateSec) * time.Second
 	}
-	if len(fc.Security.Attach.AllowHosts) > 0 {
-		cfg.AttachAllowHosts = append([]string(nil), fc.Security.Attach.AllowHosts...)
+	if t.ShutdownSec > 0 {
+		cfg.ShutdownTimeout = time.Duration(t.ShutdownSec) * time.Second
 	}
-	if len(fc.Security.Attach.AllowSchemes) > 0 {
-		cfg.AttachAllowSchemes = append([]string(nil), fc.Security.Attach.AllowSchemes...)
+	if t.WaitNavMs > 0 {
+		cfg.WaitNavDelay = time.Duration(t.WaitNavMs) * time.Millisecond
 	}
+}
 
-	if fc.Timeouts.ActionSec > 0 {
-		cfg.ActionTimeout = time.Duration(fc.Timeouts.ActionSec) * time.Second
+func applySchedulerConfig(cfg *RuntimeConfig, s SchedulerFileConfig) {
+	if s.Enabled != nil {
+		cfg.Scheduler.Enabled = *s.Enabled
 	}
-	if fc.Timeouts.NavigateSec > 0 {
-		cfg.NavigateTimeout = time.Duration(fc.Timeouts.NavigateSec) * time.Second
+	if s.Strategy != "" {
+		cfg.Scheduler.Strategy = s.Strategy
 	}
-	if fc.Timeouts.ShutdownSec > 0 {
-		cfg.ShutdownTimeout = time.Duration(fc.Timeouts.ShutdownSec) * time.Second
+	if s.MaxQueueSize != nil {
+		cfg.Scheduler.MaxQueueSize = *s.MaxQueueSize
 	}
-	if fc.Timeouts.WaitNavMs > 0 {
-		cfg.WaitNavDelay = time.Duration(fc.Timeouts.WaitNavMs) * time.Millisecond
+	if s.MaxPerAgent != nil {
+		cfg.Scheduler.MaxPerAgent = *s.MaxPerAgent
 	}
+	if s.MaxInflight != nil {
+		cfg.Scheduler.MaxInflight = *s.MaxInflight
+	}
+	if s.MaxPerAgentFlight != nil {
+		cfg.Scheduler.MaxPerAgentFlight = *s.MaxPerAgentFlight
+	}
+	if s.ResultTTLSec != nil {
+		cfg.Scheduler.ResultTTLSec = *s.ResultTTLSec
+	}
+	if s.WorkerCount != nil {
+		cfg.Scheduler.WorkerCount = *s.WorkerCount
+	}
+}
 
-	if fc.Scheduler.Enabled != nil {
-		cfg.Scheduler.Enabled = *fc.Scheduler.Enabled
+func applyAutoSolverConfig(cfg *RuntimeConfig, a AutoSolverFileConfig) {
+	if a.Enabled != nil {
+		cfg.AutoSolver.Enabled = *a.Enabled
 	}
-	if fc.Scheduler.Strategy != "" {
-		cfg.Scheduler.Strategy = fc.Scheduler.Strategy
+	if a.AutoTrigger != nil {
+		cfg.AutoSolver.AutoTrigger = *a.AutoTrigger
 	}
-	if fc.Scheduler.MaxQueueSize != nil {
-		cfg.Scheduler.MaxQueueSize = *fc.Scheduler.MaxQueueSize
+	if a.TriggerOnNavigate != nil {
+		cfg.AutoSolver.TriggerOnNavigate = *a.TriggerOnNavigate
 	}
-	if fc.Scheduler.MaxPerAgent != nil {
-		cfg.Scheduler.MaxPerAgent = *fc.Scheduler.MaxPerAgent
+	if a.TriggerOnAction != nil {
+		cfg.AutoSolver.TriggerOnAction = *a.TriggerOnAction
 	}
-	if fc.Scheduler.MaxInflight != nil {
-		cfg.Scheduler.MaxInflight = *fc.Scheduler.MaxInflight
+	if a.MaxAttempts != nil && *a.MaxAttempts > 0 {
+		cfg.AutoSolver.MaxAttempts = *a.MaxAttempts
 	}
-	if fc.Scheduler.MaxPerAgentFlight != nil {
-		cfg.Scheduler.MaxPerAgentFlight = *fc.Scheduler.MaxPerAgentFlight
+	if a.SolverTimeoutSec != nil && *a.SolverTimeoutSec > 0 {
+		cfg.AutoSolver.SolverTimeoutSec = *a.SolverTimeoutSec
 	}
-	if fc.Scheduler.ResultTTLSec != nil {
-		cfg.Scheduler.ResultTTLSec = *fc.Scheduler.ResultTTLSec
+	if a.RetryBaseDelayMs != nil && *a.RetryBaseDelayMs >= 0 {
+		cfg.AutoSolver.RetryBaseDelayMs = *a.RetryBaseDelayMs
 	}
-	if fc.Scheduler.WorkerCount != nil {
-		cfg.Scheduler.WorkerCount = *fc.Scheduler.WorkerCount
+	if a.RetryMaxDelayMs != nil && *a.RetryMaxDelayMs >= 0 {
+		cfg.AutoSolver.RetryMaxDelayMs = *a.RetryMaxDelayMs
 	}
-
-	if fc.AutoSolver.Enabled != nil {
-		cfg.AutoSolver.Enabled = *fc.AutoSolver.Enabled
+	if len(a.Solvers) > 0 {
+		cfg.AutoSolver.Solvers = append([]string(nil), a.Solvers...)
 	}
-	if fc.AutoSolver.AutoTrigger != nil {
-		cfg.AutoSolver.AutoTrigger = *fc.AutoSolver.AutoTrigger
+	if a.LLMProvider != "" {
+		cfg.AutoSolver.LLMProvider = a.LLMProvider
 	}
-	if fc.AutoSolver.TriggerOnNavigate != nil {
-		cfg.AutoSolver.TriggerOnNavigate = *fc.AutoSolver.TriggerOnNavigate
+	if a.LLMFallback != nil {
+		cfg.AutoSolver.LLMFallback = *a.LLMFallback
 	}
-	if fc.AutoSolver.TriggerOnAction != nil {
-		cfg.AutoSolver.TriggerOnAction = *fc.AutoSolver.TriggerOnAction
-	}
-	if fc.AutoSolver.MaxAttempts != nil && *fc.AutoSolver.MaxAttempts > 0 {
-		cfg.AutoSolver.MaxAttempts = *fc.AutoSolver.MaxAttempts
-	}
-	if fc.AutoSolver.SolverTimeoutSec != nil && *fc.AutoSolver.SolverTimeoutSec > 0 {
-		cfg.AutoSolver.SolverTimeoutSec = *fc.AutoSolver.SolverTimeoutSec
-	}
-	if fc.AutoSolver.RetryBaseDelayMs != nil && *fc.AutoSolver.RetryBaseDelayMs >= 0 {
-		cfg.AutoSolver.RetryBaseDelayMs = *fc.AutoSolver.RetryBaseDelayMs
-	}
-	if fc.AutoSolver.RetryMaxDelayMs != nil && *fc.AutoSolver.RetryMaxDelayMs >= 0 {
-		cfg.AutoSolver.RetryMaxDelayMs = *fc.AutoSolver.RetryMaxDelayMs
-	}
-	if len(fc.AutoSolver.Solvers) > 0 {
-		cfg.AutoSolver.Solvers = append([]string(nil), fc.AutoSolver.Solvers...)
-	}
-	if fc.AutoSolver.LLMProvider != "" {
-		cfg.AutoSolver.LLMProvider = fc.AutoSolver.LLMProvider
-	}
-	if fc.AutoSolver.LLMFallback != nil {
-		cfg.AutoSolver.LLMFallback = *fc.AutoSolver.LLMFallback
-	}
-	cfg.AutoSolver.CapsolverKey = fc.AutoSolver.External.CapsolverKey
-	cfg.AutoSolver.TwoCaptchaKey = fc.AutoSolver.External.TwoCaptchaKey
+	cfg.AutoSolver.CapsolverKey = a.External.CapsolverKey
+	cfg.AutoSolver.TwoCaptchaKey = a.External.TwoCaptchaKey
 	cfg.AutoSolver.Credentials = AutoSolverCredentials{
 		Login: AutoSolverLoginCreds{
-			User:     fc.AutoSolver.Credentials.Login.User,
-			Password: fc.AutoSolver.Credentials.Login.Password,
+			User:     a.Credentials.Login.User,
+			Password: a.Credentials.Login.Password,
 		},
 		Signup: AutoSolverSignupCreds{
-			Name:     fc.AutoSolver.Credentials.Signup.Name,
-			Email:    fc.AutoSolver.Credentials.Signup.Email,
-			Password: fc.AutoSolver.Credentials.Signup.Password,
+			Name:     a.Credentials.Signup.Name,
+			Email:    a.Credentials.Signup.Email,
+			Password: a.Credentials.Signup.Password,
 		},
 		Form: AutoSolverFormCreds{
-			Field1: fc.AutoSolver.Credentials.Form.Field1,
-			Field2: fc.AutoSolver.Credentials.Form.Field2,
-			Email:  fc.AutoSolver.Credentials.Form.Email,
+			Field1: a.Credentials.Form.Field1,
+			Field2: a.Credentials.Form.Field2,
+			Email:  a.Credentials.Form.Email,
 		},
 	}
 }
