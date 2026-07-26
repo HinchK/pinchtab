@@ -454,7 +454,7 @@ func stubAttachBridgeHealthy(t *testing.T) {
 
 func TestOrchestrator_Attach(t *testing.T) {
 	stubAttachBridgeHealthy(t)
-	runner := &mockRunner{portAvail: true}
+	runner := &mockRunner{portAvail: true, newCmd: newBlockingMockCmdFactory(t)}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
 	allowAttachForTest(o, []string{"ws"}, []string{"localhost"})
 	o.attachHealthCheckTimeout = 50 * time.Millisecond
@@ -495,7 +495,7 @@ func TestOrchestrator_Attach(t *testing.T) {
 
 func TestOrchestrator_Attach_SpawnsChildBridgeWithCDPFlags(t *testing.T) {
 	stubAttachBridgeHealthy(t)
-	runner := &mockRunner{portAvail: true}
+	runner := &mockRunner{portAvail: true, newCmd: newBlockingMockCmdFactory(t)}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
 	allowAttachForTest(o, []string{"ws"}, []string{"127.0.0.1"})
 	o.attachHealthCheckTimeout = 30 * time.Millisecond
@@ -541,7 +541,7 @@ func TestOrchestrator_AttachWithProviderRejectsUnknownProvider(t *testing.T) {
 
 func TestOrchestrator_Attach_PreservesCdpURLMetadata(t *testing.T) {
 	stubAttachBridgeHealthy(t)
-	runner := &mockRunner{portAvail: true}
+	runner := &mockRunner{portAvail: true, newCmd: newBlockingMockCmdFactory(t)}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
 	allowAttachForTest(o, []string{"ws"}, []string{"127.0.0.1"})
 	o.attachHealthCheckTimeout = 30 * time.Millisecond
@@ -568,7 +568,7 @@ func TestOrchestrator_Attach_DuplicateName(t *testing.T) {
 	processAliveFunc = func(pid int) bool { return pid > 0 }
 	defer func() { processAliveFunc = old }()
 
-	runner := &mockRunner{portAvail: true}
+	runner := &mockRunner{portAvail: true, newCmd: newBlockingMockCmdFactory(t)}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
 	allowAttachForTest(o, []string{"ws"}, []string{"localhost"})
 	o.attachHealthCheckTimeout = 50 * time.Millisecond
@@ -1274,7 +1274,7 @@ func TestAttach_FailedSpawnReleasesNameReservation(t *testing.T) {
 		t.Fatalf("failed attach left %d residual instances (stale reservation)", n)
 	}
 
-	o.runner = &mockRunner{portAvail: true}
+	o.runner = &mockRunner{portAvail: true, newCmd: newBlockingMockCmdFactory(t)}
 	if _, err := o.Attach("ext", "ws://localhost:9222/devtools/browser/a"); err != nil {
 		t.Fatalf("retry after failed attach should succeed: %v", err)
 	}
@@ -1297,7 +1297,10 @@ func (r *slowAttachRunner) Run(ctx context.Context, binary string, args []string
 // M9 regression: concurrent same-name attaches spawn at most one child.
 func TestAttach_ConcurrentDuplicateNameSpawnsOneChild(t *testing.T) {
 	stubAttachBridgeHealthy(t)
-	runner := &slowAttachRunner{mockRunner: mockRunner{portAvail: true}, delay: 50 * time.Millisecond}
+	runner := &slowAttachRunner{
+		mockRunner: mockRunner{portAvail: true, newCmd: newBlockingMockCmdFactory(t)},
+		delay:      50 * time.Millisecond,
+	}
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
 	allowAttachForTest(o, []string{"ws"}, []string{"localhost"})
 	o.attachHealthCheckTimeout = 50 * time.Millisecond

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
@@ -18,6 +19,7 @@ type mockRunner struct {
 	args      []string
 	env       []string
 	runErr    error
+	newCmd    func() Cmd
 }
 
 type mockCmd struct {
@@ -29,12 +31,67 @@ func (m *mockCmd) Wait() error { return nil }
 func (m *mockCmd) PID() int    { return m.pid }
 func (m *mockCmd) Cancel()     {}
 
+type blockingMockCmd struct {
+	pid  int
+	done chan struct{}
+	once sync.Once
+	err  error
+}
+
+func newBlockingMockCmd() *blockingMockCmd {
+	return &blockingMockCmd{
+		pid:  1234,
+		done: make(chan struct{}),
+	}
+}
+
+func (m *blockingMockCmd) Wait() error {
+	<-m.done
+	return m.err
+}
+
+func (m *blockingMockCmd) PID() int { return m.pid }
+
+func (m *blockingMockCmd) Cancel() { m.release() }
+
+func (m *blockingMockCmd) release() {
+	m.once.Do(func() {
+		close(m.done)
+	})
+}
+
+func newBlockingMockCmdFactory(t *testing.T) func() Cmd {
+	t.Helper()
+
+	var (
+		mu   sync.Mutex
+		cmds []*blockingMockCmd
+	)
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, cmd := range cmds {
+			cmd.release()
+		}
+	})
+	return func() Cmd {
+		cmd := newBlockingMockCmd()
+		mu.Lock()
+		cmds = append(cmds, cmd)
+		mu.Unlock()
+		return cmd
+	}
+}
+
 func (m *mockRunner) Run(ctx context.Context, binary string, args []string, env []string, stdout, stderr io.Writer) (Cmd, error) {
 	m.runCalled = true
 	m.args = append([]string(nil), args...)
 	m.env = append([]string(nil), env...)
 	if m.runErr != nil {
 		return nil, m.runErr
+	}
+	if m.newCmd != nil {
+		return m.newCmd(), nil
 	}
 	return &mockCmd{pid: 1234, isAlive: true}, nil
 }
