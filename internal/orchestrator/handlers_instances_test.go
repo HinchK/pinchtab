@@ -534,6 +534,9 @@ func setupAttachTargetsOrchestrator(t *testing.T, runner *mockRunner) *Orchestra
 	old := processAliveFunc
 	processAliveFunc = func(pid int) bool { return pid > 0 }
 	t.Cleanup(func() { processAliveFunc = old })
+	if runner.newCmd == nil {
+		runner.newCmd = newBlockingMockCmdFactory(t)
+	}
 
 	o := NewOrchestratorWithRunner(t.TempDir(), runner)
 	o.ApplyRuntimeConfig(&config.RuntimeConfig{
