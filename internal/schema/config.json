@@ -359,6 +359,9 @@
         "noAnimations": {
           "$ref": "#/definitions/nullableBoolean"
         },
+        "captureAllowActivation": {
+          "$ref": "#/definitions/nullableBoolean"
+        },
         "humanize": {
           "$ref": "#/definitions/nullableBoolean"
         },

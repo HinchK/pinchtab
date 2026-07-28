@@ -35,7 +35,7 @@ func (e *screenshotExecutor) Execute(_ context.Context, method string, params, r
 func TestCaptureScreenshotWithoutActivationRestoresFocusEmulation(t *testing.T) {
 	exec := &screenshotExecutor{}
 	ctx := cdp.WithExecutor(context.Background(), exec)
-	got, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot())
+	got, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot(), true)
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -44,6 +44,7 @@ func TestCaptureScreenshotWithoutActivationRestoresFocusEmulation(t *testing.T) 
 	}
 	wantMethods := []string{
 		emulation.CommandSetFocusEmulationEnabled,
+		page.CommandBringToFront,
 		page.CommandCaptureScreenshot,
 		emulation.CommandSetFocusEmulationEnabled,
 	}
@@ -58,11 +59,24 @@ func TestCaptureScreenshotWithoutActivationRestoresFocusEmulation(t *testing.T) 
 func TestCaptureScreenshotWithoutActivationRestoresAfterCaptureError(t *testing.T) {
 	exec := &screenshotExecutor{captureErr: errors.New("capture failed")}
 	ctx := cdp.WithExecutor(context.Background(), exec)
-	if _, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot()); err == nil {
+	if _, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot(), true); err == nil {
 		t.Fatal("expected capture error")
 	}
 	if !reflect.DeepEqual(exec.focusFlags, []bool{true, false}) {
 		t.Fatalf("focus flags = %v, want [true false]", exec.focusFlags)
+	}
+}
+
+func TestCaptureScreenshotWithoutActivationSkipsBringToFrontWhenDisallowed(t *testing.T) {
+	exec := &screenshotExecutor{}
+	ctx := cdp.WithExecutor(context.Background(), exec)
+	if _, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot(), false); err != nil {
+		t.Fatalf("capture: %v", err)
+	}
+	for _, m := range exec.methods {
+		if m == page.CommandBringToFront {
+			t.Fatalf("CDP methods = %v, want no %s", exec.methods, page.CommandBringToFront)
+		}
 	}
 }
 

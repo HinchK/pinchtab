@@ -118,10 +118,11 @@ func (h *Handlers) HandleCapture(w http.ResponseWriter, r *http.Request) {
 
 	opts := bridge.CaptureOpts{
 		Image: bridge.ScreenshotOpts{
-			Format:         format,
-			Quality:        quality,
-			BeyondViewport: beyondViewport,
-			Scale:          scale,
+			Format:          format,
+			Quality:         quality,
+			BeyondViewport:  beyondViewport,
+			Scale:           scale,
+			AllowActivation: h.Config.CaptureAllowActivation,
 		},
 		Filter:            filter,
 		MaxDepth:          depth,
