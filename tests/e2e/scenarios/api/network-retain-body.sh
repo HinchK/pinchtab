@@ -14,7 +14,6 @@ fi
 
 NETWORK_RETAIN_OLD_SERVER="$E2E_SERVER"
 E2E_SERVER="$E2E_RETAIN_SERVER"
-trap 'E2E_SERVER="$NETWORK_RETAIN_OLD_SERVER"' EXIT
 
 pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/network-retain-body.html\"}"
 assert_ok "navigate to retention fixture"
@@ -25,6 +24,7 @@ if [ -z "$REQ_ID" ] || [ "$REQ_ID" = "null" ]; then
   echo -e "  ${RED}✗${NC} could not find retained-body request in network buffer"
   ((ASSERTIONS_FAILED++)) || true
   end_test
+  E2E_SERVER="$NETWORK_RETAIN_OLD_SERVER"
   exit 0
 fi
 
@@ -74,3 +74,4 @@ else
 fi
 
 end_test
+E2E_SERVER="$NETWORK_RETAIN_OLD_SERVER"
