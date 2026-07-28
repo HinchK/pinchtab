@@ -341,9 +341,10 @@ func processStart(pid int) (int64, error) {
 
 func listenerReachable(address, port string) bool {
 	host := strings.Trim(strings.TrimSpace(address), "[]")
-	if host == "" || host == "0.0.0.0" {
+	switch host {
+	case "", "0.0.0.0":
 		host = "127.0.0.1"
-	} else if host == "::" {
+	case "::":
 		host = "::1"
 	}
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 250*time.Millisecond)

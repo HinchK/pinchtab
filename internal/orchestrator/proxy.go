@@ -420,7 +420,7 @@ func closedTabID(req *http.Request, resp *http.Response) string {
 		return ""
 	}
 	path := strings.TrimSpace(req.URL.Path)
-	if path != "/close" && !(strings.HasPrefix(path, "/tabs/") && strings.HasSuffix(path, "/close")) {
+	if path != "/close" && (!strings.HasPrefix(path, "/tabs/") || !strings.HasSuffix(path, "/close")) {
 		return ""
 	}
 	if tabID := strings.TrimSpace(resp.Header.Get(activity.HeaderPTTabID)); tabID != "" {

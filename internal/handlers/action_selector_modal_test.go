@@ -53,7 +53,7 @@ func TestActionSelectorResolutionDefaultsToTopmostDialog(t *testing.T) {
 
 	cfg := &config.RuntimeConfig{ActionTimeout: 5 * time.Second, DefaultBrowser: config.BrowserChrome, StateDir: t.TempDir()}
 	b := bridge.New(context.Background(), ctx, cfg)
-	b.TabManager.RegisterTab("tab-modal", ctx)
+	b.RegisterTab("tab-modal", ctx)
 	h := New(b, cfg, nil, nil, nil)
 
 	req := bridge.ActionRequest{Selector: "text:Content contains"}

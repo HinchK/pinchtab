@@ -25,13 +25,13 @@ func TestKnownInterstitialDismissalIsCatalogAndModalScoped(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Query().Get("case") {
 		case "known":
-			fmt.Fprint(w, `<div id="payg" role="dialog" aria-modal="true" style="position:fixed;inset:10px;background:white">Pay-as-you-go billing<button id="dismiss" onclick="window.dismissals++;this.parentElement.remove()">Not now</button></div>`)
+			_, _ = fmt.Fprint(w, `<div id="payg" role="dialog" aria-modal="true" style="position:fixed;inset:10px;background:white">Pay-as-you-go billing<button id="dismiss" onclick="window.dismissals++;this.parentElement.remove()">Not now</button></div>`)
 		case "missing-control":
-			fmt.Fprint(w, `<div role="dialog" aria-modal="true" style="position:fixed;inset:10px;background:white">Pay as you go billing<button onclick="window.dismissals++">Continue</button></div>`)
+			_, _ = fmt.Fprint(w, `<div role="dialog" aria-modal="true" style="position:fixed;inset:10px;background:white">Pay as you go billing<button onclick="window.dismissals++">Continue</button></div>`)
 		default:
-			fmt.Fprint(w, `<div role="dialog" aria-modal="true" style="position:fixed;inset:10px;background:white">Ordinary wizard<button onclick="window.dismissals++">Continue</button></div><button id="outside" onclick="window.dismissals++">Not now</button>`)
+			_, _ = fmt.Fprint(w, `<div role="dialog" aria-modal="true" style="position:fixed;inset:10px;background:white">Ordinary wizard<button onclick="window.dismissals++">Continue</button></div><button id="outside" onclick="window.dismissals++">Not now</button>`)
 		}
-		fmt.Fprint(w, `<script>window.dismissals=0</script>`)
+		_, _ = fmt.Fprint(w, `<script>window.dismissals=0</script>`)
 	}))
 	defer server.Close()
 	serverURL, err := url.Parse(server.URL)
@@ -61,7 +61,7 @@ func TestKnownInterstitialDismissalIsCatalogAndModalScoped(t *testing.T) {
 
 	cfg := &config.RuntimeConfig{ActionTimeout: 5 * time.Second, DefaultBrowser: config.BrowserChrome, StateDir: t.TempDir()}
 	b := bridge.New(context.Background(), ctx, cfg)
-	b.TabManager.RegisterTab("tab-interstitial", ctx)
+	b.RegisterTab("tab-interstitial", ctx)
 	h := New(b, cfg, nil, nil, nil)
 	pageURL := func(testCase string) string {
 		return "http://purview.microsoft.com:" + serverURL.Port() + "/?case=" + testCase

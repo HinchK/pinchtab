@@ -65,6 +65,29 @@ assert_ok "hover on button"
 end_test
 
 # ─────────────────────────────────────────────────────────────────
+start_test "HTTP: click submit dispatches once and reports terminal post-state"
+
+# The submit contract is deliberately distinct from a normal click: it must
+# dispatch only once, avoid retry/recovery, and return the observed outcome.
+pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/js-submit.html\"}"
+assert_ok "navigate submit fixture"
+
+pt_post /action -d '{"kind":"fill","selector":"#username","text":"admin"}'
+assert_ok "fill username"
+pt_post /action -d '{"kind":"fill","selector":"#password","text":"secret"}'
+assert_ok "fill password"
+pt_post /action -d '{"kind":"click","selector":"#submit-btn","submit":true}'
+assert_ok "submit click"
+assert_result_jq '.postState.status == "pending" and .postState.signal == "no_terminal_change"' \
+  "inline submit reports pending post-state" "inline submit did not report the expected pending post-state"
+
+pt_post /evaluate -d '{"expression":"document.getElementById(\"result-success\")?.textContent"}'
+assert_ok "read submit outcome"
+assert_json_eq "$RESULT" '.result' 'LOGIN_SUCCESS' "submit handler ran once"
+
+end_test
+
+# ─────────────────────────────────────────────────────────────────
 start_test "pinchtab low-level mouse actions"
 
 pt_post /navigate "{\"url\":\"${FIXTURES_URL}/mouse-events.html\"}"

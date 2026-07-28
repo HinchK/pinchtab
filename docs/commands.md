@@ -78,6 +78,7 @@ pinchtab frame                         # Show current frame scope
 pinchtab frame "#payment-frame"        # Scope selectors to an iframe
 pinchtab frame main                    # Return selector scope to the top document
 pinchtab click [selector]               # Click an element or coordinates with --x/--y
+pinchtab click <selector> --submit      # One terminal submit click; reports bounded post-submit state
 pinchtab click --css <selector>         # Force CSS selector mode
 pinchtab click --wait-nav <selector>    # Click and wait for navigation
 pinchtab click --snap <selector>        # Click and output interactive snapshot
@@ -141,6 +142,28 @@ state affects selector-based commands such as `snap`, `click`, `fill`, and
 Selector-based actions now fail fast when a selector does not match. If the UI
 is still loading, use `pinchtab wait` first instead of relying on action
 timeouts.
+
+For a form button whose action must never be retried, use `pinchtab click
+<selector> --submit`. This performs exactly one DOM click and reports a short
+post-submit observation instead of retrying delivery. It cannot be combined
+with `--wait-nav`, `--mode`, or `--humanize`; use a normal click for those
+workflows. `pinchtab fill <selector> <text> --submit` remains the separate
+Enter-after-fill shortcut.
+
+## Standalone Bridges
+
+Standalone `pinchtab bridge` processes register themselves in the local state
+directory while running. Inspect them without sending signals:
+
+```bash
+pinchtab bridges list
+pinchtab bridges list --json
+pinchtab bridges list --prune   # Remove only records whose original PID is dead or reused
+```
+
+`--prune` never kills a process. It removes only conclusively stale registry
+records; an unreachable listener with a live or unknown PID remains visible for
+operator investigation.
 
 ## Keyboard, Wait, And Diagnostics
 

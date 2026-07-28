@@ -47,10 +47,10 @@ func TestWireTabManagerReappliesDebuggerGuardAfterReconnect(t *testing.T) {
 	for _, tabID := range []string{"attached-tab", "reconnected-tab"} {
 		b.TabManager = nil
 		b.wireTabManager(context.Background())
-		if b.TabManager.onTabSetup == nil {
+		if b.onTabSetup == nil {
 			t.Fatalf("wireTabManager(%q) omitted target setup", tabID)
 		}
-		if err := b.TabManager.onTabSetup(ctx, tabID); err != nil {
+		if err := b.onTabSetup(ctx, tabID); err != nil {
 			t.Fatalf("wired tab setup(%q): %v", tabID, err)
 		}
 	}
@@ -145,7 +145,7 @@ func TestTabSetupFailsClosedWhenPausedTargetCannotResume(t *testing.T) {
 
 func TestManagedTargetSetupPropagatesDebuggerGuardFailure(t *testing.T) {
 	want := errors.New("guard unavailable")
-	tm := NewTabManager(nil, nil, nil, nil, func(context.Context, string) error { return want })
+	tm := NewTabManager(context.Background(), nil, nil, nil, func(context.Context, string) error { return want })
 
 	if _, err := tm.setupManagedTarget(context.Background(), "tab", "target"); !errors.Is(err, want) {
 		t.Fatalf("setupManagedTarget error = %v, want %v", err, want)

@@ -158,7 +158,7 @@ func TestHandleBackIgnoresCachedTabPolicyBlock(t *testing.T) {
 
 func TestExplicitTabWaitReturnsRetryableBusyWithoutLosingTab(t *testing.T) {
 	b := &busyPolicyBridge{currentURLErr: context.DeadlineExceeded}
-	b.mockBridge.evaluateFn = func(_ string, result any) error {
+	b.evaluateFn = func(_ string, result any) error {
 		*(result.(*bool)) = true
 		return nil
 	}

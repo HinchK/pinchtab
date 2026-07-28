@@ -544,3 +544,101 @@ func TestMonitor_DelaysRunningUntilWarmTabSucceeds(t *testing.T) {
 	cmd.waitCh <- nil
 	<-done
 }
+
+// TestMonitor_ChildExitAfterRunningTransitionsToStopped covers the other half
+// of monitor()'s lifecycle: once an instance has genuinely become healthy,
+// the test-controlled child bridge exiting on its own (e.g. the external
+// browser disconnected) must drive the instance to "stopped", not leave it
+// stuck at "running" or misreport it as "error".
+func TestMonitor_ChildExitAfterRunningTransitionsToStopped(t *testing.T) {
+	old := processAliveFunc
+	processAliveFunc = func(pid int) bool { return pid > 0 }
+	defer func() { processAliveFunc = old }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.WriteHeader(http.StatusOK)
+		case "/tab":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"tabId":"tab-1","url":"about:blank","title":""}`))
+		case "/close":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"closed":true,"tabId":"tab-1"}`))
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	parsed, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatalf("Parse(%q) error = %v", srv.URL, err)
+	}
+	host, portStr, ok := strings.Cut(parsed.Host, ":")
+	if !ok {
+		t.Fatalf("expected host:port in %q", parsed.Host)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("Atoi(%q) error = %v", portStr, err)
+	}
+
+	o := NewOrchestratorWithRunner(t.TempDir(), &mockRunner{portAvail: true})
+	o.ApplyRuntimeConfig(&config.RuntimeConfig{Bind: host})
+	o.client = srv.Client()
+
+	cmd := &blockingWaitCmd{pid: 4321, waitCh: make(chan error, 1)}
+	inst := &InstanceInternal{
+		Instance: bridge.Instance{
+			ID:          "inst_1",
+			Port:        strconv.Itoa(port),
+			Status:      "starting",
+			StartTime:   time.Now(),
+			ProfileName: "profile1",
+		},
+		cmd: cmd,
+	}
+
+	done := make(chan struct{})
+	go func() {
+		o.monitor(inst)
+		close(done)
+	}()
+
+	deadline := time.Now().Add(4 * time.Second)
+	for time.Now().Before(deadline) {
+		o.mu.RLock()
+		status := inst.Status
+		o.mu.RUnlock()
+		if status == "running" {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	o.mu.RLock()
+	status := inst.Status
+	o.mu.RUnlock()
+	if status != "running" {
+		cmd.waitCh <- nil
+		<-done
+		t.Fatalf("status before child exit = %q, want running", status)
+	}
+
+	// Simulate the test-controlled child bridge exiting on its own now that
+	// the instance is confirmed healthy.
+	cmd.waitCh <- nil
+
+	select {
+	case <-done:
+	case <-time.After(4 * time.Second):
+		t.Fatal("monitor did not return after child exit")
+	}
+
+	o.mu.RLock()
+	status = inst.Status
+	o.mu.RUnlock()
+	if status != "stopped" {
+		t.Fatalf("status after child exit = %q, want stopped", status)
+	}
+}

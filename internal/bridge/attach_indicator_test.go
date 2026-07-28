@@ -51,7 +51,7 @@ func TestAttachIndicatorNamesPortPersistsAndClears(t *testing.T) {
 	b := New(context.Background(), ctx, cfg)
 	b.stealthLaunchMode = stealth.LaunchModeAttached
 	execCtx := cdp.WithExecutor(ctx, chromedp.FromContext(ctx).Target)
-	b.TabManager.RegisterTab("tab-indicator", execCtx)
+	b.RegisterTab("tab-indicator", execCtx)
 	if err := b.tabSetup(execCtx, "tab-indicator"); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +82,7 @@ func TestAttachIndicatorNamesPortPersistsAndClears(t *testing.T) {
 
 	b2 := New(context.Background(), ctx, &config.RuntimeConfig{Port: "9877"})
 	b2.stealthLaunchMode = stealth.LaunchModeAttached
-	b2.TabManager.RegisterTab("tab-indicator", execCtx)
+	b2.RegisterTab("tab-indicator", execCtx)
 	if err := b2.tabSetup(execCtx, "tab-indicator"); err != nil {
 		t.Fatal(err)
 	}
