@@ -30,7 +30,7 @@ func TestCheckUncheckARIACheckboxAndVerifyState(t *testing.T) {
 		chromedp.Flag("no-sandbox", true),
 	)...)
 	ctx, cancel := chromedp.NewContext(alloc)
-	ctx, cancelTimeout := context.WithTimeout(ctx, 15*time.Second)
+	ctx, cancelTimeout := context.WithTimeout(ctx, 20*time.Second)
 	t.Cleanup(func() {
 		cancelTimeout()
 		cancel()

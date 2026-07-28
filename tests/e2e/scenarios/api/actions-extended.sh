@@ -78,7 +78,7 @@ pt_post /action -d '{"kind":"fill","selector":"#password","text":"secret"}'
 assert_ok "fill password"
 pt_post /action -d '{"kind":"click","selector":"#submit-btn","submit":true}'
 assert_ok "submit click"
-assert_result_jq '.postState.status == "pending" and .postState.signal == "no_terminal_change"' \
+assert_result_jq '.result.postState.status == "pending" and .result.postState.signal == "no_terminal_change"' \
   "inline submit reports pending post-state" "inline submit did not report the expected pending post-state"
 
 pt_post /evaluate -d '{"expression":"document.getElementById(\"result-success\")?.textContent"}'
