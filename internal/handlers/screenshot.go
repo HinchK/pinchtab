@@ -104,12 +104,12 @@ func (h *Handlers) HandleScreenshot(w http.ResponseWriter, r *http.Request) {
 		cdpFormat = bridge.ScreenshotFormatPng
 	}
 	buf, captureErr := bridge.CaptureScreenshot(tCtx, bridge.ScreenshotOpts{
-		Format:          cdpFormat,
-		Quality:         req.quality,
-		Clip:            clip,
-		BeyondViewport:  req.beyondViewport,
-		Scale:           req.scale,
-		AllowActivation: h.Config.CaptureAllowActivation,
+		Format:            cdpFormat,
+		Quality:           req.quality,
+		Clip:              clip,
+		BeyondViewport:    req.beyondViewport,
+		Scale:             req.scale,
+		DisableActivation: !h.Config.CaptureAllowActivation,
 	})
 	if captureErr != nil {
 		httpx.Error(w, 500, fmt.Errorf("screenshot: %w", captureErr))

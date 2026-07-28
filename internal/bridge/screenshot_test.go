@@ -35,7 +35,7 @@ func (e *screenshotExecutor) Execute(_ context.Context, method string, params, r
 func TestCaptureScreenshotWithoutActivationRestoresFocusEmulation(t *testing.T) {
 	exec := &screenshotExecutor{}
 	ctx := cdp.WithExecutor(context.Background(), exec)
-	got, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot(), true)
+	got, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot(), false)
 	if err != nil {
 		t.Fatalf("capture: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestCaptureScreenshotWithoutActivationRestoresFocusEmulation(t *testing.T) 
 func TestCaptureScreenshotWithoutActivationRestoresAfterCaptureError(t *testing.T) {
 	exec := &screenshotExecutor{captureErr: errors.New("capture failed")}
 	ctx := cdp.WithExecutor(context.Background(), exec)
-	if _, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot(), true); err == nil {
+	if _, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot(), false); err == nil {
 		t.Fatal("expected capture error")
 	}
 	if !reflect.DeepEqual(exec.focusFlags, []bool{true, false}) {
@@ -70,7 +70,7 @@ func TestCaptureScreenshotWithoutActivationRestoresAfterCaptureError(t *testing.
 func TestCaptureScreenshotWithoutActivationSkipsBringToFrontWhenDisallowed(t *testing.T) {
 	exec := &screenshotExecutor{}
 	ctx := cdp.WithExecutor(context.Background(), exec)
-	if _, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot(), false); err != nil {
+	if _, err := captureScreenshotWithoutActivation(ctx, page.CaptureScreenshot(), true); err != nil {
 		t.Fatalf("capture: %v", err)
 	}
 	for _, m := range exec.methods {

@@ -123,12 +123,14 @@ type ScreenshotOpts struct {
 	ViewportWidth  float64
 	ViewportHeight float64
 
-	// AllowActivation permits Page.bringToFront to wake a backgrounded tab's
-	// compositor before capturing (security.instanceDefaults.captureAllowActivation,
-	// default true). When false, capture relies solely on focus emulation and
-	// never raises the tab in the operator's browser, accepting that a
-	// background tab's capture may then block until the caller's deadline.
-	AllowActivation bool
+	// DisableActivation suppresses the Page.bringToFront call that wakes a
+	// backgrounded tab's compositor before capturing (the inverse of
+	// instanceDefaults.captureAllowActivation, default true — so the zero
+	// value here is the safe/reliable default even if a caller forgets to
+	// set it). When true, capture relies solely on focus emulation and never
+	// raises the tab in the operator's browser, accepting that a background
+	// tab's capture may then block until the caller's deadline.
+	DisableActivation bool
 }
 
 func scaledScreenshotClip(opts ScreenshotOpts, viewportWidth, viewportHeight, documentWidth, documentHeight float64) *page.Viewport {
@@ -179,14 +181,14 @@ func captureFromSurface(beyondViewport bool, clip *page.Viewport) bool {
 
 // captureScreenshotWithoutActivation wakes a background renderer before
 // capturing it. Focus emulation alone does not resume a backgrounded tab's
-// compositor — that requires Page.bringToFront — so when allowActivation is
-// true (the default) it always runs as well; focus emulation is layered on
-// top only so document.hasFocus()/`:focus` reflect the capture as
-// best-effort. When allowActivation is false, the tab is never raised in the
-// operator's browser, accepting that its capture may then block until the
-// caller's deadline (Chromium never resumes a backgrounded compositor
-// without either activation or being brought into view).
-func captureScreenshotWithoutActivation(ctx context.Context, shot *page.CaptureScreenshotParams, allowActivation bool) ([]byte, error) {
+// compositor — that requires Page.bringToFront — so unless disableActivation
+// is set, it always runs as well; focus emulation is layered on top only so
+// document.hasFocus()/`:focus` reflect the capture as best-effort. When
+// disableActivation is true, the tab is never raised in the operator's
+// browser, accepting that its capture may then block until the caller's
+// deadline (Chromium never resumes a backgrounded compositor without either
+// activation or being brought into view).
+func captureScreenshotWithoutActivation(ctx context.Context, shot *page.CaptureScreenshotParams, disableActivation bool) ([]byte, error) {
 	executor := cdp.ExecutorFromContext(ctx)
 	focusEmulated := emulation.SetFocusEmulationEnabled(true).Do(ctx) == nil
 	if focusEmulated {
@@ -197,7 +199,7 @@ func captureScreenshotWithoutActivation(ctx context.Context, shot *page.CaptureS
 			_ = emulation.SetFocusEmulationEnabled(false).Do(restoreCtx)
 		}()
 	}
-	if allowActivation {
+	if !disableActivation {
 		_ = page.BringToFront().Do(ctx)
 	}
 	return shot.Do(ctx)
@@ -245,7 +247,7 @@ func CaptureScreenshot(ctx context.Context, opts ScreenshotOpts) ([]byte, error)
 			shot = shot.WithQuality(int64(opts.Quality))
 		}
 		var inner error
-		buf, inner = captureScreenshotWithoutActivation(ctx, shot, opts.AllowActivation)
+		buf, inner = captureScreenshotWithoutActivation(ctx, shot, opts.DisableActivation)
 		return inner
 	}))
 	return buf, err
@@ -366,12 +368,12 @@ func (b *Bridge) CaptureScreenshot(ctx context.Context, format string, quality i
 			Scale:  clip.Scale,
 		}
 	}
-	allowActivation := b.Config == nil || b.Config.CaptureAllowActivation
+	disableActivation := b.Config != nil && !b.Config.CaptureAllowActivation
 	buf, err := CaptureScreenshot(ctx, ScreenshotOpts{
-		Format:          cdpFormat,
-		Quality:         quality,
-		Clip:            vp,
-		AllowActivation: allowActivation,
+		Format:            cdpFormat,
+		Quality:           quality,
+		Clip:              vp,
+		DisableActivation: disableActivation,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("screenshot: %w", err)
