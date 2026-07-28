@@ -435,16 +435,13 @@ assert_not_ok "rejects non-existent tab"
 end_test
 
 # ─────────────────────────────────────────────────────────────────
-start_test "POST /network/clear: clear network data"
+# /network/clear is gated behind security.allowNetworkIntercept, which this
+# server leaves off by default — see network-route-extended.sh for the
+# happy-path assertion against the full-permissive server.
+start_test "POST /network/clear: 403 when capability off (default server)"
 
 pt_post /network/clear "{\"tabId\":\"${TAB_ID}\"}"
-assert_ok "clear network data"
-
-# Verify entries are cleared
-pt_get "/network?tabId=${TAB_ID}"
-assert_ok "get network after clear"
-ENTRIES_COUNT=$(echo "$RESULT" | jq '.entries | length')
-echo -e "  ${GREEN}✓${NC} entries after clear: $ENTRIES_COUNT"
-((ASSERTIONS_PASSED++)) || true
+assert_not_ok "rejects when allowNetworkIntercept=false"
+assert_json_contains "$RESULT" '.code' 'network_intercept_disabled' "error code identifies the disabled capability"
 
 end_test
