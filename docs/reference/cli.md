@@ -49,7 +49,7 @@ pinchtab find "login button"
 pinchtab network --limit 20
 ```
 
-`pinchtab nav <url>` auto-starts the local PinchTab server when it is not already running. Explicit `--server` and `PINCHTAB_SERVER` targets are used as-is and are not auto-started. To navigate and snapshot in one command after install, run:
+`pinchtab nav <url>` auto-starts the local PinchTab server when it is not already running. Explicit `--server` and `PINCHTAB_SERVER` targets are used as-is and are not auto-started. The default config uses a headless browser, so `nav` may succeed without opening a visible window. To navigate and snapshot in one command after install, run:
 
 ```bash
 pinchtab nav https://pinchtab.com --snap
