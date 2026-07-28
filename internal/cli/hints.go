@@ -36,6 +36,6 @@ func WriteCommandHints(out io.Writer, heading string, hints []CommandHint, width
 // shared by the root banner and `pinchtab health` so the two stay in lockstep.
 var NextStepsRunningHints = []CommandHint{
 	{"export PINCHTAB_SESSION=$(pinchtab session create --agent-id <id>)", "# start a dedicated session"},
-	{"pinchtab nav <url>", "# open a page in the current tab"},
+	{"pinchtab nav <url>", "# navigate the current tab (headless by default)"},
 	{"pinchtab snap", "# inspect interactive elements"},
 }

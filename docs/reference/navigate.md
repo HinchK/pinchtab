@@ -15,6 +15,9 @@ pinchtab nav https://pinchtab.com
 ## CLI Flags
 
 `pinchtab nav <url>` auto-starts the default local server when it is not already running. When `--server` or `PINCHTAB_SERVER` targets another server, PinchTab connects to that server without auto-starting a new process.
+The default daemon install starts a headless browser, so a successful `pinchtab nav`
+may not open a visible window. Use `--snap` to inspect the result, or run PinchTab
+in headed mode when you want a visible browser.
 Hidden aliases: `goto`, `navigate`, `open`.
 
 | Flag | Description |
