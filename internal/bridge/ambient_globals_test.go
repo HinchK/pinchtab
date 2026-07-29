@@ -1,10 +1,12 @@
 package bridge
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -157,67 +159,150 @@ var ambientGlobalsExceptions = map[string]string{}
 // census cannot recognise stops being scanned, and that divergence fails.
 const canonicalViewLine = "const view = (this.ownerDocument && this.ownerDocument.defaultView) || window;"
 
+// jsSegment records where one spliced fragment starts in the assembled text and
+// which source line it came from, so an offset anywhere in a +-concatenated
+// declaration maps back to a line the reader can open.
+type jsSegment struct {
+	offset int
+	line   int
+}
+
 type jsLiteral struct {
 	text      string
 	startLine int
+	segments  []jsSegment
 }
 
-// plusChain matches the Go source between two raw literals that are concatenated,
-// including any named fragments in the chain: `head` + jsNormalizeHelper + `tail`
-// is one declaration, and the xpath arm of the selector resolver lives in the tail.
-// Missing this shape is not a cosmetic gap — the fragment that actually reads a
-// global is routinely not the fragment that opens the function.
-var plusChain = regexp.MustCompile(`^\s*\+\s*(?:[A-Za-z_][A-Za-z0-9_.]*\s*\+\s*)*$`)
+// lineAt maps an offset in the assembled text to its source line, counting
+// newlines only within the fragment that offset falls in. A spliced declaration
+// does not lay out like its source, so counting from the start of the merged text
+// reports a line that does not exist.
+func (l jsLiteral) lineAt(offset int) int {
+	line := l.startLine
+	for _, seg := range l.segments {
+		if seg.offset > offset {
+			break
+		}
+		line = seg.line + strings.Count(l.text[seg.offset:offset], "\n")
+	}
+	return line
+}
 
-var identLiteral = regexp.MustCompile("(?s)([A-Za-z_][A-Za-z0-9_]*)\\s*(?::?=)\\s*`([^`]*)`")
+// rawLiteralText reports the contents of a raw (backtick) string literal.
+func rawLiteralText(expr ast.Expr) (string, bool) {
+	lit, ok := expr.(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING || !strings.HasPrefix(lit.Value, "`") {
+		return "", false
+	}
+	return strings.Trim(lit.Value, "`"), true
+}
 
-// goRawLiterals returns every backtick literal in a Go source file, splicing
-// +-concatenated ones — named fragments included, resolved to their own literal —
+// identRawLiteral resolves an identifier used in a concatenation chain to the raw
+// literal it is bound to, through the parser's own scope resolution — so two
+// functions each binding the same name to a different fragment cannot splice the
+// wrong text, which a file-global identifier map allowed.
+func identRawLiteral(expr ast.Expr) (string, bool) {
+	ident, ok := expr.(*ast.Ident)
+	if !ok || ident.Obj == nil {
+		return "", false
+	}
+	switch decl := ident.Obj.Decl.(type) {
+	case *ast.AssignStmt:
+		for i, lhs := range decl.Lhs {
+			if name, ok := lhs.(*ast.Ident); ok && name.Name == ident.Name && i < len(decl.Rhs) {
+				return rawLiteralText(decl.Rhs[i])
+			}
+		}
+	case *ast.ValueSpec:
+		for i, name := range decl.Names {
+			if name.Name == ident.Name && i < len(decl.Values) {
+				return rawLiteralText(decl.Values[i])
+			}
+		}
+	}
+	return "", false
+}
+
+// appendChain flattens a +-joined expression left to right, splicing raw literals
+// and resolved named fragments. The fragment that reads a global is routinely not
+// the fragment that opens the function — the xpath arm of the selector resolver
+// lives in a tail fragment — so a chain has to be assembled, not sampled.
+func appendChain(fset *token.FileSet, lit *jsLiteral, expr ast.Expr) {
+	if bin, ok := expr.(*ast.BinaryExpr); ok && bin.Op == token.ADD {
+		appendChain(fset, lit, bin.X)
+		appendChain(fset, lit, bin.Y)
+		return
+	}
+	text, ok := rawLiteralText(expr)
+	if !ok {
+		if text, ok = identRawLiteral(expr); !ok {
+			return
+		}
+	}
+	line := fset.Position(expr.Pos()).Line
+	if lit.text == "" && lit.startLine == 0 {
+		lit.startLine = line
+	}
+	lit.segments = append(lit.segments, jsSegment{offset: len(lit.text), line: line})
+	lit.text += text
+}
+
+// chainHasRawLiteral reports whether a +-chain contains a raw literal at all, so a
+// chain of ordinary strings is not mistaken for an assembled JS declaration.
+func chainHasRawLiteral(expr ast.Expr) bool {
+	if bin, ok := expr.(*ast.BinaryExpr); ok && bin.Op == token.ADD {
+		return chainHasRawLiteral(bin.X) || chainHasRawLiteral(bin.Y)
+	}
+	_, ok := rawLiteralText(expr)
+	return ok
+}
+
+// goRawLiterals returns every raw string literal in a Go file, splicing
+// +-concatenated ones — named fragments included, resolved in their own scope —
 // into the single string the browser is actually handed.
-func goRawLiterals(src string) []jsLiteral {
-	fragments := map[string]string{}
-	for _, m := range identLiteral.FindAllStringSubmatch(src, -1) {
-		fragments[m[1]] = m[2]
+//
+// go/parser answers this by construction: literals are *ast.BasicLit, chains are
+// *ast.BinaryExpr, and lines come from the FileSet. That is why the blind-spot
+// cross-check below is only a sanity assertion now — an ast.Inspect walk sees
+// every literal in the file, so "assembled in a shape the scan cannot see" is no
+// longer a reachable failure.
+func goRawLiterals(name, src string) ([]jsLiteral, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, name, src, parser.ParseComments)
+	if err != nil {
+		return nil, err
 	}
 
 	var literals []jsLiteral
-	prevEnd := 0
-	line := 1
-	for i := 0; i < len(src); i++ {
-		if src[i] == '\n' {
-			line++
-			continue
-		}
-		if src[i] != '`' {
-			continue
-		}
-		end := strings.IndexByte(src[i+1:], '`')
-		if end < 0 {
-			break
-		}
-		body := src[i+1 : i+1+end]
-		startLine := line
-		line += strings.Count(body, "\n")
-
-		between := src[prevEnd:i]
-		if last := len(literals) - 1; last >= 0 && plusChain.MatchString(between) {
-			for _, name := range identsInChain(between) {
-				literals[last].text += fragments[name]
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch expr := n.(type) {
+		case *ast.BinaryExpr:
+			if expr.Op != token.ADD || !chainHasRawLiteral(expr) {
+				return true
 			}
-			literals[last].text += body
-		} else {
-			literals = append(literals, jsLiteral{text: body, startLine: startLine})
+			var lit jsLiteral
+			appendChain(fset, &lit, expr)
+			if lit.text != "" {
+				literals = append(literals, lit)
+			}
+			// The chain is consumed whole; descending would record its parts again.
+			return false
+		case *ast.BasicLit:
+			text, ok := rawLiteralText(expr)
+			if !ok {
+				return false
+			}
+			line := fset.Position(expr.Pos()).Line
+			literals = append(literals, jsLiteral{
+				text:      text,
+				startLine: line,
+				segments:  []jsSegment{{offset: 0, line: line}},
+			})
+			return false
 		}
-		prevEnd = i + end + 2
-		i = prevEnd - 1
-	}
-	return literals
-}
-
-var identToken = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_.]*`)
-
-func identsInChain(chain string) []string {
-	return identToken.FindAllString(chain, -1)
+		return true
+	})
+	return literals, nil
 }
 
 // declarations returns the literals that are Runtime.callFunctionOn function
@@ -294,21 +379,6 @@ func lineAtOffset(text string, offset int) string {
 	return strings.TrimSpace(text[start : start+end])
 }
 
-// sourceLine locates the offending JS line back in the Go file. A declaration
-// spliced from concatenated fragments does not lay out like the source it came
-// from, so counting newlines inside the merged text reports a line the reader
-// cannot find; the line's own text can be.
-func sourceLine(src, offending string, fallback int) int {
-	if offending == "" {
-		return fallback
-	}
-	at := strings.Index(src, offending)
-	if at < 0 {
-		return fallback
-	}
-	return strings.Count(src[:at], "\n") + 1
-}
-
 func hasShadow(text string, forms []shadowForm) bool {
 	for _, form := range forms {
 		if !strings.Contains(text, form.line) {
@@ -366,7 +436,12 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 		}
 		scopedFiles++
 
-		for _, decl := range callFunctionDeclarations(goRawLiterals(src)) {
+		literals, parseErr := goRawLiterals(name, src)
+		if parseErr != nil {
+			t.Errorf("%s: parse: %v", name, parseErr)
+			return nil
+		}
+		for _, decl := range callFunctionDeclarations(literals) {
 			checkedDecls++
 			body := jsCode(decl.text)
 			canonicalInScope += strings.Count(body, canonicalViewLine)
@@ -381,7 +456,7 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 				}
 				violations[name] = true
 				offending := lineAtOffset(body, at)
-				line := sourceLine(src, offending, decl.startLine)
+				line := decl.lineAt(at)
 				if why, excused := ambientGlobalsExceptions[name]; excused {
 					t.Logf("%s:%d reads ambient %s under a recorded exception (%s)", name, line, ambient, why)
 					continue
