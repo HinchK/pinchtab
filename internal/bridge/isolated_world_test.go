@@ -179,7 +179,6 @@ var mainWorldResolvers = map[string]string{
 	"internal/bridge/cdpops/element_ops.go": "element ops act on an already-chosen node",
 	"internal/bridge/cdpops/frame_dom.go":   "callFunctionOn helper for an already-chosen node",
 	"internal/bridge/cdpops/pointer.go":     "pointer actions act on an already-chosen node",
-	"internal/bridge/cdpops/validation.go":  "post-action validation reads an already-chosen node",
 	"internal/bridge/cdpops/geometry.go":    "click-point geometry for an already-chosen node",
 }
 
