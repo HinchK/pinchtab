@@ -1,12 +1,14 @@
 package bridge
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -153,10 +155,15 @@ var ambientShadows = map[string][]shadowForm{
 // reason.
 var ambientGlobalsExceptions = map[string]string{}
 
-// canonicalViewLine is the preamble as it stands in the tree. Counting its
-// occurrences module-wide against the occurrences the scan actually reached is
-// what closes the parser's blind spot: a declaration assembled in a shape this
-// census cannot recognise stops being scanned, and that divergence fails.
+// canonicalViewLine is the preamble as it stands in the tree. Its two counts below
+// answer two different questions that one counter used to conflate:
+//   - in-scope but unreached: a declaration this census does not recognise. Now a
+//     cheap sanity assertion rather than a safety net, because an ast.Inspect walk
+//     sees every literal in the file.
+//   - present in a file that is out of scope: the file shadows correctly but no
+//     longer matches isolatedHandleTokens, so its declarations stopped being
+//     scanned. That is a scope problem with a different remedy, and reporting it as
+//     declaration assembly sends the reader to audit a parser that is working.
 const canonicalViewLine = "const view = (this.ownerDocument && this.ownerDocument.defaultView) || window;"
 
 // jsSegment records where one spliced fragment starts in the assembled text and
@@ -392,18 +399,88 @@ func hasShadow(text string, forms []shadowForm) bool {
 	return false
 }
 
+// censusScope is what one pass over the module concluded, separated from how it is
+// reported so the wording of each failure can be pinned by a unit test. The
+// misdiagnosis this card fixes was a wording bug over correct data, and wording is
+// only testable if it is produced by a function.
+type censusScope struct {
+	scopedFiles          int
+	checkedDecls         int
+	exercised            map[string]int
+	canonicalInScope     int
+	canonicalInScopedSrc int
+	canonicalOutOfScope  map[string]int
+	violations           map[string]bool
+}
+
+func (c censusScope) canonicalOutOfScopeTotal() int {
+	total := 0
+	for _, n := range c.canonicalOutOfScope {
+		total += n
+	}
+	return total
+}
+
+// censusSanityFailures returns every self-check failure for a completed pass. The
+// two canonical-count checks are deliberately separate: they have different causes
+// and different remedies, and one counter serving both is what made a file leaving
+// scope read as a broken parser.
+func censusSanityFailures(c censusScope) []string {
+	var failures []string
+	if c.scopedFiles == 0 {
+		failures = append(failures, "no file in the module obtains an isolated node handle — the census is checking nothing")
+	}
+	if c.checkedDecls == 0 {
+		failures = append(failures, "no callFunctionOn declaration found in the files that obtain isolated handles — the census is checking nothing")
+	}
+	// Per ambient global, not in total: one of them falling to zero mentions is how
+	// a whole half of the rule stops being scanned while the census stays green.
+	for _, ambient := range sortedKeys(ambientShadows) {
+		if c.exercised[ambient] == 0 {
+			failures = append(failures, fmt.Sprintf("no declaration mentions the ambient %s any more; drop it from ambientShadows so the recorded rule stays true", ambient))
+		}
+	}
+	// A file carrying the preamble that matches no isolatedHandleTokens entry has
+	// not changed shape — it has left scope, and every declaration in it stopped
+	// being scanned. The remedy is the producer list, not the parser.
+	for _, name := range sortedKeys(c.canonicalOutOfScope) {
+		failures = append(failures, fmt.Sprintf("%s carries the canonical preamble %d time(s) but matches no entry in isolatedHandleTokens, so none of its callFunctionOn declarations are scanned; it shadows correctly and is simply out of scope — add the name it now obtains its isolated handle through to isolatedHandleTokens",
+			name, c.canonicalOutOfScope[name]))
+	}
+	// Only for files the census did scan: the preamble turning up in a declaration
+	// the walk never reached would mean a literal it cannot see.
+	if c.canonicalInScope != c.canonicalInScopedSrc {
+		failures = append(failures, fmt.Sprintf("the canonical preamble appears %d times in scoped files but only %d were inside a declaration this census recognises; a declaration is assembled in a shape the scan cannot see",
+			c.canonicalInScopedSrc, c.canonicalInScope))
+	}
+	for _, name := range sortedKeys(ambientGlobalsExceptions) {
+		if !c.violations[name] {
+			failures = append(failures, fmt.Sprintf("%s no longer reads an ambient global unshadowed (%s); remove it from ambientGlobalsExceptions so the recorded exceptions stay true", name, ambientGlobalsExceptions[name]))
+		}
+	}
+	return failures
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	scopedFiles := 0
-	checkedDecls := 0
-	exercised := map[string]int{}
-	violations := map[string]bool{}
-	canonicalInScope := 0
-	canonicalInModule := 0
+	scope := censusScope{
+		exercised:           map[string]int{},
+		canonicalOutOfScope: map[string]int{},
+		violations:          map[string]bool{},
+	}
 
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -422,7 +499,7 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 			return err
 		}
 		src := string(raw)
-		canonicalInModule += strings.Count(jsCode(src), canonicalViewLine)
+		canonical := strings.Count(jsCode(src), canonicalViewLine)
 
 		inScope := false
 		for _, token := range isolatedHandleTokens {
@@ -432,9 +509,16 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 			}
 		}
 		if !inScope {
+			// Counted per file and reported as a scope problem, not folded into the
+			// in-scope total: a preamble here means the file left scope, which the
+			// single counter used to report as a parser blind spot.
+			if canonical > 0 {
+				scope.canonicalOutOfScope[name] = canonical
+			}
 			return nil
 		}
-		scopedFiles++
+		scope.scopedFiles++
+		scope.canonicalInScopedSrc += canonical
 
 		literals, parseErr := goRawLiterals(name, src)
 		if parseErr != nil {
@@ -442,19 +526,19 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 			return nil
 		}
 		for _, decl := range callFunctionDeclarations(literals) {
-			checkedDecls++
+			scope.checkedDecls++
 			body := jsCode(decl.text)
-			canonicalInScope += strings.Count(body, canonicalViewLine)
+			scope.canonicalInScope += strings.Count(body, canonicalViewLine)
 			for ambient, forms := range ambientShadows {
 				at := ambientMention(body, ambient)
 				if at < 0 {
 					continue
 				}
-				exercised[ambient]++
+				scope.exercised[ambient]++
 				if hasShadow(body, forms) {
 					continue
 				}
-				violations[name] = true
+				scope.violations[name] = true
 				offending := lineAtOffset(body, at)
 				line := decl.lineAt(at)
 				if why, excused := ambientGlobalsExceptions[name]; excused {
@@ -474,31 +558,10 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 		t.Fatal(walkErr)
 	}
 
-	t.Logf("census scope: %d files obtain isolated handles, %d callFunctionOn declarations scanned, ambient mentions %v, canonical preamble %d/%d in scope",
-		scopedFiles, checkedDecls, exercised, canonicalInScope, canonicalInModule)
-	if scopedFiles == 0 {
-		t.Error("no file in the module obtains an isolated node handle — the census is checking nothing")
-	}
-	if checkedDecls == 0 {
-		t.Error("no callFunctionOn declaration found in the files that obtain isolated handles — the census is checking nothing")
-	}
-	// Per ambient global, not in total: one of them falling to zero mentions is how
-	// a whole half of the rule stops being scanned while the census stays green.
-	for ambient := range ambientShadows {
-		if exercised[ambient] == 0 {
-			t.Errorf("no declaration mentions the ambient %s any more; drop it from ambientShadows so the recorded rule stays true", ambient)
-		}
-	}
-	// The parser recognises a declaration by its shape. If the preamble turns up in
-	// the module somewhere the scan never reached, that shape is a blind spot.
-	if canonicalInScope != canonicalInModule {
-		t.Errorf("the canonical preamble appears %d times in the module but only %d were inside a declaration this census recognises; a declaration is assembled in a shape the scan cannot see",
-			canonicalInModule, canonicalInScope)
-	}
-	for name, why := range ambientGlobalsExceptions {
-		if !violations[name] {
-			t.Errorf("%s no longer reads an ambient global unshadowed (%s); remove it from ambientGlobalsExceptions so the recorded exceptions stay true", name, why)
-		}
+	t.Logf("census scope: %d files obtain isolated handles, %d callFunctionOn declarations scanned, ambient mentions %v, canonical preamble %d/%d in scope, %d out of scope",
+		scope.scopedFiles, scope.checkedDecls, scope.exercised, scope.canonicalInScope, scope.canonicalInScopedSrc, scope.canonicalOutOfScopeTotal())
+	for _, failure := range censusSanityFailures(scope) {
+		t.Error(failure)
 	}
 }
 
@@ -512,4 +575,85 @@ func formLines(forms []shadowForm) []string {
 		lines = append(lines, form.line)
 	}
 	return lines
+}
+
+// The misdiagnosis this card fixes: a file that keeps a correct preamble and merely
+// stops matching isolatedHandleTokens used to fail claiming a declaration was
+// assembled in a shape the scan cannot see. The parser was working; the file had
+// left scope, taking every declaration in it out of the census. Sending the reader
+// to audit the parser hides the real remedy, which is the producer list.
+//
+// Driven through censusSanityFailures rather than the module walk, because the
+// defect is the WORDING over correct data — and wording is only pinnable if the
+// data can be stated directly.
+func TestALeftScopeFileIsReportedAsScopeNotAsDeclarationAssembly(t *testing.T) {
+	scope := censusScope{
+		scopedFiles:          8,
+		checkedDecls:         8,
+		exercised:            map[string]int{"window": 3, "document": 2},
+		canonicalInScope:     3,
+		canonicalInScopedSrc: 3,
+		canonicalOutOfScope:  map[string]int{"internal/cdptk/screenshot.go": 1},
+		violations:           map[string]bool{},
+	}
+
+	failures := censusSanityFailures(scope)
+	if len(failures) != 1 {
+		t.Fatalf("censusSanityFailures = %d failures, want exactly the scope one:\n  %s", len(failures), strings.Join(failures, "\n  "))
+	}
+	got := failures[0]
+
+	for _, want := range []string{"internal/cdptk/screenshot.go", "isolatedHandleTokens", "out of scope", "shadows correctly"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("failure does not mention %q, so the reader is not pointed at the scope list:\n  %s", want, got)
+		}
+	}
+	if strings.Contains(got, "shape the scan cannot see") {
+		t.Errorf("a file leaving scope is still reported as a parser blind spot:\n  %s", got)
+	}
+}
+
+// The other half of the split must keep its own wording: a preamble inside a scoped
+// file that no recognised declaration contains really is a parser blind spot.
+func TestAnUnreachedInScopePreambleIsStillReportedAsDeclarationAssembly(t *testing.T) {
+	scope := censusScope{
+		scopedFiles:          9,
+		checkedDecls:         9,
+		exercised:            map[string]int{"window": 4, "document": 2},
+		canonicalInScope:     3,
+		canonicalInScopedSrc: 4,
+		canonicalOutOfScope:  map[string]int{},
+		violations:           map[string]bool{},
+	}
+
+	failures := censusSanityFailures(scope)
+	if len(failures) != 1 {
+		t.Fatalf("censusSanityFailures = %d failures, want exactly the blind-spot one:\n  %s", len(failures), strings.Join(failures, "\n  "))
+	}
+	if got := failures[0]; !strings.Contains(got, "shape the scan cannot see") {
+		t.Errorf("an unreached in-scope preamble is no longer reported as declaration assembly:\n  %s", got)
+	}
+}
+
+// Both conditions at once must raise both failures — the point of splitting them is
+// that neither masks the other.
+func TestScopeLossAndBlindSpotAreReportedSeparately(t *testing.T) {
+	scope := censusScope{
+		scopedFiles:          8,
+		checkedDecls:         8,
+		exercised:            map[string]int{"window": 3, "document": 2},
+		canonicalInScope:     2,
+		canonicalInScopedSrc: 3,
+		canonicalOutOfScope:  map[string]int{"internal/cdptk/annotate.go": 1},
+		violations:           map[string]bool{},
+	}
+
+	failures := censusSanityFailures(scope)
+	if len(failures) != 2 {
+		t.Fatalf("censusSanityFailures = %d failures, want both:\n  %s", len(failures), strings.Join(failures, "\n  "))
+	}
+	joined := strings.Join(failures, "\n")
+	if !strings.Contains(joined, "isolatedHandleTokens") || !strings.Contains(joined, "shape the scan cannot see") {
+		t.Errorf("one condition masked the other:\n  %s", joined)
+	}
 }
