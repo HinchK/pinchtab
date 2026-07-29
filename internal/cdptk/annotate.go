@@ -23,24 +23,12 @@ func ScrollNodeIntoView(ctx context.Context, nodeID int64) error {
 // backend node id. Document scroll is intentionally NOT added; the overlay
 // injector adds scrollX/scrollY when placing absolute-positioned boxes.
 func AnnotationRectForNode(ctx context.Context, nodeID int64) (*AnnotationRect, error) {
-	var resolveResult json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId": nodeID,
-		}, &resolveResult)
-	})); err != nil {
-		return nil, err
-	}
-	var resolved struct {
-		Object struct {
-			ObjectID string `json:"objectId"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(resolveResult, &resolved); err != nil {
-		return nil, err
-	}
-	if resolved.Object.ObjectID == "" {
-		return nil, fmt.Errorf("element not found (backendNodeId=%d)", nodeID)
+	// Isolated world: boxFn reads getBoundingClientRect on this handle and on
+	// every ancestor frame element, so a main-world handle would let page script
+	// place the annotation boxes a vision model is then told to read.
+	objectID, err := IsolatedNodeObjectID(ctx, nodeID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve node %d: %w", nodeID, err)
 	}
 
 	// boxFn returns top-level viewport-relative rects. Walks frame ancestors,
@@ -48,13 +36,18 @@ func AnnotationRectForNode(ctx context.Context, nodeID int64) (*AnnotationRect, 
 	// viewport). If we hit a null frameElement before reaching the top window
 	// — typical cross-origin barrier — we flag the rect unprojectable rather
 	// than emitting partial frame-local coordinates.
+	// The frame walk starts from the NODE's own view, not the ambient `window`:
+	// the handle runs in the world it was resolved into, which is the top frame's,
+	// and a bare `window` there has an empty frameElement chain — every frame
+	// offset would be silently dropped instead of flagged.
 	const boxFn = `function() {
+		const view = (this.ownerDocument && this.ownerDocument.defaultView) || window;
 		const rect = this.getBoundingClientRect();
 		let x = rect.x;
 		let y = rect.y;
 		let frameError = false;
 		try {
-			let cur = window;
+			let cur = view;
 			while (cur && cur.parent && cur !== cur.parent) {
 				const frameEl = cur.frameElement;
 				if (!frameEl) {
@@ -79,7 +72,7 @@ func AnnotationRectForNode(ctx context.Context, nodeID int64) (*AnnotationRect, 
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.callFunctionOn", map[string]any{
 			"functionDeclaration": boxFn,
-			"objectId":            resolved.Object.ObjectID,
+			"objectId":            objectID,
 			"returnByValue":       true,
 		}, &callResult)
 	})); err != nil {

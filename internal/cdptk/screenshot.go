@@ -28,12 +28,16 @@ func ClipForNode(ctx context.Context, nodeID int64, css1x bool) (*ScreenshotClip
 	// Translate the element box into top-level page coordinates. captureScreenshot
 	// clip coordinates are page-relative, so viewport-relative rects need scroll
 	// offsets from the current document and each ancestor frame.
+	// The frame walk starts from the NODE's own view for the same reason as the
+	// bridge clip builder: the isolated handle runs in the top frame's world, so a
+	// bare `window` there loses every frame offset.
 	const boxFn = `function() {
+		const view = (this.ownerDocument && this.ownerDocument.defaultView) || window;
 		const rect = this.getBoundingClientRect();
-		let x = rect.left + (window.scrollX || window.pageXOffset || 0);
-		let y = rect.top + (window.scrollY || window.pageYOffset || 0);
+		let x = rect.left + (view.scrollX || view.pageXOffset || 0);
+		let y = rect.top + (view.scrollY || view.pageYOffset || 0);
 		try {
-			let current = window;
+			let current = view;
 			while (current && current.parent && current !== current.parent) {
 				const frameEl = current.frameElement;
 				if (!frameEl) {
@@ -54,7 +58,7 @@ func ClipForNode(ctx context.Context, nodeID int64, css1x bool) (*ScreenshotClip
 			y,
 			width: rect.width,
 			height: rect.height,
-			dpr: window.devicePixelRatio || 1
+			dpr: view.devicePixelRatio || 1
 		};
 	}`
 

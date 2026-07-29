@@ -181,7 +181,6 @@ var mainWorldResolvers = map[string]string{
 	"internal/bridge/cdpops/pointer.go":     "pointer actions act on an already-chosen node",
 	"internal/bridge/cdpops/validation.go":  "post-action validation reads an already-chosen node",
 	"internal/bridge/cdpops/geometry.go":    "click-point geometry for an already-chosen node",
-	"internal/cdptk/annotate.go":            "annotation reads already-chosen nodes",
 }
 
 func TestIsolatedWorldBoundaryCensus(t *testing.T) {
