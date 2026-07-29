@@ -1,11 +1,13 @@
 package server
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
 	"github.com/pinchtab/pinchtab/internal/bridgeregistry"
@@ -138,5 +140,93 @@ func TestBridgeHandlerChainAppliesRateLimit(t *testing.T) {
 	handler.ServeHTTP(w, req)
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("expected 429 after limit exceeded, got %d", w.Code)
+	}
+}
+
+// freeTCPPort returns a currently-unused loopback port by binding then
+// immediately releasing it. Small bind race accepted — the standard pattern
+// for picking a port a test-owned server will rebind moments later.
+func freeTCPPort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("reserve free port: %v", err)
+	}
+	port := l.Addr().(*net.TCPAddr).Port
+	if err := l.Close(); err != nil {
+		t.Fatalf("release free port: %v", err)
+	}
+	return port
+}
+
+// bridgeListenerReachable dials the port directly rather than calling
+// GET /health: the health handler lazily auto-starts a real browser on first
+// call, which is unrelated to (and much heavier/flakier than) what this test
+// checks — whether the HTTP listener itself is still up.
+func bridgeListenerReachable(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
+}
+
+// TestRunBridgeServerShutdownStopsListening is a regression test for a bug
+// where POST /shutdown on a bridge-mode server never actually stopped the
+// HTTP listener: the handler only ran bridgeInstance.Cleanup(), while
+// server.Shutdown was wired solely into the SIGINT/SIGTERM select loop that
+// an HTTP-triggered shutdown never reaches. The listener stayed reachable
+// forever, which is exactly what broke the orchestrator E2E test asserting a
+// registered bridge instance actually stops.
+func TestRunBridgeServerShutdownStopsListening(t *testing.T) {
+	port := freeTCPPort(t)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	cfg := &config.RuntimeConfig{
+		Bind:           "127.0.0.1",
+		Port:           fmt.Sprintf("%d", port),
+		Token:          "test-shutdown-token",
+		StateDir:       t.TempDir(),
+		DefaultBrowser: config.BrowserChrome,
+		ActionTimeout:  time.Second,
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		RunBridgeServer(cfg, "test")
+	}()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !bridgeListenerReachable(addr) {
+		if time.Now().After(deadline) {
+			t.Fatal("bridge server never became reachable")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, "http://"+addr+"/shutdown", nil)
+	if err != nil {
+		t.Fatalf("build shutdown request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /shutdown: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	deadline = time.Now().Add(5 * time.Second)
+	for bridgeListenerReachable(addr) {
+		if time.Now().After(deadline) {
+			t.Fatal("bridge listener stayed reachable after /shutdown, want it to stop")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("RunBridgeServer did not return after /shutdown")
 	}
 }

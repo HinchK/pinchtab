@@ -58,6 +58,7 @@ func RunBridgeServer(cfg *config.RuntimeConfig, version string) {
 	h.StartBackgroundCleanup()
 	configureBridgeRouter(h, cfg)
 
+	var server *http.Server
 	shutdownOnce := &sync.Once{}
 	doShutdown := func() {
 		shutdownOnce.Do(func() {
@@ -65,13 +66,24 @@ func RunBridgeServer(cfg *config.RuntimeConfig, version string) {
 			if bridgeInstance != nil {
 				bridgeInstance.Cleanup()
 			}
+			// POST /shutdown only reaches this closure, not the SIGINT/SIGTERM
+			// select below — without an explicit Shutdown here the listener
+			// keeps serving (including /health) forever, so a caller polling
+			// for the process to actually stop never observes it exit.
+			if server != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := server.Shutdown(ctx); err != nil {
+					slog.Error("shutdown http", "err", err)
+				}
+			}
 		})
 	}
 	h.RegisterRoutes(mux, doShutdown)
 	activity.RegisterHandlers(mux, actStore)
 	cli.LogSecurityWarnings(cfg)
 
-	server := &http.Server{
+	server = &http.Server{
 		Addr: listenAddr,
 		Handler: handlers.TrustedInternalProxyStripMiddleware(os.Getenv("PINCHTAB_INTERNAL_TOKEN"))(
 			handlers.RequestIDMiddleware(
