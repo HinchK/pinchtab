@@ -126,7 +126,15 @@ func Save(stateDir string, sf *StateFile, encryptionKey string) (string, error) 
 		return "", fmt.Errorf("invalid state file name: resolved path escapes state directory")
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	// Atomic write: Save overwrites by name, so a torn write would destroy the
+	// previously saved state as well as the new one — and a truncated encrypted
+	// payload fails GCM authentication, losing the session entirely.
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return "", fmt.Errorf("write state file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("write state file: %w", err)
 	}
 

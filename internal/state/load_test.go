@@ -1,6 +1,7 @@
 package state
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -66,5 +67,38 @@ func TestLoadEncryptedStateWithoutKeyExplainsItself(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "encrypted") {
 		t.Errorf("error = %v, want it to mention the file is encrypted", err)
+	}
+}
+
+// Save writes through a temp file; the temp must never survive, and it must not
+// be picked up as a state file by List/Clean.
+func TestSaveLeavesNoTempFile(t *testing.T) {
+	dir := t.TempDir()
+	if _, err := Save(dir, &StateFile{Name: "session"}, ""); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+	if _, err := Save(dir, &StateFile{Name: "session"}, ""); err != nil {
+		t.Fatalf("Save (overwrite): %v", err)
+	}
+
+	entries, err := os.ReadDir(SessionsDir(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".tmp") {
+			t.Errorf("temp file %q left behind after save", e.Name())
+		}
+	}
+	if len(entries) != 1 {
+		t.Errorf("sessions dir has %d entries, want 1", len(entries))
+	}
+
+	list, err := List(dir)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 || list[0].Name != "session" {
+		t.Errorf("List() = %+v, want a single \"session\" entry", list)
 	}
 }
