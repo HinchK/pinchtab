@@ -86,10 +86,9 @@ func ApplyTargetEmulation(ctx context.Context, cfg *config.RuntimeConfig, userAg
 	// Override the UA Client Hints metadata ONLY when the caller supplied an
 	// explicit UA (userAgent is the launch --user-agent, set only for a configured
 	// custom UA). Otherwise defer to Chrome's NATIVE UA-CH: the synthesized
-	// metadata is inconsistent with a real Chrome — a stale GREASE brand, a
-	// hardcoded platformVersion, and (because cdproto's UserAgentMetadata has no
-	// full_version field) an empty uaFullVersion — whereas the native hints are
-	// correct and self-consistent.
+	// metadata is inconsistent with a real Chrome — a stale GREASE brand and
+	// (because cdproto's UserAgentMetadata has no full_version field) an empty
+	// uaFullVersion — whereas the native hints are correct and self-consistent.
 	if strings.TrimSpace(userAgent) != "" {
 		if uaOverride := BuildUserAgentOverride(userAgent, cfg.BrowserVersion); uaOverride != nil {
 			if err := uaOverride.Do(ctx); err != nil {

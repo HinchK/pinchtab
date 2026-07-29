@@ -3,6 +3,9 @@ package stealth
 import (
 	goruntime "runtime"
 	"strings"
+	"sync"
+
+	"github.com/shirou/gopsutil/v4/host"
 )
 
 type BrandVersion struct {
@@ -90,17 +93,15 @@ func BuildPersona(userAgent, chromeVersion string) BrowserPersona {
 
 	navigatorPlatform := "Linux x86_64"
 	uaDataPlatform := "Linux"
-	platformVersion := "6.5.0"
 	switch {
 	case strings.Contains(ua, "Windows"):
 		navigatorPlatform = "Win32"
 		uaDataPlatform = "Windows"
-		platformVersion = "15.0.0"
 	case strings.Contains(ua, "Macintosh"), strings.Contains(ua, "Mac OS X"):
 		navigatorPlatform = "MacIntel"
 		uaDataPlatform = "macOS"
-		platformVersion = "14.0.0"
 	}
+	platformVersion := PlatformVersionFor(uaDataPlatform)
 
 	architecture := "x86"
 	switch {
@@ -139,6 +140,81 @@ func BuildPersona(userAgent, chromeVersion string) BrowserPersona {
 			Wow64:           false,
 		},
 	}
+}
+
+var defaultPlatformVersions = map[string]string{
+	"Windows": "15.0.0",
+	"macOS":   "14.0.0",
+	"Linux":   "6.5.0",
+}
+
+var hostProductVersion = sync.OnceValue(func() string {
+	_, _, version, err := host.PlatformInformation()
+	if err != nil {
+		return ""
+	}
+	return version
+})
+
+var hostKernelVersion = sync.OnceValue(func() string {
+	version, err := host.KernelVersion()
+	if err != nil {
+		return ""
+	}
+	return version
+})
+
+// PlatformVersionFor returns the UA-CH platformVersion to advertise for a
+// userAgentData platform. Real Chrome reports the running host's OS version, so
+// a persona describing this host reads it from the host — a frozen value
+// contradicts the Sec-CH-UA-Platform-Version header Chrome itself sends. A
+// persona describing a different platform keeps a plausible constant.
+func PlatformVersionFor(uaDataPlatform string) string {
+	if version := normalizePlatformVersion(hostPlatformVersion(uaDataPlatform)); version != "" {
+		return version
+	}
+	return defaultPlatformVersions[uaDataPlatform]
+}
+
+func hostPlatformVersion(uaDataPlatform string) string {
+	switch {
+	case uaDataPlatform == "macOS" && goruntime.GOOS == "darwin":
+		return hostProductVersion()
+	case uaDataPlatform == "Linux" && goruntime.GOOS == "linux":
+		return hostKernelVersion()
+	default:
+		return ""
+	}
+}
+
+func normalizePlatformVersion(raw string) string {
+	parts := make([]string, 0, 3)
+	for _, field := range strings.Split(raw, ".") {
+		digits := leadingDigits(field)
+		if digits == "" {
+			break
+		}
+		parts = append(parts, digits)
+		if len(parts) == 3 {
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	for len(parts) < 3 {
+		parts = append(parts, "0")
+	}
+	return strings.Join(parts, ".")
+}
+
+func leadingDigits(field string) string {
+	for i := 0; i < len(field); i++ {
+		if field[i] < '0' || field[i] > '9' {
+			return field[:i]
+		}
+	}
+	return field
 }
 
 func chromeVersionOrFallback(chromeVersion string) string {
