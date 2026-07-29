@@ -754,7 +754,7 @@ func resolveSelectorAtInFrame(ctx context.Context, frameID string, sel selector.
 			{"value": fromEnd},
 		})
 		if err != nil {
-			return fmt.Errorf("%s %q: %w", sel.Kind, sel.Value, ErrSelectorNoMatch)
+			return fmt.Errorf("%s %q: %w", sel.Kind, sel.Value, err)
 		}
 		backendNodeID = nid
 		return nil
