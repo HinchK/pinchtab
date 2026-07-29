@@ -1061,30 +1061,45 @@ func TestEmptyLogSuffixMarksZeroByteArtifacts(t *testing.T) {
 	}
 }
 
-// The e2e services must run the server verbosely: RunDashboard swaps the default
-// logger for a discard handler otherwise, so the harness captures zero bytes for
-// exactly the failure the artifact exists to explain. Bridge mode has no such
-// swap and is deliberately left alone.
-func TestComposeServerServicesRunVerbose(t *testing.T) {
+// Every e2e server service must NAME its log level rather than inherit one. The
+// level used to be borrowed from --verbose, which once meant "log at all" and later
+// came to mean "debug"; the harness's diagnostic level moved when that definition
+// moved, which is the drift this pins. --verbose is still expected alongside, for
+// the startup banner alone — it is the only place the log states the guard posture
+// and the allowed-domain list. Bridge services take neither flag deliberately.
+func TestComposeServerServicesNameTheirLogLevel(t *testing.T) {
+	const wantFlags = "pinchtab server --log-level debug --verbose"
+
 	for _, file := range []string{"docker-compose.yml", "docker-compose-multi.yml"} {
 		path := filepath.Join("..", "..", "..", "..", "e2e", file)
 		content, err := os.ReadFile(path) // #nosec G304 -- fixed test fixture path.
 		if err != nil {
 			t.Fatalf("read %s: %v", file, err)
 		}
+		body := string(content)
 
-		servers := strings.Count(string(content), "pinchtab server")
-		verbose := strings.Count(string(content), "pinchtab server --verbose")
+		servers := 0
+		for _, line := range strings.Split(body, "\n") {
+			if !strings.Contains(line, "command:") || !strings.Contains(line, "pinchtab server") {
+				continue
+			}
+			servers++
+			if !strings.Contains(line, wantFlags) {
+				t.Errorf("%s: a server service does not run %q, so its level is inherited rather than named: %s", file, wantFlags, strings.TrimSpace(line))
+			}
+		}
 		if servers == 0 {
 			t.Fatalf("%s: found no pinchtab server services to check", file)
 		}
-		if verbose != servers {
-			t.Errorf("%s: %d of %d server services run verbose; the rest capture an empty log", file, verbose, servers)
-		}
 
-		for _, line := range strings.Split(string(content), "\n") {
-			if strings.Contains(line, "pinchtab bridge") && strings.Contains(line, "--verbose") {
-				t.Errorf("%s: bridge service gained --verbose; bridge mode already logs: %s", file, strings.TrimSpace(line))
+		for _, line := range strings.Split(body, "\n") {
+			if !strings.Contains(line, "command:") || !strings.Contains(line, "pinchtab bridge") {
+				continue
+			}
+			for _, flag := range []string{"--verbose", "--log-level"} {
+				if strings.Contains(line, flag) {
+					t.Errorf("%s: bridge service gained %s; bridge mode never had the discard behaviour these flags worked around: %s", file, flag, strings.TrimSpace(line))
+				}
 			}
 		}
 	}

@@ -1,3 +1,18 @@
+# Log level for every `pinchtab server` service below: `--log-level debug`, named
+# here rather than inherited. A harness whose logs exist to explain a failing
+# scenario wants maximum detail, and log volume is cheap in a CI artifact. The
+# level is stated in this file because the previous spelling borrowed `--verbose`,
+# whose meaning changed elsewhere (it once meant "log at all", then came to mean
+# "debug"), and the level silently moved with it. `--log-level` wins over any
+# config file, so nothing under tests/e2e/config/ can override it.
+#
+# `--verbose` is kept alongside, and it no longer touches the level: it only adds
+# the startup banner, which is the sole place the log states the guard posture and
+# the allowed-domain list — the fact that explains a scenario failing on a blocked
+# fixture host. The two flags are orthogonal; dropping one does not move the other.
+#
+# The `pinchtab bridge` services take neither flag deliberately: bridge mode never
+# had the discard-logger behaviour these flags were originally added to work around.
 x-pinchtab-base: &pinchtab-base
   # All pinchtab variants share the same image — only the pinchtab service
   # carries `build:` so compose builds it once. The 6 variants differ only
@@ -25,7 +40,7 @@ services:
       - ./config/pinchtab.json:/fixture-config/pinchtab.json:ro
       - ./fixtures/test-extension:/extensions/test-extension
       - ./fixtures/test-extension-api:/extensions/test-extension-api
-    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab.json /data/e2e-config/pinchtab.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --verbose"]
+    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab.json /data/e2e-config/pinchtab.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --log-level debug --verbose"]
     ports:
       - "127.0.0.1:9999:9999"
     healthcheck: *pinchtab-healthcheck
@@ -36,7 +51,7 @@ services:
       PINCHTAB_CONFIG: /data/e2e-config/pinchtab-secure.json
     volumes:
       - ./config/pinchtab-secure.json:/fixture-config/pinchtab-secure.json:ro
-    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-secure.json /data/e2e-config/pinchtab-secure.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --verbose"]
+    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-secure.json /data/e2e-config/pinchtab-secure.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --log-level debug --verbose"]
     ports:
       - "127.0.0.1:9998:9999"
     healthcheck: *pinchtab-healthcheck
@@ -48,7 +63,7 @@ services:
     volumes:
       - ./config/pinchtab-autoclose.json:/fixture-config/pinchtab-autoclose.json:ro
       - ./fixtures/test-extension:/extensions/test-extension
-    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-autoclose.json /data/e2e-config/pinchtab-autoclose.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --verbose"]
+    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-autoclose.json /data/e2e-config/pinchtab-autoclose.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --log-level debug --verbose"]
     healthcheck: *pinchtab-healthcheck
 
   pinchtab-medium:
@@ -58,7 +73,7 @@ services:
     volumes:
       - ./config/pinchtab-medium-permissive.json:/fixture-config/pinchtab-medium-permissive.json:ro
       - ./fixtures/test-extension:/extensions/test-extension
-    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-medium-permissive.json /data/e2e-config/pinchtab-medium-permissive.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --verbose"]
+    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-medium-permissive.json /data/e2e-config/pinchtab-medium-permissive.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --log-level debug --verbose"]
     ports:
       - "127.0.0.1:9994:9999"
     healthcheck: *pinchtab-healthcheck
@@ -70,7 +85,7 @@ services:
     volumes:
       - ./config/pinchtab-full-permissive.json:/fixture-config/pinchtab-full-permissive.json:ro
       - ./fixtures/test-extension:/extensions/test-extension
-    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-full-permissive.json /data/e2e-config/pinchtab-full-permissive.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --verbose"]
+    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-full-permissive.json /data/e2e-config/pinchtab-full-permissive.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --log-level debug --verbose"]
     ports:
       - "127.0.0.1:9995:9999"
     healthcheck: *pinchtab-healthcheck
@@ -82,7 +97,7 @@ services:
     volumes:
       - ./config/pinchtab-network-retain-bodies.json:/fixture-config/pinchtab-network-retain-bodies.json:ro
       - ./fixtures/test-extension:/extensions/test-extension
-    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-network-retain-bodies.json /data/e2e-config/pinchtab-network-retain-bodies.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --verbose"]
+    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-network-retain-bodies.json /data/e2e-config/pinchtab-network-retain-bodies.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --log-level debug --verbose"]
     ports:
       - "127.0.0.1:9993:9999"
     healthcheck: *pinchtab-healthcheck

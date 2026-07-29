@@ -1,3 +1,18 @@
+# Log level for every `pinchtab server` service below: `--log-level debug`, named
+# here rather than inherited. A harness whose logs exist to explain a failing
+# scenario wants maximum detail, and log volume is cheap in a CI artifact. The
+# level is stated in this file because the previous spelling borrowed `--verbose`,
+# whose meaning changed elsewhere (it once meant "log at all", then came to mean
+# "debug"), and the level silently moved with it. `--log-level` wins over any
+# config file, so nothing under tests/e2e/config/ can override it.
+#
+# `--verbose` is kept alongside, and it no longer touches the level: it only adds
+# the startup banner, which is the sole place the log states the guard posture and
+# the allowed-domain list — the fact that explains a scenario failing on a blocked
+# fixture host. The two flags are orthogonal; dropping one does not move the other.
+#
+# The `pinchtab bridge` services take neither flag deliberately: bridge mode never
+# had the discard-logger behaviour these flags were originally added to work around.
 services:
   pinchtab:
     build:
@@ -9,7 +24,7 @@ services:
       - ./config/pinchtab.json:/fixture-config/pinchtab.json:ro
       - ./fixtures/test-extension:/extensions/test-extension:ro
       - ./fixtures/test-extension-api:/extensions/test-extension-api:ro
-    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab.json /data/e2e-config/pinchtab.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --verbose"]
+    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab.json /data/e2e-config/pinchtab.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab server --log-level debug --verbose"]
     ports:
       - "127.0.0.1:9999:9999"
     shm_size: '2gb'

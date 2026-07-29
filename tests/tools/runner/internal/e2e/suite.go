@@ -758,13 +758,15 @@ func formatDuration(d time.Duration) string {
 // emptyLogSuffix marks a log artifact that has nothing in it. An empty file
 // listed as `logs:` is worse than no listing at all — it sends whoever is
 // diagnosing a failure to a file that cannot explain it — so say so on the line
-// that advertises it.
+// that advertises it. The named causes have to be ones that can still happen: a
+// server discarding its logs was the original suspect and is no longer possible,
+// so pointing at it would send a maintainer after a removed cause.
 func emptyLogSuffix(path string) string {
 	info, err := os.Stat(path)
 	if err != nil || info.Size() > 0 {
 		return ""
 	}
-	return "  (EMPTY — captured nothing; the service may be discarding its logs)"
+	return "  (EMPTY — captured nothing; the service may never have started, or its --log-level excludes everything it logged)"
 }
 
 func fileExists(path string) bool {
