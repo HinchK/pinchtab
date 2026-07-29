@@ -125,6 +125,17 @@ func clearStaleProfileLocks(profileDir, errMsg string) (bool, error) {
 // to release the profile before renaming. Var so tests can shrink it.
 var quarantineExitWait = 5 * time.Second
 
+const quarantineSuffix = ".quarantine-"
+
+var quarantineDirName = regexp.MustCompile(regexp.QuoteMeta(quarantineSuffix) + `\d+$`)
+
+// IsQuarantinedProfileDir reports whether a directory name is one quarantine
+// produced. Only the "<name>.quarantine-<unix>" suffix decides, so a profile a
+// user named after the word stays an ordinary profile.
+func IsQuarantinedProfileDir(dirName string) bool {
+	return quarantineDirName.MatchString(dirName)
+}
+
 // quarantineCorruptedProfile renames profileDir to "<profileDir>.quarantine-<ts>"
 // and recreates an empty directory at the original path. Used to recover
 // from silent CDP attach failures where CloakBrowser refuses to ingest
@@ -147,7 +158,7 @@ func quarantineCorruptedProfile(profileDir string) (string, error) {
 	if !waitForChromeExit(profileDir, quarantineExitWait) {
 		slog.Warn("quarantining profile while a browser process may still hold it", "profile", profileDir)
 	}
-	quarantinePath := fmt.Sprintf("%s.quarantine-%d", profileDir, time.Now().Unix())
+	quarantinePath := fmt.Sprintf("%s%s%d", profileDir, quarantineSuffix, time.Now().Unix())
 	if err := os.Rename(profileDir, quarantinePath); err != nil {
 		return "", fmt.Errorf("rename profile dir: %w", err)
 	}

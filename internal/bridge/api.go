@@ -256,7 +256,8 @@ type ProfileInfo struct {
 	LastUsed          time.Time `json:"lastUsed"`
 	DiskUsage         int64     `json:"diskUsage"`
 	Running           bool      `json:"running"`
-	Temporary         bool      `json:"temporary,omitempty"` // ephemeral instance profiles (auto-generated)
+	Temporary         bool      `json:"temporary,omitempty"`   // ephemeral instance profiles (auto-generated)
+	Quarantined       bool      `json:"quarantined,omitempty"` // corrupted profiles renamed aside by quarantine
 	Source            string    `json:"source,omitempty"`
 	ChromeProfileName string    `json:"chromeProfileName,omitempty"`
 	AccountEmail      string    `json:"accountEmail,omitempty"`

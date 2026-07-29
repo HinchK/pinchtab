@@ -441,3 +441,39 @@ func TestQuarantineWithoutMetadataStillSucceeds(t *testing.T) {
 		t.Fatalf("quarantined directory incomplete: %v", err)
 	}
 }
+
+func TestIsQuarantinedProfileDirMatchesOnlyTheSuffix(t *testing.T) {
+	tests := map[string]bool{
+		"default.quarantine-1785343990": true,
+		"work.quarantine-0":             true,
+		"quarantine-notes":              false,
+		"my-quarantine":                 false,
+		"default.quarantine-":           false,
+		"default.quarantine-abc":        false,
+		"default.quarantine-123.backup": false,
+		"default":                       false,
+	}
+	for name, want := range tests {
+		if got := IsQuarantinedProfileDir(name); got != want {
+			t.Errorf("IsQuarantinedProfileDir(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestQuarantineCorruptedProfileProducesAFlaggedName(t *testing.T) {
+	profileDir := filepath.Join(t.TempDir(), "default")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	if err != nil {
+		t.Fatalf("quarantineCorruptedProfile: %v", err)
+	}
+	if !IsQuarantinedProfileDir(filepath.Base(quarantinePath)) {
+		t.Fatalf("quarantine produced %q, which the listing would not flag", quarantinePath)
+	}
+	if IsQuarantinedProfileDir(filepath.Base(profileDir)) {
+		t.Fatalf("the recreated profile dir %q must not be flagged", profileDir)
+	}
+}

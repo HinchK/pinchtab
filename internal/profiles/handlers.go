@@ -22,6 +22,7 @@ type profileResponse struct {
 	DiskUsage         int64     `json:"diskUsage"`
 	SizeMB            float64   `json:"sizeMB"`
 	Running           bool      `json:"running"`
+	Quarantined       bool      `json:"quarantined"`
 	Source            string    `json:"source"`
 	ChromeProfileName string    `json:"chromeProfileName"`
 	AccountEmail      string    `json:"accountEmail"`
@@ -42,6 +43,7 @@ func newProfileResponse(p bridge.ProfileInfo) profileResponse {
 		DiskUsage:         p.DiskUsage,
 		SizeMB:            float64(p.DiskUsage) / (1024 * 1024),
 		Running:           p.Running,
+		Quarantined:       p.Quarantined,
 		Source:            p.Source,
 		ChromeProfileName: p.ChromeProfileName,
 		AccountEmail:      p.AccountEmail,

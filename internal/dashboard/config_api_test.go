@@ -17,6 +17,7 @@ import (
 	_ "github.com/pinchtab/pinchtab/internal/browsers/all"
 
 	"github.com/pinchtab/pinchtab/internal/authn"
+	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/browsersession"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
@@ -718,4 +719,39 @@ func isZeroValue(v reflect.Value) bool {
 		return v.IsNil()
 	}
 	return v.IsZero()
+}
+
+type stubProfileLister struct {
+	profiles []bridge.ProfileInfo
+}
+
+func (s stubProfileLister) List() ([]bridge.ProfileInfo, error) { return s.profiles, nil }
+
+func TestHandleHealthCountsQuarantinedProfilesSeparately(t *testing.T) {
+	fc := config.DefaultFileConfig()
+	api := newConfigAPITestAPI(t, fc)
+	api.profiles = stubProfileLister{profiles: []bridge.ProfileInfo{
+		{Name: "work"},
+		{Name: "quarantine-notes"},
+		{Name: "work.quarantine-1785343990", Quarantined: true},
+		{Name: "personal.quarantine-1785343991", Quarantined: true},
+	}}
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	w := httptest.NewRecorder()
+	api.HandleHealth(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("HandleHealth() status = %d, want %d", w.Code, http.StatusOK)
+	}
+	var health healthEnvelope
+	if err := json.NewDecoder(w.Body).Decode(&health); err != nil {
+		t.Fatalf("Decode() error = %v", err)
+	}
+	if health.Profiles != 2 {
+		t.Errorf("health profiles = %d, want 2 live profiles", health.Profiles)
+	}
+	if health.QuarantinedProfiles != 2 {
+		t.Errorf("health quarantinedProfiles = %d, want 2", health.QuarantinedProfiles)
+	}
 }

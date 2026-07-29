@@ -122,8 +122,6 @@ func (pm *ProfileManager) List() ([]bridge.ProfileInfo, error) {
 			continue
 		}
 
-		isTemporary := strings.HasPrefix(info.Name, "instance-")
-
 		pathExists := true
 		if _, err := os.Stat(info.Path); err != nil {
 			pathExists = false
@@ -135,7 +133,8 @@ func (pm *ProfileManager) List() ([]bridge.ProfileInfo, error) {
 			Path:              info.Path,
 			PathExists:        pathExists,
 			Created:           info.CreatedAt,
-			Temporary:         isTemporary,
+			Temporary:         strings.HasPrefix(info.Name, "instance-"),
+			Quarantined:       bridge.IsQuarantinedProfileDir(entry.Name()),
 			DiskUsage:         int64(info.SizeMB * 1024 * 1024),
 			Source:            info.Source,
 			ChromeProfileName: info.ChromeProfileName,

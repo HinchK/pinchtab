@@ -21,6 +21,7 @@ export interface Profile {
   sizeMB?: number /* float64 */;
   running: boolean;
   temporary?: boolean;
+  quarantined?: boolean;
   source?: string;
   chromeProfileName?: string;
   accountEmail?: string;

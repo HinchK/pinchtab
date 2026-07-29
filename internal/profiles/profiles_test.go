@@ -1250,3 +1250,100 @@ func TestProfileRenameRollsBackMetadataWhenTheDirectoryRenameFails(t *testing.T)
 		t.Fatalf("listing after a failed rename: name=%q id=%q", got.Name, got.ID)
 	}
 }
+
+func TestProfileManagerListFlagsQuarantinedDirectories(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewProfileManager(dir)
+
+	if err := pm.Create("work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "quarantine-notes", "Default"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	quarantineSizes := map[string]int{
+		profileID("work") + ".quarantine-1785343990": 1 << 20,
+		"quarantine-notes.quarantine-1785343991":     2 << 20,
+	}
+	for name, size := range quarantineSizes {
+		defaultDir := filepath.Join(dir, name, "Default")
+		if err := os.MkdirAll(defaultDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(defaultDir, "History"), make([]byte, size), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	profiles, err := pm.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 4 {
+		t.Fatalf("expected 4 entries (2 live + 2 quarantined), got %d", len(profiles))
+	}
+
+	live, quarantined := 0, 0
+	var quarantinedTotal int64
+	for _, p := range profiles {
+		if !p.Quarantined {
+			live++
+			continue
+		}
+		quarantined++
+		quarantinedTotal += p.DiskUsage
+		if _, ok := quarantineSizes[filepath.Base(p.Path)]; !ok {
+			t.Errorf("flagged %q as quarantined, but it is not a quarantine directory", p.Path)
+		}
+	}
+	if live != 2 || quarantined != 2 {
+		t.Fatalf("expected 2 live and 2 quarantined, got %d and %d", live, quarantined)
+	}
+	if quarantinedTotal < 3<<20 {
+		t.Errorf("quarantined disk usage totals %d bytes, want at least %d", quarantinedTotal, 3<<20)
+	}
+	for _, p := range profiles {
+		if p.Name == "quarantine-notes" && p.Quarantined {
+			t.Errorf("a profile merely named %q must not be flagged as quarantined", p.Name)
+		}
+	}
+}
+
+func TestHandleListMarksQuarantinedEntries(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewProfileManager(dir)
+
+	if err := pm.Create("quarantine-notes"); err != nil {
+		t.Fatal(err)
+	}
+	quarantineDir := filepath.Join(dir, profileID("quarantine-notes")+".quarantine-1785343990", "Default")
+	if err := os.MkdirAll(quarantineDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/profiles", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /profiles = %d", w.Code)
+	}
+	var listed []struct {
+		Name        string `json:"name"`
+		Quarantined bool   `json:"quarantined"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode /profiles: %v (%s)", err, w.Body.String())
+	}
+	if len(listed) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %s", len(listed), w.Body.String())
+	}
+	for _, entry := range listed {
+		want := strings.HasSuffix(entry.Name, ".quarantine-1785343990")
+		if entry.Quarantined != want {
+			t.Errorf("entry %q quarantined = %v, want %v", entry.Name, entry.Quarantined, want)
+		}
+	}
+}

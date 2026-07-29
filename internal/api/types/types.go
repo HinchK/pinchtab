@@ -18,6 +18,7 @@ type Profile struct {
 	SizeMB            float64   `json:"sizeMB,omitempty"`
 	Running           bool      `json:"running"`
 	Temporary         bool      `json:"temporary,omitempty"`
+	Quarantined       bool      `json:"quarantined,omitempty"`
 	Source            string    `json:"source,omitempty"`
 	ChromeProfileName string    `json:"chromeProfileName,omitempty"`
 	AccountEmail      string    `json:"accountEmail,omitempty"`

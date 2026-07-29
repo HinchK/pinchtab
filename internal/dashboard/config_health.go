@@ -25,18 +25,19 @@ type healthSecurityInfo struct {
 }
 
 type healthEnvelope struct {
-	Status          string              `json:"status"`
-	Mode            string              `json:"mode"`
-	Version         string              `json:"version"`
-	Uptime          int64               `json:"uptime"`
-	AuthRequired    bool                `json:"authRequired"`
-	Profiles        int                 `json:"profiles"`
-	Instances       int                 `json:"instances"`
-	DefaultInstance *healthInstanceInfo `json:"defaultInstance,omitempty"`
-	Agents          int                 `json:"agents"`
-	RestartRequired bool                `json:"restartRequired"`
-	RestartReasons  []string            `json:"restartReasons,omitempty"`
-	Security        *healthSecurityInfo `json:"security,omitempty"`
+	Status              string              `json:"status"`
+	Mode                string              `json:"mode"`
+	Version             string              `json:"version"`
+	Uptime              int64               `json:"uptime"`
+	AuthRequired        bool                `json:"authRequired"`
+	Profiles            int                 `json:"profiles"`
+	QuarantinedProfiles int                 `json:"quarantinedProfiles"`
+	Instances           int                 `json:"instances"`
+	DefaultInstance     *healthInstanceInfo `json:"defaultInstance,omitempty"`
+	Agents              int                 `json:"agents"`
+	RestartRequired     bool                `json:"restartRequired"`
+	RestartReasons      []string            `json:"restartReasons,omitempty"`
+	Security            *healthSecurityInfo `json:"security,omitempty"`
 }
 
 func (c *ConfigAPI) healthInfo(includeSecurity bool) (healthEnvelope, error) {
@@ -45,11 +46,17 @@ func (c *ConfigAPI) healthInfo(includeSecurity bool) (healthEnvelope, error) {
 		return healthEnvelope{}, err
 	}
 
-	profileCount := 0
+	profileCount, quarantinedCount := 0, 0
 	if c.profiles != nil {
 		profiles, err := c.profiles.List()
 		if err == nil {
-			profileCount = len(profiles)
+			for _, p := range profiles {
+				if p.Quarantined {
+					quarantinedCount++
+					continue
+				}
+				profileCount++
+			}
 		}
 	}
 
@@ -70,17 +77,18 @@ func (c *ConfigAPI) healthInfo(includeSecurity bool) (healthEnvelope, error) {
 		agentCount = c.agents.AgentCount()
 	}
 	out := healthEnvelope{
-		Status:          "ok",
-		Mode:            "dashboard",
-		Version:         c.version,
-		Uptime:          int64(time.Since(c.startedAt).Milliseconds()),
-		AuthRequired:    strings.TrimSpace(c.runtime.Token) != "",
-		Profiles:        profileCount,
-		Instances:       instanceCount,
-		DefaultInstance: defaultInst,
-		Agents:          agentCount,
-		RestartRequired: len(restartReasons) > 0,
-		RestartReasons:  restartReasons,
+		Status:              "ok",
+		Mode:                "dashboard",
+		Version:             c.version,
+		Uptime:              int64(time.Since(c.startedAt).Milliseconds()),
+		AuthRequired:        strings.TrimSpace(c.runtime.Token) != "",
+		Profiles:            profileCount,
+		QuarantinedProfiles: quarantinedCount,
+		Instances:           instanceCount,
+		DefaultInstance:     defaultInst,
+		Agents:              agentCount,
+		RestartRequired:     len(restartReasons) > 0,
+		RestartReasons:      restartReasons,
 	}
 	if includeSecurity {
 		security := runtimeSecurityInfo(c.runtime)
