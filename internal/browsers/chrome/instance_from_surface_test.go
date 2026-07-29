@@ -6,10 +6,12 @@ import (
 	"github.com/pinchtab/pinchtab/internal/cdptk"
 )
 
-// The browser-level clip tests cannot pin this choice on their own: in headless
-// Chrome fromSurface is a no-op, so an always-true "simplification" produces
-// byte-identical images and passes them. This is the guard that fails instead —
-// the unclipped screencast poll must keep the direct view read.
+// The clipped browser test pins fromSurface=true for a clip; nothing else pins
+// fromSurface=false for a nil one, because both flags return the viewport at the
+// same dimensions and only the pixels differ. So an always-true
+// "simplification" passes every dimension assertion this package has. This is
+// the guard that fails instead — the unclipped screencast poll must keep the
+// direct view read rather than wait on a frame an idle headed page never swaps.
 func TestCaptureFromSurfaceOnlyForClippedCaptures(t *testing.T) {
 	tests := []struct {
 		name string

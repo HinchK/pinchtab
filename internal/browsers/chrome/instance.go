@@ -81,14 +81,22 @@ func (i *Instance) CaptureScreenshot(ctx context.Context, format string, quality
 // waiting for a fresh compositor surface frame. On idle pages in headed
 // browsers (e.g. Cloak) the surface stops swapping frames, so the default
 // fromSurface=true blocks until the action deadline (~30s) — stalling one-shot
-// screenshots and polling screencast alike. In headless Chrome the flag is a
-// no-op, which is why only this predicate, not a captured image, can pin the
-// choice.
+// screenshots and polling screencast alike.
 //
 // Reading the view also discards the clip and returns the whole viewport
 // whatever region was asked for, so a clipped capture pays the surface path and
 // the BringToFront above is what keeps that affordable. Screencast polls with a
 // nil clip and keeps the fast read.
+//
+// Measured in headless Chrome on a 120x60 clip, so the flag is not a no-op
+// there and a clipped capture is exactly what makes it observable:
+//
+//	fromSurface=true  clip -> 120x60      fromSurface=false clip -> 756x413
+//	fromSurface=true  nil  -> 756x413     fromSurface=false nil  -> 756x413
+//
+// The nil-clip pair matches on dimensions, which is why the unclipped browser
+// test cannot pin this choice; its pixels do differ, but asserting that would
+// couple the test to Chrome's encoder. Hence the predicate test beside it.
 func captureFromSurface(clip *cdptk.ScreenshotClip) bool {
 	return clip != nil
 }
