@@ -57,35 +57,31 @@ func InitBrowser(cfg *config.RuntimeConfig, bundle *stealth.Bundle, hooks Hooks)
 		return initBrowserFromExistingCDP(cfg, bundle)
 	}
 
-	targetBinary := runtimekit.FindBrowserBinary(config.NormalizeBrowser(cfg.DefaultBrowser))
-	if strings.TrimSpace(cfg.BrowserBinary) != "" {
-		targetBinary = strings.TrimSpace(cfg.BrowserBinary)
-	}
-	slog.Info("starting browser initialization", "headless", cfg.Headless, "profile", cfg.ProfileDir, "binary", targetBinary)
-	browserID := config.NormalizeBrowser(cfg.DefaultBrowser)
-	if b, ok := browsers.Get(browserID); ok {
+	launchCfg, effective := effectiveLaunchTarget(cfg)
+	slog.Info("starting browser initialization", "headless", launchCfg.Headless, "profile", launchCfg.ProfileDir, "binary", effective.Binary)
+	if b, ok := browsers.Get(effective.ID); ok {
 		tcfg := browsers.TargetConfig{
-			Provider: browserID,
-			Binary:   targetBinary,
+			Provider: effective.ID,
+			Binary:   effective.Binary,
 		}
 		if err := b.ValidateTarget(tcfg); err != nil {
-			return nil, nil, nil, nil, stealth.LaunchModeUninitialized, missingBrowserBinaryError(cfg)
+			return nil, nil, nil, nil, stealth.LaunchModeUninitialized, missingBrowserBinaryError(launchCfg)
 		}
 	}
 
-	bundle = ensureStealthBundle(cfg, bundle)
-	geoAlignment, err := resolveLaunchGeoAlignment(context.Background(), cfg)
+	bundle = ensureStealthBundle(launchCfg, bundle)
+	geoAlignment, err := resolveLaunchGeoAlignment(context.Background(), launchCfg)
 	if err != nil {
 		return nil, nil, nil, nil, stealth.LaunchModeUninitialized, fmt.Errorf("failed to resolve proxy geo alignment: %w", err)
 	}
-	allocCtx, allocCancel, opts, debugPort, err := setupAllocator(cfg, bundle, hooks, geoAlignment)
+	allocCtx, allocCancel, opts, debugPort, err := setupAllocator(launchCfg, effective.Binary, bundle, hooks, geoAlignment)
 	if err != nil {
 		return nil, nil, nil, nil, stealth.LaunchModeUninitialized, err
 	}
-	browserCtx, browserCancel, launchMode, err := startBrowser(allocCtx, cfg, bundle, opts, debugPort, hooks, geoAlignment)
+	browserCtx, browserCancel, launchMode, err := startBrowser(allocCtx, launchCfg, bundle, opts, debugPort, hooks, geoAlignment)
 	if err != nil {
 		allocCancel()
-		slog.Error("browser initialization failed", "headless", cfg.Headless, "error", err.Error())
+		slog.Error("browser initialization failed", "headless", launchCfg.Headless, "error", err.Error())
 		return nil, nil, nil, nil, stealth.LaunchModeUninitialized, fmt.Errorf("failed to start browser: %w", err)
 	}
 	// Publish the resolved DevTools port (auto-picked when the config left it
@@ -94,23 +90,25 @@ func InitBrowser(cfg *config.RuntimeConfig, bundle *stealth.Bundle, hooks Hooks)
 	// the launched browser.
 	cfg.BrowserDebugPort = debugPort
 
-	if ProxyAuthEnabled(cfg.Proxy) {
-		if err := EnableProxyAuth(browserCtx, cfg.Proxy, nil); err != nil {
+	if ProxyAuthEnabled(launchCfg.Proxy) {
+		if err := EnableProxyAuth(browserCtx, launchCfg.Proxy, nil); err != nil {
 			browserCancel()
 			allocCancel()
 			return nil, nil, nil, nil, stealth.LaunchModeUninitialized, fmt.Errorf("failed to enable proxy auth: %w", err)
 		}
-		slog.Info("proxy authentication enabled via CDP", "proxy", cfg.Proxy.Redacted())
+		slog.Info("proxy authentication enabled via CDP", "proxy", launchCfg.Proxy.Redacted())
 	}
 
-	slog.Info("browser initialized successfully", "headless", cfg.Headless, "profile", cfg.ProfileDir)
+	slog.Info("browser initialized successfully", "headless", launchCfg.Headless, "profile", launchCfg.ProfileDir)
 	return allocCtx, allocCancel, browserCtx, browserCancel, launchMode, nil
 }
 
-// FindBrowserBinary exposes the launch-time browser discovery used by runtime
-// initialization so diagnostics can report against the same search path.
-func FindBrowserBinary() string {
-	return runtimekit.FindBrowserBinary("chrome")
+func effectiveLaunchTarget(cfg *config.RuntimeConfig) (*config.RuntimeConfig, runtimekit.EffectiveBrowser) {
+	effective := runtimekit.ResolveEffectiveBrowser(cfg)
+	if effective.Config == nil {
+		return cfg, effective
+	}
+	return effective.Config, effective
 }
 
 type providerLaunchPlan struct {
@@ -144,7 +142,7 @@ func ensureStealthBundle(cfg *config.RuntimeConfig, bundle *stealth.Bundle) *ste
 	return stealth.NewBundle(cfg, cryptoRandSeed())
 }
 
-func setupAllocator(cfg *config.RuntimeConfig, bundle *stealth.Bundle, hooks Hooks, geoAlignment launchGeoAlignment) (context.Context, context.CancelFunc, []chromedp.ExecAllocatorOption, int, error) {
+func setupAllocator(cfg *config.RuntimeConfig, binary string, bundle *stealth.Bundle, hooks Hooks, geoAlignment launchGeoAlignment) (context.Context, context.CancelFunc, []chromedp.ExecAllocatorOption, int, error) {
 	opts := []chromedp.ExecAllocatorOption{
 		chromedp.NoFirstRun,
 		chromedp.NoDefaultBrowserCheck,
@@ -154,10 +152,6 @@ func setupAllocator(cfg *config.RuntimeConfig, bundle *stealth.Bundle, hooks Hoo
 		debugPort = cfg.BrowserDebugPort
 	} else if port, err := findFreePort(cfg.InstancePortStart, cfg.InstancePortEnd); err == nil {
 		debugPort = port
-	}
-	binary := strings.TrimSpace(cfg.BrowserBinary)
-	if binary == "" {
-		binary = runtimekit.FindBrowserBinary(config.NormalizeBrowser(cfg.DefaultBrowser))
 	}
 	launchCfg := runtimekit.LaunchConfigFromRuntime(cfg, binary, debugPort, launchNeedsNoSandbox())
 	// setupAllocator appends user extra flags itself (below), where the
@@ -281,11 +275,16 @@ func applyStartupStealth(ctx context.Context, cfg *config.RuntimeConfig, bundle 
 
 func missingBrowserBinaryError(cfg *config.RuntimeConfig) error {
 	browserID := config.NormalizeBrowser(cfg.DefaultBrowser)
+	target := config.ResolveDefaultTarget(cfg)
+	if target == "" {
+		target = browserID
+	}
 	if b, ok := browsers.Get(browserID); ok {
 		name := b.DisplayName()
-		return fmt.Errorf("%s binary not found: set browser.binary to the %s binary path", strings.ToLower(name), name)
+		return fmt.Errorf("%s binary not found for browser target %q: set browser.targets.%s.binary to the %s binary path",
+			strings.ToLower(name), target, target, name)
 	}
-	return fmt.Errorf("browser binary not found: set browser.binary in config")
+	return fmt.Errorf("browser binary not found for browser target %q: set browser.targets.%s.binary in config", target, target)
 }
 
 func injectedScript(ctx context.Context, script string) error {

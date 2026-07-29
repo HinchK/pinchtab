@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	_ "github.com/pinchtab/pinchtab/internal/browsers/all"
+	"github.com/pinchtab/pinchtab/internal/browsers/runtimekit"
+	"github.com/pinchtab/pinchtab/internal/config"
 )
 
 func TestValidateBridgeCDPURL(t *testing.T) {
@@ -77,5 +79,46 @@ func TestBridgeAttachChildFlagContract(t *testing.T) {
 	}
 	if bridgeCmd.Flags().Lookup("browser-provider") != nil {
 		t.Error("bridge command must not register obsolete browser-provider flag")
+	}
+}
+
+func bridgeTargetsConfig() *config.RuntimeConfig {
+	return &config.RuntimeConfig{
+		DefaultBrowser: config.BrowserCloak,
+		DefaultTarget:  "cloak-primary",
+		Targets: config.BrowserTargetsConfig{
+			"chrome-alt":    {Provider: config.BrowserChrome, Binary: "/tmp/pinchtab-test-chrome"},
+			"cloak-primary": {Provider: config.BrowserCloak, Binary: "/tmp/pinchtab-test-cloak"},
+		},
+	}
+}
+
+func TestApplyBridgeBrowserTargetOverridesDefaultTarget(t *testing.T) {
+	cfg := bridgeTargetsConfig()
+
+	applyBridgeBrowserTarget(cfg, config.BrowserChrome)
+
+	if cfg.DefaultTarget != "chrome-alt" {
+		t.Fatalf("DefaultTarget = %q, want chrome-alt", cfg.DefaultTarget)
+	}
+	effective := runtimekit.ResolveEffectiveBrowser(cfg)
+	if effective.ID != config.BrowserChrome {
+		t.Fatalf("resolved provider = %q, want chrome", effective.ID)
+	}
+	if effective.Binary != "/tmp/pinchtab-test-chrome" {
+		t.Fatalf("resolved binary = %q, want the chrome target binary", effective.Binary)
+	}
+}
+
+func TestApplyBridgeBrowserTargetClearsUnmatchedDefaultTarget(t *testing.T) {
+	cfg := bridgeTargetsConfig()
+
+	applyBridgeBrowserTarget(cfg, config.BrowserGhostChrome)
+
+	if cfg.DefaultTarget != "" {
+		t.Fatalf("DefaultTarget = %q, want cleared", cfg.DefaultTarget)
+	}
+	if got := runtimekit.ResolveEffectiveBrowser(cfg).ID; got != config.BrowserGhostChrome {
+		t.Fatalf("resolved provider = %q, want ghost-chrome", got)
 	}
 }

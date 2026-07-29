@@ -50,16 +50,17 @@ func launchNeedsNoSandbox() bool {
 }
 
 func BuildBrowserArgs(cfg *config.RuntimeConfig, port int) []string {
+	cfg, effective := effectiveLaunchTarget(cfg)
 	geoAlignment, err := resolveLaunchGeoAlignment(context.Background(), cfg)
 	if err != nil {
-		args, _, buildErr := buildBrowserArgsWithBundle(cfg, nil, port, launchGeoAlignment{})
+		args, _, buildErr := buildBrowserArgsWithBundle(cfg, effective.Binary, nil, port, launchGeoAlignment{})
 		if buildErr != nil {
 			slog.Error("build browser args failed", "err", buildErr)
 			return nil
 		}
 		return args
 	}
-	args, _, err := buildBrowserArgsWithBundle(cfg, nil, port, geoAlignment)
+	args, _, err := buildBrowserArgsWithBundle(cfg, effective.Binary, nil, port, geoAlignment)
 	if err != nil {
 		slog.Error("build browser args failed", "err", err)
 		return nil
@@ -80,12 +81,8 @@ func existingExtensionPaths(paths []string) []string {
 	return validPaths
 }
 
-func buildBrowserArgsWithBundle(cfg *config.RuntimeConfig, bundle *stealth.Bundle, port int, geoAlignment launchGeoAlignment) ([]string, []string, error) {
+func buildBrowserArgsWithBundle(cfg *config.RuntimeConfig, binary string, bundle *stealth.Bundle, port int, geoAlignment launchGeoAlignment) ([]string, []string, error) {
 	bundle = ensureStealthBundle(cfg, bundle)
-	binary := strings.TrimSpace(cfg.BrowserBinary)
-	if binary == "" {
-		binary = runtimekit.FindBrowserBinary(config.NormalizeBrowser(cfg.DefaultBrowser))
-	}
 	launchCfg := runtimekit.LaunchConfigFromRuntime(cfg, binary, port, launchNeedsNoSandbox())
 	if cfg.DisableInProcessGPU {
 		// Crash-recovery kill switch: a user-supplied --in-process-gpu must

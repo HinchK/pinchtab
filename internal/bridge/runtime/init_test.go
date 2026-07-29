@@ -376,12 +376,12 @@ func TestBuildBrowserArgs_MalformedProxyFailsClosed(t *testing.T) {
 		DefaultBrowser: config.BrowserChrome,
 		Proxy:          config.BrowserProxyConfig{Server: "not a proxy url"},
 	}
-	if _, _, err := buildBrowserArgsWithBundle(cfg, nil, 9222, launchGeoAlignment{}); err == nil {
+	if _, _, err := buildBrowserArgsWithBundle(cfg, "", nil, 9222, launchGeoAlignment{}); err == nil {
 		t.Fatal("expected launch-args build to fail for malformed proxy server")
 	}
 
 	cfg.Proxy.Server = "http://proxy.example.com:8080"
-	args, _, err := buildBrowserArgsWithBundle(cfg, nil, 9222, launchGeoAlignment{})
+	args, _, err := buildBrowserArgsWithBundle(cfg, "", nil, 9222, launchGeoAlignment{})
 	if err != nil {
 		t.Fatalf("valid proxy should build: %v", err)
 	}

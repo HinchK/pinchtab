@@ -149,7 +149,7 @@ func startBrowserWithRemoteAllocator(parentCtx context.Context, cfg *config.Runt
 		return nil, nil, stealth.LaunchModeUninitialized, missingBrowserBinaryError(cfg)
 	}
 
-	args, providerEnv, err := buildBrowserArgsWithBundle(cfg, bundle, debugPort, geoAlignment)
+	args, providerEnv, err := buildBrowserArgsWithBundle(cfg, plan.binary, bundle, debugPort, geoAlignment)
 	if err != nil {
 		return nil, nil, stealth.LaunchModeUninitialized, err
 	}

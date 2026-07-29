@@ -53,7 +53,7 @@ Examples:
 		if browser, err := resolveBridgeBrowser(bridgeBrowser, cfg.BrowsersAvailable); err != nil {
 			return err
 		} else if browser != "" {
-			cfg.DefaultBrowser = browser
+			applyBridgeBrowserTarget(cfg, browser)
 		}
 		if v := strings.TrimSpace(bridgeRemoteBrowserName); v != "" {
 			cfg.RemoteBrowserName = v
@@ -93,6 +93,15 @@ func validateBridgeCDPURL(raw string) (string, error) {
 		return "", fmt.Errorf("invalid --cdp-attach %q: expected ws, wss, http, or https", raw)
 	}
 	return trimmed, nil
+}
+
+// applyBridgeBrowserTarget points the launch at the target that serves the
+// requested provider; leaving a default target of another provider in place
+// would let target resolution overwrite the flag.
+func applyBridgeBrowserTarget(cfg *config.RuntimeConfig, browser string) {
+	cfg.DefaultBrowser = browser
+	target, _ := config.MatchBrowserToTarget(cfg, browser)
+	cfg.DefaultTarget = target
 }
 
 func resolveBridgeBrowser(browserFlag string, configured []string) (string, error) {

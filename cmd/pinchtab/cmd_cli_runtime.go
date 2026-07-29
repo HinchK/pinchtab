@@ -72,8 +72,8 @@ func runCLIWithServerCheck(cfg *config.RuntimeConfig, command string, fn func(cl
 // preflightBrowserBinary fails fast with an actionable message when the active
 // provider has no usable browser, instead of letting the launch silently retry
 // and surface only the bridge's generic "instance not ready after 10s" timeout.
-// It mirrors the launch-time resolution in bridge/runtime.InitBrowser (explicit
-// browser.binary wins over discovery) so it can't diverge from what actually runs.
+// It shares runtimekit.ResolveEffectiveBrowser with bridge/runtime.InitBrowser,
+// so it cannot diverge from what actually runs.
 func preflightBrowserBinary(cfg *config.RuntimeConfig) error {
 	if cfg == nil || strings.TrimSpace(cfg.CDPAttachURL) != "" {
 		return nil // attaching to an external CDP endpoint; no local binary needed
