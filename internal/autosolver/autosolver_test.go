@@ -1010,10 +1010,12 @@ func solverNames(solvers []Solver) []string {
 }
 
 func TestOrderSolvers(t *testing.T) {
-	priorityOrder := []Solver{
-		&mockSolver{name: "alpha", priority: 10},
-		&mockSolver{name: "beta", priority: 20},
-		&mockSolver{name: "gamma", priority: 30},
+	newPriorityOrder := func() []Solver {
+		return []Solver{
+			&mockSolver{name: "alpha", priority: 10},
+			&mockSolver{name: "beta", priority: 20},
+			&mockSolver{name: "gamma", priority: 30},
+		}
 	}
 
 	for _, tc := range []struct {
@@ -1045,7 +1047,7 @@ func TestOrderSolvers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			as := New(Config{Solvers: tc.configured}, nil, nil)
 
-			got := solverNames(as.orderSolvers(priorityOrder))
+			got := solverNames(as.orderSolvers(newPriorityOrder()))
 
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("orderSolvers = %v, want %v", got, tc.want)
