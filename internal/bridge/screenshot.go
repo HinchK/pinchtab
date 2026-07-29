@@ -241,33 +241,24 @@ func ScreenshotClipForNode(ctx context.Context, nodeID int64) (*ScreenshotClip, 
 		return nil, fmt.Errorf("scroll into view: %w", err)
 	}
 
-	var resolveResult json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId": nodeID,
-		}, &resolveResult)
-	})); err != nil {
+	// Isolated world: boxFn reads getBoundingClientRect, so a main-world handle
+	// would let the page steer the clip origin by redefining it.
+	objectID, err := IsolatedNodeObjectID(ctx, nodeID)
+	if err != nil {
 		return nil, fmt.Errorf("resolve node: %w", err)
 	}
 
-	var resolved struct {
-		Object struct {
-			ObjectID string `json:"objectId"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(resolveResult, &resolved); err != nil {
-		return nil, fmt.Errorf("parse resolved node: %w", err)
-	}
-	if resolved.Object.ObjectID == "" {
-		return nil, fmt.Errorf("element not found in DOM (backendNodeId=%d)", nodeID)
-	}
-
+	// The frame walk starts from the NODE's own view, not the ambient `window`.
+	// An isolated-world handle runs in the world it was resolved into, which is
+	// not necessarily the node's frame, and a bare `window` there is the wrong
+	// frame's — its frameElement chain is empty and every frame offset is lost.
 	const boxFn = `function() {
+		const view = (this.ownerDocument && this.ownerDocument.defaultView) || window;
 		const rect = this.getBoundingClientRect();
-		let x = rect.left + (window.scrollX || window.pageXOffset || 0);
-		let y = rect.top + (window.scrollY || window.pageYOffset || 0);
+		let x = rect.left + (view.scrollX || view.pageXOffset || 0);
+		let y = rect.top + (view.scrollY || view.pageYOffset || 0);
 		try {
-			let current = window;
+			let current = view;
 			while (current && current.parent && current !== current.parent) {
 				const frameEl = current.frameElement;
 				if (!frameEl) {
@@ -290,7 +281,7 @@ func ScreenshotClipForNode(ctx context.Context, nodeID int64) (*ScreenshotClip, 
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.callFunctionOn", map[string]any{
 			"functionDeclaration": boxFn,
-			"objectId":            resolved.Object.ObjectID,
+			"objectId":            objectID,
 			"returnByValue":       true,
 		}, &callResult)
 	})); err != nil {

@@ -46,25 +46,76 @@ func frameExecutionContextID(ctx context.Context, frameID string) (int64, error)
 	return bridgecdpops.FrameExecutionContextID(ctx, frameID)
 }
 
-func frameDocumentObjectID(ctx context.Context, frameID string) (string, error) {
-	// Selector and modal discovery run in an isolated world so page script cannot
-	// hide or redirect targets by replacing DOM methods in the main world.
+// isolatedExecutionContextID returns the isolated world's execution context for
+// frameID, or for the top frame when frameID is empty. Selector and modal
+// discovery run there so page script cannot hide or redirect targets by
+// replacing DOM methods in the main world. It never returns a usable zero: a
+// caller that cannot get an isolated context gets an error, not the main world.
+func isolatedExecutionContextID(ctx context.Context, frameID string) (int64, error) {
 	if frameID == "" {
 		frameTree, err := FetchFrameTree(ctx)
 		if err != nil {
-			return "", fmt.Errorf("resolve top frame: %w", err)
+			return 0, fmt.Errorf("resolve top frame: %w", err)
 		}
 		frameID = frameTree.Frame.ID
 		if frameID == "" {
-			return "", fmt.Errorf("resolve top frame: frame id is empty")
+			return 0, fmt.Errorf("resolve top frame: frame id is empty")
 		}
 	}
 	execID, err := frameExecutionContextID(ctx, frameID)
 	if err != nil {
-		return "", err
+		return 0, err
 	}
 	if execID == 0 {
-		return "", fmt.Errorf("frame %q has no isolated execution context", frameID)
+		return 0, fmt.Errorf("frame %q has no isolated execution context", frameID)
+	}
+	return execID, nil
+}
+
+// IsolatedNodeObjectID converts a backend node id to a JS object handle in the
+// isolated world. DOM.resolveNode without an executionContextId hands back a
+// main-world object, and every Runtime.callFunctionOn against it then runs where
+// page script can redefine the DOM methods it uses — so a scoped selector or a
+// clip origin could be steered by the page it is inspecting.
+//
+// The isolated world is per-frame but a handle from any frame's world reaches a
+// node in another same-process frame, so the top frame's world is used rather
+// than the node's own: a bare backend node id does not carry its frame, and
+// DOM.describeNode reports frameId only for frame owner elements.
+func IsolatedNodeObjectID(ctx context.Context, backendNodeID int64) (string, error) {
+	execID, err := isolatedExecutionContextID(ctx, "")
+	if err != nil {
+		return "", err
+	}
+
+	var raw json.RawMessage
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
+			"backendNodeId":      backendNodeID,
+			"executionContextId": execID,
+		}, &raw)
+	})); err != nil {
+		return "", err
+	}
+
+	var parsed struct {
+		Object struct {
+			ObjectID string `json:"objectId"`
+		} `json:"object"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return "", err
+	}
+	if parsed.Object.ObjectID == "" {
+		return "", fmt.Errorf("backend node %d is no longer attached", backendNodeID)
+	}
+	return parsed.Object.ObjectID, nil
+}
+
+func frameDocumentObjectID(ctx context.Context, frameID string) (string, error) {
+	execID, err := isolatedExecutionContextID(ctx, frameID)
+	if err != nil {
+		return "", err
 	}
 
 	params := map[string]any{
@@ -291,31 +342,14 @@ func TopmostModalNodeID(ctx context.Context, frameID string) (int64, bool, error
 // resolveNodeWithinBackendNode invokes functionDeclaration with the scope
 // element as `this` and converts the returned DOM object to a backend node ID.
 func resolveNodeWithinBackendNode(ctx context.Context, scopeBackendNodeID int64, functionDeclaration string, args []map[string]any) (int64, error) {
-	var scopeResult json.RawMessage
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId": scopeBackendNodeID,
-		}, &scopeResult)
-	}))
+	scopeObjectID, err := IsolatedNodeObjectID(ctx, scopeBackendNodeID)
 	if err != nil {
 		return 0, fmt.Errorf("resolve scope node: %w", err)
 	}
 
-	var scope struct {
-		Object struct {
-			ObjectID string `json:"objectId"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(scopeResult, &scope); err != nil {
-		return 0, err
-	}
-	if scope.Object.ObjectID == "" {
-		return 0, fmt.Errorf("dialog scope is no longer attached")
-	}
-
 	params := map[string]any{
 		"functionDeclaration": functionDeclaration,
-		"objectId":            scope.Object.ObjectID,
+		"objectId":            scopeObjectID,
 		"returnByValue":       false,
 	}
 	if len(args) > 0 {
@@ -360,38 +394,17 @@ func BackendNodeWithinScope(ctx context.Context, scopeBackendNodeID, targetBacke
 		return false, nil
 	}
 
-	resolve := func(ctx context.Context, backendNodeID int64) (string, error) {
-		var raw json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId": backendNodeID,
-		}, &raw); err != nil {
-			return "", err
-		}
-		var parsed struct {
-			Object struct {
-				ObjectID string `json:"objectId"`
-			} `json:"object"`
-		}
-		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return "", err
-		}
-		if parsed.Object.ObjectID == "" {
-			return "", fmt.Errorf("backend node %d is no longer attached", backendNodeID)
-		}
-		return parsed.Object.ObjectID, nil
+	scopeObjectID, err := IsolatedNodeObjectID(ctx, scopeBackendNodeID)
+	if err != nil {
+		return false, fmt.Errorf("resolve scope node: %w", err)
+	}
+	targetObjectID, err := IsolatedNodeObjectID(ctx, targetBackendNodeID)
+	if err != nil {
+		return false, fmt.Errorf("resolve target node: %w", err)
 	}
 
 	var contains bool
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		scopeObjectID, err := resolve(ctx, scopeBackendNodeID)
-		if err != nil {
-			return fmt.Errorf("resolve scope node: %w", err)
-		}
-		targetObjectID, err := resolve(ctx, targetBackendNodeID)
-		if err != nil {
-			return fmt.Errorf("resolve target node: %w", err)
-		}
-
+	err = chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		var raw json.RawMessage
 		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.callFunctionOn", map[string]any{
 			"functionDeclaration": `function(target) {
