@@ -459,7 +459,11 @@ func (noopRecorder) Query(Filter) ([]Event, error) {
 }
 
 func (f Filter) matches(evt Event) bool {
-	if f.Source != "" && evt.Source != f.Source {
+	// Compare normalized names: the source is stored verbatim from the client
+	// header but the per-source file is named with the normalized form, so
+	// matching raw here would discard events from the very file queryFiles
+	// selected for this source.
+	if f.Source != "" && normalizeSourceName(evt.Source) != normalizeSourceName(f.Source) {
 		return false
 	}
 	if f.RequestID != "" && evt.RequestID != f.RequestID {
@@ -674,9 +678,14 @@ func isActivityLogFile(name string) bool {
 	return name != "events.jsonl" && strings.HasPrefix(name, "events-") && strings.HasSuffix(name, ".jsonl")
 }
 
+// isSourceLogFile anchors on the trailing day so a query for "mcp" does not
+// also scan every "mcp-<something>" source log.
 func isSourceLogFile(name, source string) bool {
-	prefix := "events-" + source + "-"
-	return strings.HasPrefix(name, prefix)
+	day, ok := activityLogDay(name)
+	if !ok {
+		return false
+	}
+	return name == "events-"+source+"-"+day+".jsonl"
 }
 
 func activityLogDay(name string) (string, bool) {
