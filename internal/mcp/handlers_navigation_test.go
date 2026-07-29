@@ -591,6 +591,37 @@ func TestCoordinateArgumentsAcceptStringForm(t *testing.T) {
 	}
 }
 
+// A dropped delta does not merely lose a number, it changes the interaction:
+// hasDeltaY gates the mouse-wheel branch, so without it a scroll degrades to a
+// scrollY jump or lets `direction` synthesise a magnitude the caller never
+// asked for. Deltas are also the only sign-bearing numeric arguments, and the
+// only ones no positivity guard protects.
+func TestScrollDeltaAcceptsStringForm(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	text := resultText(t, callTool(t, "pinchtab_scroll", map[string]any{"deltaY": "-300"}, srv))
+	for _, want := range []string{`"kind":"mouse-wheel"`, `"deltaY":-300`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("string-form deltaY: want %s in %s", want, text)
+		}
+	}
+}
+
+// The wait timeout is the third route a numeric argument can take: a POST body
+// built by callWaitEndpoint, truncated through int() on the way. Neither the
+// query table nor the coordinate test passes through it.
+func TestWaitTimeoutAcceptsStringForm(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	text := resultText(t, callTool(t, "pinchtab_wait_for_selector",
+		map[string]any{"selector": "#done", "timeout": "5"}, srv))
+	if !strings.Contains(text, `"timeout":5`) {
+		t.Errorf("string-form timeout did not reach the wait body: %s", text)
+	}
+}
+
 // The sibling of TestNumericArgumentsAcceptStringForm. Booleans are the larger
 // surface — twenty call sites — and withBounds is the only opt-out among them,
 // so dropping its string form means an explicit "off" is ignored and the
