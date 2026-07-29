@@ -109,10 +109,10 @@ func (as *AutoSolver) Solve(ctx context.Context, page Page, executor ActionExecu
 			return as.finalizeSuccess(result, page, entry.Solver, start), nil
 		}
 
-		solved, entry = as.trySolvers(ctx, page, executor)
-		appendAttempt(result, entry)
+		solved, entries := as.trySolvers(ctx, page, executor)
+		result.History = append(result.History, entries...)
 		if solved {
-			return as.finalizeSuccess(result, page, entry.Solver, start), nil
+			return as.finalizeSuccess(result, page, entries[len(entries)-1].Solver, start), nil
 		}
 
 		if as.config.LLMFallback && as.llm != nil {
@@ -172,13 +172,13 @@ func (as *AutoSolver) detectIntent(ctx context.Context, page Page) (*Intent, err
 	return detectIntentByTitle(page.Title()), nil
 }
 
-func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor ActionExecutor) (bool, *AttemptEntry) {
+func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor ActionExecutor) (bool, []AttemptEntry) {
 	solvers := as.registry.MatchingSolvers(ctx, page)
 	if len(solvers) == 0 {
-		return false, &AttemptEntry{
+		return false, []AttemptEntry{{
 			Solver: "none",
 			Status: StatusSkipped,
-		}
+		}}
 	}
 
 	orderedSolvers := solvers
@@ -198,7 +198,6 @@ func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor Action
 			missing = append(missing, name)
 		}
 
-		// If config names don't match available solvers, preserve default behavior.
 		if len(filtered) > 0 {
 			if len(missing) > 0 {
 				slog.Debug("autosolver: some configured solvers unavailable; using matched subset",
@@ -218,6 +217,7 @@ func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor Action
 		}
 	}
 
+	entries := make([]AttemptEntry, 0, len(orderedSolvers))
 	for _, s := range orderedSolvers {
 		solverCtx, cancel := context.WithTimeout(ctx, as.config.SolverTimeout)
 		solverStart := time.Now()
@@ -229,7 +229,7 @@ func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor Action
 		solveResult, err := s.Solve(solverCtx, page, executor)
 		cancel()
 
-		entry := &AttemptEntry{
+		entry := AttemptEntry{
 			Solver:   s.Name(),
 			Duration: time.Since(solverStart),
 		}
@@ -241,12 +241,13 @@ func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor Action
 				"solver", s.Name(),
 				"error", err,
 				"duration_ms", entry.Duration.Milliseconds())
+			entries = append(entries, entry)
 			continue
 		}
 
 		if solveResult != nil && solveResult.Solved {
 			entry.Status = StatusSolved
-			return true, entry
+			return true, append(entries, entry)
 		}
 
 		entry.Status = StatusFailed
@@ -256,13 +257,10 @@ func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor Action
 		slog.Debug("autosolver: solver returned not-solved",
 			"solver", s.Name(),
 			"duration_ms", entry.Duration.Milliseconds())
+		entries = append(entries, entry)
 	}
 
-	return false, &AttemptEntry{
-		Solver: orderedSolvers[len(orderedSolvers)-1].Name(),
-		Status: StatusFailed,
-		Error:  "all matching solvers failed",
-	}
+	return false, entries
 }
 
 func (as *AutoSolver) trySemantic(ctx context.Context, page Page, executor ActionExecutor, intent *Intent) (bool, *AttemptEntry) {

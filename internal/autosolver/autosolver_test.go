@@ -126,11 +126,13 @@ func (m *mockSemantic) SuggestAction(_ context.Context, _ Page, _ *Intent) (*Sug
 }
 
 type mockLLM struct {
-	resp *LLMResponse
-	err  error
+	resp     *LLMResponse
+	err      error
+	requests []LLMRequest
 }
 
-func (m *mockLLM) SuggestNextAction(_ context.Context, _ LLMRequest) (*LLMResponse, error) {
+func (m *mockLLM) SuggestNextAction(_ context.Context, req LLMRequest) (*LLMResponse, error) {
+	m.requests = append(m.requests, req)
 	return m.resp, m.err
 }
 
@@ -507,6 +509,181 @@ func TestSolve_AllSolversFail(t *testing.T) {
 	}
 	if len(result.History) == 0 {
 		t.Error("expected non-empty history")
+	}
+}
+
+func solverHistory(history []AttemptEntry) []AttemptEntry {
+	entries := make([]AttemptEntry, 0, len(history))
+	for _, entry := range history {
+		if entry.Solver == "semantic" || entry.Solver == "llm" {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func twoFailingSolvers() (*mockSolver, *mockSolver) {
+	return &mockSolver{
+			name:      "alpha",
+			priority:  10,
+			canHandle: true,
+			err:       fmt.Errorf("alpha exploded"),
+		}, &mockSolver{
+			name:      "beta",
+			priority:  20,
+			canHandle: true,
+			err:       fmt.Errorf("beta exploded"),
+		}
+}
+
+func TestSolve_HistoryRecordsEverySolverAttempt(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxAttempts = 1
+	cfg.RetryBaseDelay = time.Millisecond
+
+	alpha, beta := twoFailingSolvers()
+	as := New(cfg, nil, nil)
+	as.Registry().MustRegister(beta)
+	as.Registry().MustRegister(alpha)
+
+	page := &mockPage{title: "Just a moment...", url: "https://example.com"}
+	result, err := as.Solve(context.Background(), page, &mockExecutor{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entries := solverHistory(result.History)
+	if len(entries) != 2 {
+		t.Fatalf("expected one history entry per solver, got %d (%+v)", len(entries), entries)
+	}
+
+	wantErrors := map[string]string{
+		"alpha": "alpha exploded",
+		"beta":  "beta exploded",
+	}
+	for i, entry := range entries {
+		want, ok := wantErrors[entry.Solver]
+		if !ok {
+			t.Fatalf("entry %d has unexpected solver %q", i, entry.Solver)
+		}
+		if entry.Error != want {
+			t.Errorf("entry %d (%s): expected error %q, got %q", i, entry.Solver, want, entry.Error)
+		}
+		if entry.Status != StatusFailed {
+			t.Errorf("entry %d (%s): expected status %q, got %q", i, entry.Solver, StatusFailed, entry.Status)
+		}
+		if entry.Duration <= 0 {
+			t.Errorf("entry %d (%s): expected non-zero duration, got %v", i, entry.Solver, entry.Duration)
+		}
+		delete(wantErrors, entry.Solver)
+	}
+	if len(wantErrors) != 0 {
+		t.Errorf("missing history entries for solvers %v", wantErrors)
+	}
+}
+
+func TestSolve_LLMFallbackReceivesEveryPreviousAttempt(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxAttempts = 1
+	cfg.LLMFallback = true
+	cfg.RetryBaseDelay = time.Millisecond
+
+	alpha, beta := twoFailingSolvers()
+	llm := &mockLLM{err: fmt.Errorf("llm unavailable")}
+
+	as := New(cfg, nil, llm)
+	as.Registry().MustRegister(alpha)
+	as.Registry().MustRegister(beta)
+
+	page := &mockPage{title: "Just a moment...", url: "https://example.com", html: "<html></html>"}
+	if _, err := as.Solve(context.Background(), page, &mockExecutor{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(llm.requests) != 1 {
+		t.Fatalf("expected exactly one LLM request, got %d", len(llm.requests))
+	}
+
+	seen := map[string]string{}
+	for _, attempt := range llm.requests[0].PrevAttempts {
+		seen[attempt.Solver] = attempt.Error
+	}
+	if seen["alpha"] != "alpha exploded" {
+		t.Errorf("expected alpha error in PrevAttempts, got %q", seen["alpha"])
+	}
+	if seen["beta"] != "beta exploded" {
+		t.Errorf("expected beta error in PrevAttempts, got %q", seen["beta"])
+	}
+}
+
+func TestSolve_HistoryKeepsFailedAttemptBeforeSuccess(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxAttempts = 1
+	cfg.RetryBaseDelay = time.Millisecond
+
+	alpha := &mockSolver{
+		name:      "alpha",
+		priority:  10,
+		canHandle: true,
+		err:       fmt.Errorf("alpha exploded"),
+	}
+	beta := &mockSolver{
+		name:      "beta",
+		priority:  20,
+		canHandle: true,
+		solved:    true,
+	}
+
+	as := New(cfg, nil, nil)
+	as.Registry().MustRegister(alpha)
+	as.Registry().MustRegister(beta)
+
+	page := &mockPage{title: "Just a moment...", url: "https://example.com"}
+	result, err := as.Solve(context.Background(), page, &mockExecutor{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !result.Solved {
+		t.Fatal("expected Solved=true when the second solver solves")
+	}
+	if result.SolverUsed != "beta" {
+		t.Errorf("expected solver 'beta', got %q", result.SolverUsed)
+	}
+
+	entries := solverHistory(result.History)
+	if len(entries) != 2 {
+		t.Fatalf("expected both solver attempts in history, got %+v", entries)
+	}
+	if entries[0].Solver != "alpha" || entries[0].Status != StatusFailed || entries[0].Error != "alpha exploded" {
+		t.Errorf("expected alpha failure preserved, got %+v", entries[0])
+	}
+	if entries[1].Solver != "beta" || entries[1].Status != StatusSolved {
+		t.Errorf("expected beta solved entry, got %+v", entries[1])
+	}
+}
+
+func TestSolve_HistoryRecordsNoMatchingSolver(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxAttempts = 1
+	cfg.RetryBaseDelay = time.Millisecond
+
+	as := New(cfg, nil, nil)
+	as.Registry().MustRegister(&mockSolver{name: "idle", priority: 10, canHandle: false})
+
+	page := &mockPage{title: "Just a moment...", url: "https://example.com"}
+	result, err := as.Solve(context.Background(), page, &mockExecutor{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entries := solverHistory(result.History)
+	if len(entries) != 1 {
+		t.Fatalf("expected a single history entry, got %+v", entries)
+	}
+	if entries[0].Solver != "none" || entries[0].Status != StatusSkipped {
+		t.Errorf("expected none/skipped entry, got %+v", entries[0])
 	}
 }
 
