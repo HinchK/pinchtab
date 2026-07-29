@@ -112,8 +112,8 @@ func TestCaptureFromSurface(t *testing.T) {
 	}{
 		{name: "plain viewport capture", want: false},
 		{name: "beyond viewport forces surface", beyondViewport: true, want: true},
-		{name: "native-scale clip stays off", clip: &page.Viewport{Scale: 1}, want: false},
-		{name: "zero-scale clip treated as native", clip: &page.Viewport{Scale: 0}, want: false},
+		{name: "native-scale clip forces surface", clip: &page.Viewport{Scale: 1}, want: true},
+		{name: "zero-scale clip forces surface", clip: &page.Viewport{Scale: 0}, want: true},
 		{name: "downscaled clip forces surface", clip: &page.Viewport{Scale: 0.25}, want: true},
 		{name: "upscaled clip forces surface", clip: &page.Viewport{Scale: 2}, want: true},
 	}

@@ -142,16 +142,16 @@ func scaledScreenshotClip(opts ScreenshotOpts, viewportWidth, viewportHeight, do
 // waiting for a fresh compositor surface frame. On idle pages in headed browsers
 // (e.g. Cloak) the surface stops swapping frames, so the default fromSurface=true
 // blocks until the action deadline (~30s); reading from the view avoids that for
-// plain captures. But capture-beyond-viewport and any render-time rescale
-// (clip.Scale != 1) both need the page recomposited at a new size, which only
-// happens with fromSurface=true — forcing it off there silently drops the
-// scale/beyond-viewport effect. So keep it off only for the plain/native-scale
-// path.
+// plain captures.
+//
+// Anything that changes the captured region needs the page recomposited, which
+// only happens with fromSurface=true: capture-beyond-viewport, a render-time
+// rescale, and the clip itself. Reading the view ignores the clip outright and
+// returns the whole viewport, so every non-nil clip takes the surface path —
+// keeping it off for a native-scale clip is what made a selector capture come
+// back byte-identical to an unclipped one.
 func captureFromSurface(beyondViewport bool, clip *page.Viewport) bool {
-	if beyondViewport {
-		return true
-	}
-	return clip != nil && clip.Scale != 0 && clip.Scale != 1
+	return beyondViewport || clip != nil
 }
 
 // captureScreenshotWithoutActivation wakes a background renderer before
