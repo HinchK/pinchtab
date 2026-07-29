@@ -65,10 +65,10 @@ func FetchLayout(ctx context.Context) (ViewportInfo, error) {
 // exactly — which is what makes it correct for nodes inside iframes, where a
 // rect taken in the element's own context is frame-relative.
 //
-// pageCoords=true leaves boxes in that space for beyondViewport/clip captures.
-// pageCoords=false subtracts the current scroll offset; on a scrolled page that
-// shifts an already-viewport-relative box by the scroll, which is its own
-// defect and is deliberately left alone here.
+// pageCoords=false leaves boxes in that viewport space. pageCoords=true adds
+// the scroll offset to reach document space, which is what beyondViewport and
+// clip captures report and what projectBoundsToClip subtracts a clip origin
+// from — that origin is document-relative, so both sides must be.
 //
 // Visibility heuristic: a node is Visible if its rect has non-zero area and
 // intersects the viewport. The check is intentionally cheap — strict
@@ -83,9 +83,9 @@ func AnnotateBounds(ctx context.Context, nodes []A11yNode, pageCoords bool, vp V
 			continue
 		}
 		visible := isVisible(box, true, vp)
-		if !pageCoords {
-			box.X -= vp.ScrollX
-			box.Y -= vp.ScrollY
+		if pageCoords {
+			box.X += vp.ScrollX
+			box.Y += vp.ScrollY
 		}
 		nodes[i].BoundingBox = &box
 		nodes[i].Visible = visible

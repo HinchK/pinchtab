@@ -1,6 +1,15 @@
 package observe
 
-import "testing"
+import (
+	"context"
+	"encoding/base64"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/chromedp/chromedp"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
+)
 
 func TestIsVisibleWithDocumentCoordinates(t *testing.T) {
 	vp := ViewportInfo{Width: 800, Height: 600, ScrollX: 0, ScrollY: 1000}
@@ -10,5 +19,186 @@ func TestIsVisibleWithDocumentCoordinates(t *testing.T) {
 	}
 	if isVisible(BoundingBox{X: 20, Y: 50, W: 100, H: 40}, true, vp) {
 		t.Fatal("box above scrolled viewport should not be visible")
+	}
+}
+
+// scrollFixtureHTML is tall enough to scroll in both axes, with a target that
+// sits below the fold so a scroll is required to bring it into view. Only a
+// scrolled page can tell the three coordinate spaces apart — at scroll 0 every
+// transform is the identity, which is why this defect went unnoticed.
+const scrollFixtureHTML = `<body style="margin:0;width:3000px;height:3000px">
+<div style="position:absolute;left:900px;top:1200px;width:120px;height:40px">
+<button id="target">target</button>
+</div>
+</body>`
+
+type scrollFixture struct {
+	ctx    context.Context
+	nodeID int64
+}
+
+func newScrollFixture(t *testing.T, scrollX, scrollY int) scrollFixture {
+	t.Helper()
+	chromePath := testbrowser.Path(t)
+
+	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
+		chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(chromePath),
+		chromedp.UserDataDir(t.TempDir()),
+		chromedp.Flag("headless", true),
+		chromedp.Flag("no-sandbox", true),
+	)...)
+	ctx, cancelBrowser := chromedp.NewContext(alloc)
+	ctx, cancelTimeout := context.WithTimeout(ctx, 30*time.Second)
+	t.Cleanup(func() {
+		cancelTimeout()
+		cancelBrowser()
+		cancelAlloc()
+	})
+
+	dataURL := "data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(scrollFixtureHTML))
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(dataURL),
+		chromedp.WaitVisible("#target", chromedp.ByID),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		var done bool
+		return chromedp.Evaluate(scrollScript(scrollX, scrollY), &done).Do(ctx)
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	return scrollFixture{ctx: ctx, nodeID: targetNodeID(t, ctx)}
+}
+
+func scrollScript(x, y int) string {
+	return fmt.Sprintf(`(() => { window.scrollTo(%d, %d); return window.scrollY === %d; })()`, x, y, y)
+}
+
+func targetNodeID(t *testing.T, ctx context.Context) int64 {
+	t.Helper()
+	rawNodes, err := FetchAXTree(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes, _ := BuildSnapshot(rawNodes, "", -1)
+	for _, n := range nodes {
+		if n.Role == "button" && n.Name == "target" && n.NodeID != 0 {
+			return n.NodeID
+		}
+	}
+	t.Fatalf("no button named %q in the snapshot (%d nodes)", "target", len(nodes))
+	return 0
+}
+
+// clientRect is the browser's own answer for the target, in viewport space.
+func (f scrollFixture) clientRect(t *testing.T) BoundingBox {
+	t.Helper()
+	var rect struct {
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+		W float64 `json:"width"`
+		H float64 `json:"height"`
+	}
+	if err := chromedp.Run(f.ctx, chromedp.Evaluate(
+		`(() => { const r = document.getElementById('target').getBoundingClientRect(); return {x: r.x, y: r.y, width: r.width, height: r.height}; })()`,
+		&rect)); err != nil {
+		t.Fatal(err)
+	}
+	return BoundingBox{X: rect.X, Y: rect.Y, W: rect.W, H: rect.H}
+}
+
+func (f scrollFixture) annotate(t *testing.T, pageCoords bool) (BoundingBox, bool, ViewportInfo) {
+	t.Helper()
+	vp, err := FetchLayout(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := []A11yNode{{NodeID: f.nodeID}}
+	if err := AnnotateBounds(f.ctx, nodes, pageCoords, vp); err != nil {
+		t.Fatal(err)
+	}
+	if nodes[0].BoundingBox == nil {
+		t.Fatal("AnnotateBounds produced no bounding box for the target")
+	}
+	return *nodes[0].BoundingBox, nodes[0].Visible, vp
+}
+
+// getBoxModel reports the content box and getBoundingClientRect the border box,
+// so the two differ by the button's border and padding — single digits, nothing
+// like the scroll offset a wrong transform introduces.
+const boxModelSlack = 12.0
+
+func assertNear(t *testing.T, label string, got, want float64) {
+	t.Helper()
+	if diff := got - want; diff > boxModelSlack || diff < -boxModelSlack {
+		t.Errorf("%s = %.2f, want %.2f (off by %.2f)", label, got, want, diff)
+	}
+}
+
+// The default /capture path. The raw quad is already viewport-relative, so
+// pageCoords=false must hand it back untouched — subtracting the scroll moved
+// every annotated bound on every scrolled page a full scrollY away.
+func TestAnnotateBoundsViewportSpaceMatchesClientRectWhenScrolled(t *testing.T) {
+	f := newScrollFixture(t, 300, 400)
+
+	box, _, vp := f.annotate(t, false)
+	if vp.ScrollY == 0 || vp.ScrollX == 0 {
+		t.Fatalf("fixture did not scroll: %+v", vp)
+	}
+	rect := f.clientRect(t)
+
+	assertNear(t, "viewport x", box.X, rect.X)
+	assertNear(t, "viewport y", box.Y, rect.Y)
+}
+
+// The "document" label has to be true: beyondViewport and clip captures report
+// this space, and a caller doing its own document arithmetic from the label was
+// silently off by the scroll.
+func TestAnnotateBoundsDocumentSpaceAddsScrollWhenScrolled(t *testing.T) {
+	f := newScrollFixture(t, 300, 400)
+
+	box, _, vp := f.annotate(t, true)
+	rect := f.clientRect(t)
+
+	assertNear(t, "document x", box.X, rect.X+vp.ScrollX)
+	assertNear(t, "document y", box.Y, rect.Y+vp.ScrollY)
+
+	if box.Y-rect.Y < vp.ScrollY/2 {
+		t.Errorf("document y (%.2f) is not a full scroll (%.2f) past the viewport y (%.2f)", box.Y, vp.ScrollY, rect.Y)
+	}
+}
+
+// At scroll 0 both spaces coincide, which is why this was invisible until a
+// fixture scrolled. Pins that the fix moved nothing for unscrolled pages.
+func TestAnnotateBoundsSpacesAgreeWhenUnscrolled(t *testing.T) {
+	f := newScrollFixture(t, 0, 0)
+
+	viewportBox, viewportVisible, vp := f.annotate(t, false)
+	documentBox, documentVisible, _ := f.annotate(t, true)
+
+	if vp.ScrollX != 0 || vp.ScrollY != 0 {
+		t.Fatalf("fixture unexpectedly scrolled: %+v", vp)
+	}
+	if viewportBox != documentBox {
+		t.Errorf("unscrolled page: viewport %+v and document %+v must be identical", viewportBox, documentBox)
+	}
+	if viewportVisible != documentVisible {
+		t.Errorf("unscrolled page: Visible differs between spaces (%v vs %v)", viewportVisible, documentVisible)
+	}
+}
+
+// Visible is a viewport-intersection test taken before the transform, so it must
+// not move when the caller asks for document space.
+func TestAnnotateBoundsVisibleIsIndependentOfCoordinateSpace(t *testing.T) {
+	f := newScrollFixture(t, 300, 400)
+
+	_, viewportVisible, _ := f.annotate(t, false)
+	_, documentVisible, _ := f.annotate(t, true)
+
+	if viewportVisible != documentVisible {
+		t.Errorf("Visible = %v in viewport space and %v in document space; it is computed from the same viewport-relative box either way", viewportVisible, documentVisible)
 	}
 }
