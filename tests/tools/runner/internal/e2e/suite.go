@@ -356,11 +356,11 @@ func (r *Runner) showFailureArtifacts(def suiteDef, duration time.Duration) {
 	for _, service := range def.LogServices {
 		path := filepath.Join("tests/e2e/results", def.LogPrefix+"-"+service+".log")
 		if fileExists(filepath.Join(r.repoRoot, path)) {
-			_, _ = fmt.Fprintf(r.stdout, "  logs:     %s\n", path)
+			_, _ = fmt.Fprintf(r.stdout, "  logs:     %s%s\n", path, emptyLogSuffix(filepath.Join(r.repoRoot, path)))
 		}
 	}
 	if fileExists(filepath.Join(r.repoRoot, stackOutput)) {
-		_, _ = fmt.Fprintf(r.stdout, "  logs:     %s\n", stackOutput)
+		_, _ = fmt.Fprintf(r.stdout, "  logs:     %s%s\n", stackOutput, emptyLogSuffix(filepath.Join(r.repoRoot, stackOutput)))
 	}
 	if duration > 0 {
 		_, _ = fmt.Fprintf(r.stdout, "  duration: %s\n", formatDuration(duration))
@@ -753,6 +753,18 @@ func formatDuration(d time.Duration) string {
 	minutes := seconds / 60
 	remSec := seconds % 60
 	return fmt.Sprintf("%dm%02d.%03ds", minutes, remSec, remMs)
+}
+
+// emptyLogSuffix marks a log artifact that has nothing in it. An empty file
+// listed as `logs:` is worse than no listing at all — it sends whoever is
+// diagnosing a failure to a file that cannot explain it — so say so on the line
+// that advertises it.
+func emptyLogSuffix(path string) string {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() > 0 {
+		return ""
+	}
+	return "  (EMPTY — captured nothing; the service may be discarding its logs)"
 }
 
 func fileExists(path string) bool {

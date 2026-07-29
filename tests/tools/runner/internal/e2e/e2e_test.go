@@ -1034,3 +1034,58 @@ func TestNewBrowserScenariosInCatalog(t *testing.T) {
 		}
 	}
 }
+
+// A log artifact the runner advertises but that captured nothing sends whoever
+// is diagnosing a failure to a useless file; the listing has to say so.
+func TestEmptyLogSuffixMarksZeroByteArtifacts(t *testing.T) {
+	dir := t.TempDir()
+
+	empty := filepath.Join(dir, "logs-cli-smoke-pinchtab.log")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := emptyLogSuffix(empty); got == "" {
+		t.Error("a zero-byte log artifact is listed with no warning")
+	}
+
+	populated := filepath.Join(dir, "logs-cli-smoke-runner-cli.log")
+	if err := os.WriteFile(populated, []byte("level=INFO msg=request\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := emptyLogSuffix(populated); got != "" {
+		t.Errorf("suffix = %q, want none for a log with content", got)
+	}
+
+	if got := emptyLogSuffix(filepath.Join(dir, "missing.log")); got != "" {
+		t.Errorf("suffix = %q, want none for a file that does not exist", got)
+	}
+}
+
+// The e2e services must run the server verbosely: RunDashboard swaps the default
+// logger for a discard handler otherwise, so the harness captures zero bytes for
+// exactly the failure the artifact exists to explain. Bridge mode has no such
+// swap and is deliberately left alone.
+func TestComposeServerServicesRunVerbose(t *testing.T) {
+	for _, file := range []string{"docker-compose.yml", "docker-compose-multi.yml"} {
+		path := filepath.Join("..", "..", "..", "..", "e2e", file)
+		content, err := os.ReadFile(path) // #nosec G304 -- fixed test fixture path.
+		if err != nil {
+			t.Fatalf("read %s: %v", file, err)
+		}
+
+		servers := strings.Count(string(content), "pinchtab server")
+		verbose := strings.Count(string(content), "pinchtab server --verbose")
+		if servers == 0 {
+			t.Fatalf("%s: found no pinchtab server services to check", file)
+		}
+		if verbose != servers {
+			t.Errorf("%s: %d of %d server services run verbose; the rest capture an empty log", file, verbose, servers)
+		}
+
+		for _, line := range strings.Split(string(content), "\n") {
+			if strings.Contains(line, "pinchtab bridge") && strings.Contains(line, "--verbose") {
+				t.Errorf("%s: bridge service gained --verbose; bridge mode already logs: %s", file, strings.TrimSpace(line))
+			}
+		}
+	}
+}
