@@ -19,21 +19,24 @@ func optTrimmedString(r mcp.CallToolRequest, key string) string {
 	return strings.TrimSpace(optString(r, key))
 }
 
+// Tool calls are written by language models, and a stringified number is one of
+// the commonest shapes they emit. Every numeric argument accepts both, so a
+// future one cannot pick a strict accessor by accident — there is none.
 func optFloat(r mcp.CallToolRequest, key string) (float64, bool) {
-	v, ok := r.GetArguments()[key].(float64)
-	return v, ok
-}
-
-func optInt(r mcp.CallToolRequest, key string) (int, bool) {
-	if v, ok := optFloat(r, key); ok {
-		return int(v), true
+	if v, ok := r.GetArguments()[key].(float64); ok {
+		return v, true
 	}
 	if raw := optTrimmedString(r, key); raw != "" {
-		if n, err := strconv.Atoi(raw); err == nil {
-			return n, true
+		if v, err := strconv.ParseFloat(raw, 64); err == nil {
+			return v, true
 		}
 	}
 	return 0, false
+}
+
+func optInt(r mcp.CallToolRequest, key string) (int, bool) {
+	v, ok := optFloat(r, key)
+	return int(v), ok
 }
 
 func optBool(r mcp.CallToolRequest, key string) (bool, bool) {

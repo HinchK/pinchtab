@@ -550,6 +550,15 @@ func TestNumericArgumentsAcceptStringForm(t *testing.T) {
 		{"pinchtab_get_text", "maxChars", "3000"},
 		{"pinchtab_snapshot", "maxTokens", "1500"},
 		{"pinchtab_snapshot", "depth", "4"},
+		{"pinchtab_capture", "depth", "4"},
+		// Fractional arguments went through the other accessor, which stayed
+		// strict after the budget controls were moved off it.
+		{"pinchtab_screenshot", "scale", "0.5"},
+		{"pinchtab_screenshot", "quality", "60"},
+		{"pinchtab_capture", "scale", "0.5"},
+		{"pinchtab_capture", "quality", "60"},
+		{"pinchtab_network", "limit", "25"},
+		{"pinchtab_network", "bufferSize", "500"},
 	} {
 		t.Run(tc.tool+"/"+tc.key, func(t *testing.T) {
 			srv := mockPinchTab()
@@ -563,5 +572,21 @@ func TestNumericArgumentsAcceptStringForm(t *testing.T) {
 				t.Errorf("%s=%q did not reach the query: %s", tc.key, tc.value, text)
 			}
 		})
+	}
+}
+
+// Coordinates take a different route to a different place — resolveXY, into a
+// POST body rather than a query — so the query-based table above cannot speak
+// for them. Both must parse or hasXY goes false and the click falls back to a
+// selector that was never given.
+func TestCoordinateArgumentsAcceptStringForm(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	text := resultText(t, callTool(t, "pinchtab_click", map[string]any{"x": "10", "y": "20"}, srv))
+	for _, want := range []string{`"hasXY":true`, `"x":10`, `"y":20`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("string-form coordinates: want %s in %s", want, text)
+		}
 	}
 }
