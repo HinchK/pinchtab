@@ -76,3 +76,26 @@ func TestRenderAPIErrorKeepsApplicationErrors(t *testing.T) {
 		t.Errorf("hint rendering changed:\n%s", msg)
 	}
 }
+
+// The /action navigation guard reports a 409 whose details carry the way
+// forward; the renderer is what puts it in front of the user.
+func TestRenderAPIErrorBodyShowsNavigationChangedHintAndRemedy(t *testing.T) {
+	body := `{"code":"navigation_changed",` +
+		`"error":"unexpected page navigation: https://pinchtab.com/ -> https://pinchtab.com/docs/",` +
+		`"details":{"hint":"The action navigated the page; set waitNav true or submit true.",` +
+		`"remedy":"pinchtab click <ref> --wait-nav (use --submit instead when the click submits a form)",` +
+		`"url":"https://pinchtab.com/docs/"}}`
+
+	out := renderAPIErrorBody(409, []byte(body))
+
+	for _, want := range []string{
+		"Error 409: unexpected page navigation",
+		"💡 The action navigated the page",
+		"Remedy: pinchtab click <ref> --wait-nav",
+		"--submit",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered error missing %q:\n%s", want, out)
+		}
+	}
+}

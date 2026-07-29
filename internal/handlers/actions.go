@@ -102,6 +102,33 @@ func rejectMultiStepSubmitClicks(w http.ResponseWriter, actions []bridge.ActionR
 
 const dialogActionHint = "use --dialog-action accept or --dialog-action dismiss"
 
+const navigationChangedHint = "The action navigated the page, which the guard reports unless the request declares it: set waitNav true to wait for the navigation, or submit true when the click submits a form."
+
+const navigationChangedRemedy = "pinchtab click <ref> --wait-nav (use --submit instead when the click submits a form)"
+
+func navigationChangedDetails(err error) map[string]any {
+	details := map[string]any{
+		"hint":   navigationChangedHint,
+		"remedy": navigationChangedRemedy,
+	}
+	if url := navigatedToURL(err); url != "" {
+		details["url"] = url
+	}
+	return details
+}
+
+func navigatedToURL(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	idx := strings.LastIndex(message, " -> ")
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(message[idx+len(" -> "):])
+}
+
 type dialogBlockingError struct {
 	message    string
 	dialogType string
@@ -406,7 +433,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(actionErr, bridge.ErrUnexpectedNavigation) {
-			httpx.ErrorCode(w, 409, "navigation_changed", actionErr.Error(), false, nil)
+			httpx.ErrorCode(w, 409, "navigation_changed", actionErr.Error(), false, navigationChangedDetails(actionErr))
 			return
 		}
 		if browserops.IsIDPIBlocked(actionErr) {

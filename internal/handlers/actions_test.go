@@ -638,3 +638,49 @@ func TestEnsureChromeAliasServes(t *testing.T) {
 		t.Errorf("/ensure-chrome should return legacy chrome_ready status, got %s", w.Body.String())
 	}
 }
+
+func TestHandleAction_NavigationChangedCarriesHintAndRemedy(t *testing.T) {
+	navErr := fmt.Errorf("%w: %s -> %s", bridge.ErrUnexpectedNavigation, "https://pinchtab.com/", "https://pinchtab.com/docs/")
+	mb := &mockBridge{executeActionErr: navErr}
+	h := New(mb, &config.RuntimeConfig{ActionTimeout: time.Second}, nil, nil, nil)
+	req := httptest.NewRequest("POST", "/action", bytes.NewReader([]byte(`{"kind":"click"}`)))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	h.HandleAction(w, req)
+
+	if w.Code != 409 {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code    string         `json:"code"`
+		Details map[string]any `json:"details"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Code != "navigation_changed" {
+		t.Fatalf("code = %q, want navigation_changed", resp.Code)
+	}
+	for _, key := range []string{"hint", "remedy", "url"} {
+		value, _ := resp.Details[key].(string)
+		if value == "" {
+			t.Fatalf("details[%q] missing or empty: %#v", key, resp.Details)
+		}
+	}
+	hint, _ := resp.Details["hint"].(string)
+	for _, want := range []string{"waitNav", "submit"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("hint %q does not name request field %q", hint, want)
+		}
+	}
+	remedy, _ := resp.Details["remedy"].(string)
+	for _, want := range []string{"--wait-nav", "--submit"} {
+		if !strings.Contains(remedy, want) {
+			t.Fatalf("remedy %q does not name CLI flag %q", remedy, want)
+		}
+	}
+	if got, _ := resp.Details["url"].(string); got != "https://pinchtab.com/docs/" {
+		t.Fatalf("details[url] = %q, want the resulting URL", got)
+	}
+}
