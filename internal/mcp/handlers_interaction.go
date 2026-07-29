@@ -9,6 +9,12 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
+// humanizeAction is the set of pointer actions that accept a per-request humanize
+// override, mirroring the CLI's addPointerActionFlags set. Only these tools
+// declare humanize in their schema; focus is not a pointer action, and only click
+// also has mode, so only click can hit the mutual-exclusion rule.
+var humanizeAction = map[string]bool{"click": true, "hover": true}
+
 func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		payload := map[string]any{"kind": kind}
@@ -51,6 +57,17 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			if _, err := resolveSelector(requiresSelector); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
+			// Forwarded only when the caller actually sent it, so an omitted
+			// humanize inherits the instance default instead of overriding it for
+			// every request. An explicit false is a real opt-out and travels: the
+			// wire field is a per-request override, not a flag.
+			humanize, humanizeSet := false, false
+			if humanizeAction[kind] {
+				humanize, humanizeSet = optBool(r, "humanize")
+				if humanizeSet {
+					payload["humanize"] = humanize
+				}
+			}
 			if kind == "click" {
 				if waitNav, ok := optBool(r, "waitNav"); ok && waitNav {
 					payload["waitNav"] = true
@@ -59,7 +76,7 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 					if mode != "dom" && mode != "dispatch" {
 						return mcp.NewToolResultError("mode must be 'dom' or 'dispatch'"), nil
 					}
-					if humanize, ok := optBool(r, "humanize"); ok && humanize {
+					if humanizeSet && humanize {
 						return mcp.NewToolResultError("mode and humanize are mutually exclusive"), nil
 					}
 					payload["mode"] = mode
