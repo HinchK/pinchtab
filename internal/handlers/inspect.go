@@ -101,9 +101,8 @@ func (h *Handlers) handleInspect(w http.ResponseWriter, r *http.Request, kind in
 	}
 	if kind == inspectKindHTML {
 		resp.HTML = payload.HTML
-		if maxChars := parsePositiveInt(r.URL.Query().Get("maxChars")); maxChars > 0 && len(resp.HTML) > maxChars {
-			resp.HTML = resp.HTML[:maxChars]
-			resp.Truncated = true
+		if maxChars := parsePositiveInt(r.URL.Query().Get("maxChars")); maxChars > 0 {
+			resp.HTML, resp.Truncated = truncateChars(resp.HTML, maxChars)
 		}
 	}
 	if kind == inspectKindStyles {

@@ -16,6 +16,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/pinchtab/pinchtab/internal/selector"
+	"unicode/utf8"
 )
 
 // @Endpoint GET /text
@@ -166,7 +167,7 @@ func (h *Handlers) extractDocumentText(tCtx context.Context, mode, targetFrameID
 		if err != nil {
 			return textExtraction{}, err
 		}
-		return textExtraction{Text: text, Mode: extractionRaw, RawLength: len(text), RawKnown: true}, nil
+		return textExtraction{Text: text, Mode: extractionRaw, RawLength: utf8.RuneCountInString(text), RawKnown: true}, nil
 	}
 
 	text, err := h.extractText(tCtx, assets.ReadabilityJS, targetFrameID)
@@ -178,10 +179,11 @@ func (h *Handlers) extractDocumentText(tCtx context.Context, mode, targetFrameID
 	if rawErr != nil {
 		return textExtraction{Text: text, Mode: extractionReadability}, nil
 	}
-	if readabilityCollapsed(len(text), len(raw)) {
-		return textExtraction{Text: raw, Mode: extractionReadabilityFallback, RawLength: len(raw), RawKnown: true}, nil
+	extractedLen, rawLen := utf8.RuneCountInString(text), utf8.RuneCountInString(raw)
+	if readabilityCollapsed(extractedLen, rawLen) {
+		return textExtraction{Text: raw, Mode: extractionReadabilityFallback, RawLength: rawLen, RawKnown: true}, nil
 	}
-	return textExtraction{Text: text, Mode: extractionReadability, RawLength: len(raw), RawKnown: true}, nil
+	return textExtraction{Text: text, Mode: extractionReadability, RawLength: rawLen, RawKnown: true}, nil
 }
 
 func readabilityCollapsed(extractedLen, rawLen int) bool {
@@ -199,14 +201,30 @@ func (h *Handlers) extractText(tCtx context.Context, script, targetFrameID strin
 	return h.evalTextInFrame(tCtx, script, targetFrameID)
 }
 
+// truncateChars cuts s to at most limit characters, reporting whether it cut.
+// Slicing by byte splits multi-byte characters and the orphaned bytes reach the
+// client as U+FFFD.
+func truncateChars(s string, limit int) (string, bool) {
+	if limit < 0 || utf8.RuneCountInString(s) <= limit {
+		return s, false
+	}
+	count := 0
+	for offset := range s {
+		if count == limit {
+			return s[:offset], true
+		}
+		count++
+	}
+	return s, false
+}
+
 // writeTextResponse truncates, IDPI-scans, and writes the document text as
 // plain text (format text/plain) or the JSON envelope.
 func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, extraction textExtraction, maxChars int, format string, route *browserops.RouteMetadata) {
 	text := extraction.Text
 	truncated := false
-	if maxChars > -1 && len(text) > maxChars {
-		text = text[:maxChars]
-		truncated = true
+	if maxChars > -1 {
+		text, truncated = truncateChars(text, maxChars)
 	}
 
 	url, _ := h.Bridge.CurrentURL(tCtx)
@@ -237,7 +255,7 @@ func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCt
 		"truncated":  truncated,
 		"route":      route,
 		"extraction": extraction.Mode,
-		"textLength": len(text),
+		"textLength": utf8.RuneCountInString(text),
 	}
 	if extraction.RawKnown {
 		resp["rawLength"] = extraction.RawLength

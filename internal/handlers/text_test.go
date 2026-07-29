@@ -10,6 +10,8 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"strings"
+	"unicode/utf8"
 )
 
 func TestHandleText_NoTab(t *testing.T) {
@@ -113,13 +115,14 @@ func TestExtractDocumentText_ReadabilityCollapseFallsBackToRaw(t *testing.T) {
 	if extraction.Text != landingPageRawText {
 		t.Errorf("Text = %q, want the raw document text", extraction.Text)
 	}
-	if !extraction.RawKnown || extraction.RawLength != len(landingPageRawText) {
-		t.Errorf("RawLength = %d (known=%v), want %d", extraction.RawLength, extraction.RawKnown, len(landingPageRawText))
+	if !extraction.RawKnown || extraction.RawLength != utf8.RuneCountInString(landingPageRawText) {
+		t.Errorf("RawLength = %d (known=%v), want %d", extraction.RawLength, extraction.RawKnown, utf8.RuneCountInString(landingPageRawText))
 	}
 }
 
 func TestExtractDocumentText_ArticleKeepsReadabilityOutput(t *testing.T) {
-	article := landingPageRawText[:len(landingPageRawText)*9/10]
+	landingRunes := []rune(landingPageRawText)
+	article := string(landingRunes[:len(landingRunes)*9/10])
 	m := textScriptBridge(t, article, landingPageRawText)
 	h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
 
@@ -133,8 +136,8 @@ func TestExtractDocumentText_ArticleKeepsReadabilityOutput(t *testing.T) {
 	if extraction.Text != article {
 		t.Errorf("Text = %q, want the readability output", extraction.Text)
 	}
-	if extraction.RawLength != len(landingPageRawText) {
-		t.Errorf("RawLength = %d, want %d", extraction.RawLength, len(landingPageRawText))
+	if extraction.RawLength != utf8.RuneCountInString(landingPageRawText) {
+		t.Errorf("RawLength = %d, want %d", extraction.RawLength, utf8.RuneCountInString(landingPageRawText))
 	}
 }
 
@@ -192,7 +195,7 @@ func TestWriteTextResponse_EnvelopeReportsExtractionAndLengths(t *testing.T) {
 	extraction := textExtraction{
 		Text:      landingPageRawText,
 		Mode:      extractionReadabilityFallback,
-		RawLength: len(landingPageRawText),
+		RawLength: utf8.RuneCountInString(landingPageRawText),
 		RawKnown:  true,
 	}
 	w := textResponseRecorder(t, extraction, -1, "")
@@ -201,11 +204,11 @@ func TestWriteTextResponse_EnvelopeReportsExtractionAndLengths(t *testing.T) {
 	if envelope["extraction"] != extractionReadabilityFallback {
 		t.Errorf("extraction = %v, want %q", envelope["extraction"], extractionReadabilityFallback)
 	}
-	if envelope["textLength"] != float64(len(landingPageRawText)) {
-		t.Errorf("textLength = %v, want %d", envelope["textLength"], len(landingPageRawText))
+	if envelope["textLength"] != float64(utf8.RuneCountInString(landingPageRawText)) {
+		t.Errorf("textLength = %v, want %d", envelope["textLength"], utf8.RuneCountInString(landingPageRawText))
 	}
-	if envelope["rawLength"] != float64(len(landingPageRawText)) {
-		t.Errorf("rawLength = %v, want %d", envelope["rawLength"], len(landingPageRawText))
+	if envelope["rawLength"] != float64(utf8.RuneCountInString(landingPageRawText)) {
+		t.Errorf("rawLength = %v, want %d", envelope["rawLength"], utf8.RuneCountInString(landingPageRawText))
 	}
 	if envelope["truncated"] != false {
 		t.Errorf("truncated = %v, want false: a fallback is not a truncation", envelope["truncated"])
@@ -213,7 +216,7 @@ func TestWriteTextResponse_EnvelopeReportsExtractionAndLengths(t *testing.T) {
 }
 
 func TestWriteTextResponse_TruncatedOnlyWhenMaxCharsCuts(t *testing.T) {
-	extraction := textExtraction{Text: landingPageRawText, Mode: extractionReadabilityFallback, RawLength: len(landingPageRawText), RawKnown: true}
+	extraction := textExtraction{Text: landingPageRawText, Mode: extractionReadabilityFallback, RawLength: utf8.RuneCountInString(landingPageRawText), RawKnown: true}
 
 	cut := decodeTextEnvelope(t, textResponseRecorder(t, extraction, 50, ""))
 	if cut["truncated"] != true {
@@ -223,14 +226,14 @@ func TestWriteTextResponse_TruncatedOnlyWhenMaxCharsCuts(t *testing.T) {
 		t.Errorf("textLength = %v, want the returned length 50", cut["textLength"])
 	}
 
-	whole := decodeTextEnvelope(t, textResponseRecorder(t, extraction, len(landingPageRawText)+1, ""))
+	whole := decodeTextEnvelope(t, textResponseRecorder(t, extraction, utf8.RuneCountInString(landingPageRawText)+1, ""))
 	if whole["truncated"] != false {
 		t.Errorf("truncated = %v, want false when maxChars does not cut", whole["truncated"])
 	}
 }
 
 func TestWriteTextResponse_PlainFormatKeepsBareBodyAndReportsModeInHeader(t *testing.T) {
-	extraction := textExtraction{Text: landingPageRawText, Mode: extractionReadabilityFallback, RawLength: len(landingPageRawText), RawKnown: true}
+	extraction := textExtraction{Text: landingPageRawText, Mode: extractionReadabilityFallback, RawLength: utf8.RuneCountInString(landingPageRawText), RawKnown: true}
 	w := textResponseRecorder(t, extraction, -1, "text")
 
 	if w.Body.String() != landingPageRawText {
@@ -283,5 +286,30 @@ func TestExtractDocumentText_BaselineUsesTheSameFrameTraversal(t *testing.T) {
 	}
 	if b.scripts[1] != rawTextScript {
 		t.Errorf("baseline script = %q, want the raw text script", b.scripts[1])
+	}
+}
+
+func TestExtractDocumentText_CoverageFloorCountsCharactersNotBytes(t *testing.T) {
+	raw := strings.Repeat("測", 200)
+	if len(raw) < readabilityCoverageFloorChars {
+		t.Fatalf("fixture must exceed the floor in bytes to discriminate: %d", len(raw))
+	}
+	if utf8.RuneCountInString(raw) >= readabilityCoverageFloorChars {
+		t.Fatalf("fixture must sit under the floor in characters: %d", utf8.RuneCountInString(raw))
+	}
+	collapsed := string([]rune(raw)[:5])
+
+	m := textScriptBridge(t, collapsed, raw)
+	h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
+
+	extraction, err := h.extractDocumentText(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("extractDocumentText: %v", err)
+	}
+	if extraction.Mode != extractionReadability {
+		t.Fatalf("Mode = %q, want %q: a page under the character floor must not trigger the fallback", extraction.Mode, extractionReadability)
+	}
+	if extraction.RawLength != utf8.RuneCountInString(raw) {
+		t.Fatalf("RawLength = %d, want %d characters", extraction.RawLength, utf8.RuneCountInString(raw))
 	}
 }
