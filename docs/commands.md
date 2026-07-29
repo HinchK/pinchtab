@@ -34,11 +34,14 @@ pinchtab forward                        # Go forward in the active tab
 pinchtab reload                         # Reload the active tab
 ```
 
-`nav`, `back`, `forward` and `reload` report the URL the page actually landed on,
-so a redirect, a login wall or an error page is visible without `--snap`. `nav`
-prints the tab ID first and the landed URL after it, and prints the tab ID alone
-when stdout is not a terminal or when `--print-tab-id` is passed — so
-`TAB=$(pinchtab nav <url>)` still captures a usable tab ID.
+`back`, `forward` and `reload` always report the URL the page actually landed on,
+so a redirect, a login wall or an error page is visible without `--snap`.
+
+`nav` is different, because its stdout is a value other commands consume: it
+prints the tab ID first, and adds the landed URL only when stdout is a terminal.
+Under `--print-tab-id`, a pipe or a redirect, stdout carries the tab ID alone, so
+`TAB=$(pinchtab nav <url>)` captures a usable tab ID. A scripted navigation that
+needs to know where it landed should ask for `--snap`, `--text` or `--json`.
 
 ## Tabs
 

@@ -378,6 +378,14 @@ func TestHistoryNavigationPrintsTheLandedURL(t *testing.T) {
 			m.response = `{"tabId":"ABC123","url":"https://example.com/landed"}`
 			defer m.close()
 
+			// Not a terminal, stated rather than inherited. These three have no
+			// tab ID on stdout to protect, so unlike nav they report the landed
+			// URL through a pipe too. Asserting it here is what stops that
+			// difference from being "fixed" in either direction by accident.
+			old := stdoutIsTerminal
+			stdoutIsTerminal = func() bool { return false }
+			t.Cleanup(func() { stdoutIsTerminal = old })
+
 			out := captureStdout(t, func() {
 				tc.run(m.server.Client(), m.base(), "", newHistoryCmd())
 			})
@@ -386,7 +394,7 @@ func TestHistoryNavigationPrintsTheLandedURL(t *testing.T) {
 				t.Fatalf("path = %q, want %q", m.lastPath, tc.path)
 			}
 			if got := strings.TrimSpace(out); got != "https://example.com/landed" {
-				t.Errorf("stdout = %q, want the landed URL", got)
+				t.Errorf("stdout = %q, want the landed URL even when stdout is not a terminal", got)
 			}
 		})
 	}
