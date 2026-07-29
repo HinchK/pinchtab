@@ -50,12 +50,9 @@ func handleScrape(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.Ca
 		if list := splitCommaList(optString(r, "exclude")); len(list) > 0 {
 			payload["excludePatterns"] = list
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			payload["browser"] = browser
-		}
 		// A multi-page scrape legitimately runs for minutes; the default MCP
 		// client timeout is far too short for it.
-		body, code, err := c.withTimeout(scrapeMCPTimeout).Post(ctx, "/scrape", payload)
+		body, code, err := c.withTimeout(scrapeMCPTimeout).Post(ctx, routedPathWithBody(r, "/scrape", payload), payload)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

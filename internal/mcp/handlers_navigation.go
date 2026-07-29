@@ -27,10 +27,7 @@ func handleNavigate(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 		if tabID != "" {
 			payload["tabId"] = tabID
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			payload["browser"] = browser
-		}
-		body, code, err := c.Post(ctx, "/navigate", payload)
+		body, code, err := c.Post(ctx, routedPathWithBody(r, "/navigate", payload), payload)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -100,10 +97,7 @@ func handleSnapshot(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 		if v, ok := optBool(r, "noAnimations"); ok && v {
 			q.Set("noAnimations", "true")
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			q.Set("browser", browser)
-		}
-		body, code, err := c.Get(ctx, "/snapshot", q)
+		body, code, err := c.Get(ctx, "/snapshot", routedQuery(r, q))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -115,16 +109,12 @@ func handleFrame(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.Cal
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		tabID := optString(r, "tabId")
 		target := optString(r, "target")
-		browser := optString(r, "browser")
 		if strings.TrimSpace(target) == "" {
 			q := url.Values{}
 			if tabID != "" {
 				q.Set("tabId", tabID)
 			}
-			if browser != "" {
-				q.Set("browser", browser)
-			}
-			body, code, err := c.Get(ctx, "/frame", q)
+			body, code, err := c.Get(ctx, "/frame", routedQuery(r, q))
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -135,10 +125,7 @@ func handleFrame(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.Cal
 		if tabID != "" {
 			payload["tabId"] = tabID
 		}
-		if browser != "" {
-			payload["browser"] = browser
-		}
-		body, code, err := c.Post(ctx, "/frame", payload)
+		body, code, err := c.Post(ctx, routedPath(r, "/frame"), payload)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -182,13 +169,10 @@ func handleScreenshot(c *Client) func(context.Context, mcp.CallToolRequest) (*mc
 		if quality, ok := optFloat(r, "quality"); ok {
 			q.Set("quality", fmt.Sprintf("%d", int(quality)))
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			q.Set("browser", browser)
-		}
 		// Always request the inline base64 envelope screenshotResult parses,
 		// rather than relying on the server's default output mode.
 		q.Set("output", "inline")
-		body, code, err := c.Get(ctx, "/screenshot", q)
+		body, code, err := c.Get(ctx, "/screenshot", routedQuery(r, q))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -285,11 +269,7 @@ func handleCapture(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.C
 		if v, ok := optBool(r, "noAnimations"); ok && v {
 			q.Set("noAnimations", "true")
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			q.Set("browser", browser)
-		}
-
-		body, code, err := c.Get(ctx, "/capture", q)
+		body, code, err := c.Get(ctx, "/capture", routedQuery(r, q))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -379,10 +359,7 @@ func handleGetText(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.C
 		if v, ok := optInt(r, "maxChars"); ok && v > 0 {
 			q.Set("maxChars", strconv.Itoa(v))
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			q.Set("browser", browser)
-		}
-		body, code, err := c.Get(ctx, "/text", q)
+		body, code, err := c.Get(ctx, "/text", routedQuery(r, q))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
