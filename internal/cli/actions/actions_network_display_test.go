@@ -27,7 +27,13 @@ func newNetworkTestCmd() *cobra.Command {
 // the cap must still be cut on a rune boundary — a terminal shows U+FFFD for a
 // half rune, and the listing is what an operator reads to pick a requestId.
 func TestNetworkListingTruncatesURLsOnARuneBoundary(t *testing.T) {
-	longURL := "https://example.com/" + strings.Repeat("a", networkURLDisplayMaxBytes) + "é/tail"
+	// The cut point is the budget minus the marker, so the two-byte rune is placed
+	// to START on that last kept byte: a hand-rolled url[:cut] keeps its lead byte
+	// alone. A rune anywhere else in the string cannot tell the two cuts apart —
+	// every byte around it is ASCII and both implementations agree.
+	const prefix = "https://example.com/"
+	cut := networkURLDisplayMaxBytes - len(sanitize.TruncationSuffix)
+	longURL := prefix + strings.Repeat("a", cut-len(prefix)-1) + "é" + strings.Repeat("z", 20)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -56,8 +62,14 @@ func TestNetworkListingTruncatesURLsOnARuneBoundary(t *testing.T) {
 	if !strings.HasSuffix(shown, sanitize.TruncationSuffix) {
 		t.Errorf("displayed URL %q does not carry the truncation marker", shown)
 	}
-	if len(shown) != networkURLDisplayMaxBytes {
-		t.Errorf("displayed URL is %d bytes, want the %d-byte total budget: %q", len(shown), networkURLDisplayMaxBytes, shown)
+	// The budget is a ceiling, not an exact length: refusing to split the rune can
+	// leave the output up to one rune short. Both bounds matter — over means the
+	// budget is not total, far under means the cut fires earlier than it must.
+	if len(shown) > networkURLDisplayMaxBytes {
+		t.Errorf("displayed URL is %d bytes, over the %d-byte total budget: %q", len(shown), networkURLDisplayMaxBytes, shown)
+	}
+	if len(shown) <= networkURLDisplayMaxBytes-utf8.UTFMax {
+		t.Errorf("displayed URL is only %d bytes of a %d-byte budget: %q", len(shown), networkURLDisplayMaxBytes, shown)
 	}
 }
 
