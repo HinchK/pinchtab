@@ -27,11 +27,16 @@ func registrable() []autosolver.Solver {
 
 // KeyGated reports the solvers that only register when their API key is set.
 // Naming one without its key is a missing-key mistake, not an unknown solver.
+// The set itself is owned by autosolver.KeyGatedSolvers, which also carries the
+// config key each one needs, so the runtime warning and this validation face of
+// the same fact cannot drift.
 func KeyGated() []string {
-	return []string{
-		external.NewCapsolver(external.CapsolverConfig{}).Name(),
-		external.NewTwoCaptcha(external.TwoCaptchaConfig{}).Name(),
+	gated := autosolver.KeyGatedSolvers()
+	names := make([]string, 0, len(gated))
+	for _, solver := range gated {
+		names = append(names, solver.Name)
 	}
+	return names
 }
 
 // AlwaysRegistered reports the solvers that need no configuration to run.

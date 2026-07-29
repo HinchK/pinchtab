@@ -28,7 +28,7 @@ func NewTwoCaptcha(cfg TwoCaptchaConfig) *TwoCaptcha {
 	return &TwoCaptcha{config: cfg}
 }
 
-func (t *TwoCaptcha) Name() string  { return "twocaptcha" }
+func (t *TwoCaptcha) Name() string  { return autosolver.TwoCaptchaSolverName }
 func (t *TwoCaptcha) Priority() int { return 210 }
 
 // CanHandle checks if the page contains a supported CAPTCHA type.

@@ -257,10 +257,10 @@ func (h *Handlers) availableAutoSolverNames() []string {
 	}
 	if h != nil && h.Config != nil {
 		if strings.TrimSpace(h.Config.AutoSolver.CapsolverKey) != "" {
-			available["capsolver"] = true
+			available[coreautosolver.CapsolverSolverName] = true
 		}
 		if strings.TrimSpace(h.Config.AutoSolver.TwoCaptchaKey) != "" {
-			available["twocaptcha"] = true
+			available[coreautosolver.TwoCaptchaSolverName] = true
 		}
 	}
 

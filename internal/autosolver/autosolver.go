@@ -211,12 +211,46 @@ func (as *AutoSolver) orderSolvers(matching []Solver) []Solver {
 		return matching
 	}
 
-	if len(missing) > 0 {
+	as.reportMissingSolvers(missing, filtered)
+	return filtered
+}
+
+// reportMissingSolvers splits the configured-but-unavailable names by whether the
+// operator can act on them. A key-gated solver named without its API key is a
+// misconfiguration the config deliberately accepts, so it warns and names the key
+// to set; anything else is not a config error and stays at debug.
+func (as *AutoSolver) reportMissingSolvers(missing []string, running []Solver) {
+	if len(missing) == 0 {
+		return
+	}
+
+	unactionable := make([]string, 0, len(missing))
+	for _, name := range missing {
+		gated, ok := keyGatedSolverNamed(name)
+		if !ok {
+			unactionable = append(unactionable, name)
+			continue
+		}
+		slog.Warn(fmt.Sprintf("autosolver: %s is configured but its API key is not set, so it never runs", gated.Name),
+			"solver", gated.Name,
+			"config_key", gated.ConfigKey,
+			"configured", as.config.Solvers,
+			"running", solverNamesOf(running))
+	}
+
+	if len(unactionable) > 0 {
 		slog.Debug("autosolver: some configured solvers unavailable; using matched subset",
 			"configured", as.config.Solvers,
-			"missing", missing)
+			"missing", unactionable)
 	}
-	return filtered
+}
+
+func solverNamesOf(solvers []Solver) []string {
+	names := make([]string, 0, len(solvers))
+	for _, s := range solvers {
+		names = append(names, s.Name())
+	}
+	return names
 }
 
 func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor ActionExecutor) (bool, []AttemptEntry) {

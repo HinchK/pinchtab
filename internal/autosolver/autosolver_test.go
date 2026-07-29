@@ -1002,14 +1002,6 @@ func TestExecuteAction_LLMNavigate(t *testing.T) {
 	}
 }
 
-func solverNames(solvers []Solver) []string {
-	names := make([]string, 0, len(solvers))
-	for _, s := range solvers {
-		names = append(names, s.Name())
-	}
-	return names
-}
-
 func TestOrderSolvers(t *testing.T) {
 	newPriorityOrder := func() []Solver {
 		return []Solver{
@@ -1048,7 +1040,7 @@ func TestOrderSolvers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			as := New(Config{Solvers: tc.configured}, nil, nil)
 
-			got := solverNames(as.orderSolvers(newPriorityOrder()))
+			got := solverNamesOf(as.orderSolvers(newPriorityOrder()))
 
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("orderSolvers = %v, want %v", got, tc.want)
@@ -1067,12 +1059,12 @@ func TestOrderSolversDoesNotMutateInput(t *testing.T) {
 		&mockSolver{name: "alpha", priority: 10},
 		&mockSolver{name: "beta", priority: 20},
 	}
-	before := solverNames(priorityOrder)
+	before := solverNamesOf(priorityOrder)
 
 	as := New(Config{Solvers: []string{"beta", "alpha"}}, nil, nil)
 	_ = as.orderSolvers(priorityOrder)
 
-	if after := solverNames(priorityOrder); !reflect.DeepEqual(before, after) {
+	if after := solverNamesOf(priorityOrder); !reflect.DeepEqual(before, after) {
 		t.Fatalf("input reordered in place: %v -> %v", before, after)
 	}
 }
@@ -1119,10 +1111,7 @@ func recordAttrs(rec slog.Record) string {
 // known but unavailable, e.g. capsolver named without its API key. The fallback
 // stays — refusing to solve is the worse failure — but it must be visible.
 func TestOrderSolversWarnsWhenNoConfiguredSolverIsAvailable(t *testing.T) {
-	recorder := &levelRecorder{}
-	previous := slog.Default()
-	slog.SetDefault(slog.New(recorder))
-	t.Cleanup(func() { slog.SetDefault(previous) })
+	recorder := captureLogs(t)
 
 	priorityOrder := []Solver{
 		&mockSolver{name: "cloudflare", priority: 10},
@@ -1130,7 +1119,7 @@ func TestOrderSolversWarnsWhenNoConfiguredSolverIsAvailable(t *testing.T) {
 	}
 	as := New(Config{Solvers: []string{"capsolver", "twocaptcha"}}, nil, nil)
 
-	got := solverNames(as.orderSolvers(priorityOrder))
+	got := solverNamesOf(as.orderSolvers(priorityOrder))
 
 	if want := []string{"cloudflare", "jschallenge"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("fallback returned %v, want the priority order %v", got, want)
@@ -1145,21 +1134,63 @@ func TestOrderSolversWarnsWhenNoConfiguredSolverIsAvailable(t *testing.T) {
 	}
 }
 
-// The partial-match case fires on the shipped default (semantic is a stage, not
-// a registry solver, so it never matches), so it stays below warn — promoting it
-// would put a warning in front of every operator on every run.
-func TestOrderSolversDoesNotWarnOnPartialMatch(t *testing.T) {
+// A missing name that is not key-gated is nothing the operator can act on, and
+// the shipped default hits this path every run (semantic is a stage, not a
+// registry solver, so it never matches). Promoting it would put a warning in
+// front of every operator on every run.
+func TestOrderSolversDoesNotWarnWhenTheMissingSolverIsNotKeyGated(t *testing.T) {
+	recorder := captureLogs(t)
+
+	as := New(Config{Solvers: []string{"cloudflare", SemanticSolverName}}, nil, nil)
+	as.orderSolvers([]Solver{&mockSolver{name: "cloudflare", priority: 10}})
+
+	if _, ok := keyGatedSolverNamed(SemanticSolverName); ok {
+		t.Fatalf("%s is key-gated, so this test no longer covers the non-gated case", SemanticSolverName)
+	}
+	for _, rec := range recorder.records {
+		if rec.Level >= slog.LevelWarn {
+			t.Errorf("non-gated missing solver logged at %s: %q — the shipped default hits this path every run", rec.Level, rec.Message)
+		}
+	}
+}
+
+// A key-gated solver named without its API key is the one misconfiguration
+// solver-name validation deliberately admits, so the runtime is where the
+// operator has to learn about it.
+func TestOrderSolversWarnsWhenAKeyGatedSolverHasNoAPIKey(t *testing.T) {
+	for _, gated := range KeyGatedSolvers() {
+		t.Run(gated.Name, func(t *testing.T) {
+			recorder := captureLogs(t)
+
+			as := New(Config{Solvers: []string{"cloudflare", gated.Name}}, nil, nil)
+			got := solverNamesOf(as.orderSolvers([]Solver{
+				&mockSolver{name: "cloudflare", priority: 10},
+				&mockSolver{name: "jschallenge", priority: 20},
+			}))
+
+			if want := []string{"cloudflare"}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("orderSolvers = %v, want the matched subset %v — the warning must not change which solvers run", got, want)
+			}
+
+			rec := recorder.find(t, slog.LevelWarn, gated.Name)
+			if !strings.Contains(rec.Message, gated.Name) {
+				t.Errorf("warn message %q does not name the solver", rec.Message)
+			}
+			if !strings.Contains(rec.Message, "API key") {
+				t.Errorf("warn message %q does not state the missing API key as the reason", rec.Message)
+			}
+			if attrs := recordAttrs(rec); !strings.Contains(attrs, gated.ConfigKey) {
+				t.Errorf("warn line does not name the config key %q to set: %s", gated.ConfigKey, attrs)
+			}
+		})
+	}
+}
+
+func captureLogs(t *testing.T) *levelRecorder {
+	t.Helper()
 	recorder := &levelRecorder{}
 	previous := slog.Default()
 	slog.SetDefault(slog.New(recorder))
 	t.Cleanup(func() { slog.SetDefault(previous) })
-
-	as := New(Config{Solvers: []string{"cloudflare", "capsolver"}}, nil, nil)
-	as.orderSolvers([]Solver{&mockSolver{name: "cloudflare", priority: 10}})
-
-	for _, rec := range recorder.records {
-		if rec.Level >= slog.LevelWarn {
-			t.Errorf("partial match logged at %s: %q — the shipped default hits this path every run", rec.Level, rec.Message)
-		}
-	}
+	return recorder
 }

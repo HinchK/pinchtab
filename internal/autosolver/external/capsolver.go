@@ -31,7 +31,7 @@ func NewCapsolver(cfg CapsolverConfig) *Capsolver {
 	return &Capsolver{config: cfg}
 }
 
-func (c *Capsolver) Name() string  { return "capsolver" }
+func (c *Capsolver) Name() string  { return autosolver.CapsolverSolverName }
 func (c *Capsolver) Priority() int { return 200 }
 
 // CanHandle checks if the page contains a supported CAPTCHA type.
