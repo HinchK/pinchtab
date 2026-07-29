@@ -55,16 +55,22 @@ func (l *Locator) FindInstanceByTabID(tabID string) (*bridge.Instance, error) {
 			slog.Debug("locator: failed to fetch tabs", "instance", inst.ID, "err", err)
 			continue
 		}
+		// Cache the tabs scanned so far in one critical section rather than
+		// taking the write lock per tab, matching RefreshAll.
+		l.mu.Lock()
+		var match bool
 		for _, tab := range tabs {
-			// Cache every tab we discover for future lookups.
-			l.mu.Lock()
 			l.cache[tab.ID] = inst.ID
-			l.mu.Unlock()
-
 			if tab.ID == tabID {
-				result := inst // copy
-				return &result, nil
+				match = true
+				break
 			}
+		}
+		l.mu.Unlock()
+
+		if match {
+			result := inst // copy
+			return &result, nil
 		}
 	}
 
