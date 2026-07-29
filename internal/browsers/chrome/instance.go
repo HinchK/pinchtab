@@ -53,12 +53,19 @@ func (i *Instance) CaptureScreenshot(ctx context.Context, format string, quality
 
 		shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(captureFromSurface(clip))
 		if clip != nil {
+			// Scale 0 means native, the contract bridge.ScreenshotOpts states and
+			// normalises. CDP does not: it discards a scale-0 clip and returns the
+			// whole viewport, which is the defect this path already had once.
+			scale := clip.Scale
+			if scale == 0 {
+				scale = 1
+			}
 			shot = shot.WithClip(&page.Viewport{
 				X:      clip.X,
 				Y:      clip.Y,
 				Width:  clip.Width,
 				Height: clip.Height,
-				Scale:  clip.Scale,
+				Scale:  scale,
 			})
 		}
 		if cdpFormat == page.CaptureScreenshotFormatJpeg && quality > 0 {

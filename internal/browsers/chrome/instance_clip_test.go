@@ -79,6 +79,22 @@ func TestInstanceCaptureScreenshotHonoursClip(t *testing.T) {
 	}
 }
 
+// Scale is the one field whose zero value silently reinstates the defect above:
+// bridge.ScreenshotOpts documents 0 as native and normalises it, CDP instead
+// discards a scale-0 clip and returns the whole viewport. A caller that builds a
+// clip without naming a scale gets the full-viewport image back with no error,
+// which is why the normalisation is asserted rather than left to the callers who
+// happen to set Scale today.
+func TestInstanceCaptureScreenshotHonoursClipWithNativeScale(t *testing.T) {
+	i, ctx := newClipFixture(t)
+
+	gotW, gotH := captureSize(t, i, ctx, &cdptk.ScreenshotClip{X: 40, Y: 60, Width: 120, Height: 60})
+
+	if gotW != 120 || gotH != 60 {
+		t.Errorf("clip with Scale unset captured %dx%d, want 120x60 — scale 0 must mean native, not a discarded clip", gotW, gotH)
+	}
+}
+
 // The unclipped path keeps reading the view directly, which is why the flag was
 // hardcoded: screencast polls this method with a nil clip and must not wait on a
 // compositor frame that an idle headed page never swaps.
