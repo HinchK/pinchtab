@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/config"
@@ -20,6 +21,10 @@ var serverCmd = &cobra.Command{
 		cfg := loadConfig()
 		backgroundMarker, _ := cmd.Flags().GetString("background-child")
 		cfg.BackgroundMarker = backgroundMarker
+
+		bind, _ := cmd.Flags().GetString("bind")
+		port, _ := cmd.Flags().GetString("port")
+		applyServerAddressFlags(cfg, bind, port)
 
 		yolo, _ := cmd.Flags().GetBool("yolo")
 		if yolo {
@@ -65,6 +70,8 @@ var serverCmd = &cobra.Command{
 				Verbose:    verbose,
 				Extensions: append([]string(nil), exts...),
 				Browser:    browserName,
+				Bind:       bind,
+				Port:       port,
 			}); err != nil {
 				fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, err.Error()))
 				os.Exit(1)
@@ -75,8 +82,22 @@ var serverCmd = &cobra.Command{
 	},
 }
 
+// applyServerAddressFlags applies the --bind/--port overrides, mirroring the
+// bridge's precedence: a non-empty flag wins over config, an omitted one leaves
+// the configured value in place.
+func applyServerAddressFlags(cfg *config.RuntimeConfig, bind, port string) {
+	if v := strings.TrimSpace(bind); v != "" {
+		cfg.Bind = v
+	}
+	if v := strings.TrimSpace(port); v != "" {
+		cfg.Port = v
+	}
+}
+
 func init() {
 	serverCmd.GroupID = "primary"
+	serverCmd.Flags().String("bind", "", "Bind address for the HTTP server (overrides config server.bind)")
+	serverCmd.Flags().String("port", "", "Port for the HTTP server (overrides config server.port)")
 	serverCmd.Flags().StringArrayP("extension", "e", nil, "Load browser extension (repeatable)")
 	serverCmd.Flags().BoolP("headed", "H", false, "Start default instance in headed mode")
 	serverCmd.Flags().BoolP("yolo", "y", false, "Apply guards down preset (enables evaluate, macro, download, cookies)")

@@ -40,6 +40,8 @@ type serverBackgroundOptions struct {
 	Verbose    bool
 	Extensions []string
 	Browser    string
+	Bind       string
+	Port       string
 }
 
 var readProcessCommand = defaultReadProcessCommand
@@ -212,6 +214,14 @@ func backgroundServerArgs(marker string, opts serverBackgroundOptions) []string 
 	}
 	if opts.Browser != "" {
 		args = append(args, "--browser", opts.Browser)
+	}
+	// The parent already applied these to cfg and waits on the resulting URL, so
+	// the detached child must bind the same address, not the config default.
+	if opts.Bind != "" {
+		args = append(args, "--bind", opts.Bind)
+	}
+	if opts.Port != "" {
+		args = append(args, "--port", opts.Port)
 	}
 	return args
 }
