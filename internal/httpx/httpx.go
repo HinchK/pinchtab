@@ -58,9 +58,60 @@ func ErrorCode(w http.ResponseWriter, status int, code, message string, retryabl
 		payload["retryable"] = true
 	}
 	if len(details) > 0 {
-		payload["details"] = details
+		payload["details"] = sanitizeDetails(details)
 	}
 	JSON(w, status, payload)
+}
+
+// sanitizeDetails returns a copy of details with every string cleaned the same
+// way as the message beside it. Details carry page-controlled data — dialog
+// text, document titles, navigated URLs — and the CLI prints some of them
+// straight to a terminal, so leaving them raw would let a visited page smuggle
+// ANSI escapes past the sanitizing the message already gets. The input is
+// copied rather than rewritten so callers may reuse their map.
+func sanitizeDetails(details map[string]any) map[string]any {
+	if len(details) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(details))
+	for key, value := range details {
+		out[key] = sanitizeDetailValue(value, 0)
+	}
+	return out
+}
+
+const maxDetailDepth = 4
+
+func sanitizeDetailValue(value any, depth int) any {
+	if depth > maxDetailDepth {
+		return nil
+	}
+	switch v := value.(type) {
+	case string:
+		// Not SanitizeErrorMessage: an intentionally empty detail must stay
+		// empty rather than becoming the message-level "error" placeholder.
+		return sanitize.CleanError(v, maxErrorMessageBytes)
+	case []string:
+		out := make([]string, len(v))
+		for i, s := range v {
+			out[i] = sanitize.CleanError(s, maxErrorMessageBytes)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = sanitizeDetailValue(e, depth+1)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[k] = sanitizeDetailValue(e, depth+1)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func Problem(w http.ResponseWriter, status int, code, detail string, retryable bool, details map[string]any) {
@@ -75,7 +126,7 @@ func Problem(w http.ResponseWriter, status int, code, detail string, retryable b
 		Status:  status,
 		Detail:  SanitizeErrorMessage(detail),
 		Code:    code,
-		Details: details,
+		Details: sanitizeDetails(details),
 	}
 	if retryable {
 		payload.Retryable = true
