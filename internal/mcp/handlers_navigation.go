@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -90,11 +91,11 @@ func handleSnapshot(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 		if sel := optString(r, "selector"); sel != "" {
 			q.Set("selector", sel)
 		}
-		if v := optNumber(r, "maxTokens"); v > 0 {
-			q.Set("maxTokens", formatInt(v))
+		if v, ok := optInt(r, "maxTokens"); ok && v > 0 {
+			q.Set("maxTokens", strconv.Itoa(v))
 		}
-		if v := optNumber(r, "depth"); v > 0 {
-			q.Set("depth", formatInt(v))
+		if v, ok := optInt(r, "depth"); ok && v > 0 {
+			q.Set("depth", strconv.Itoa(v))
 		}
 		if v, ok := optBool(r, "noAnimations"); ok && v {
 			q.Set("noAnimations", "true")
@@ -269,8 +270,8 @@ func handleCapture(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.C
 		if scale, ok := optFloat(r, "scale"); ok && scale > 0 {
 			q.Set("scale", fmt.Sprintf("%g", scale))
 		}
-		if v := optNumber(r, "depth"); v > 0 {
-			q.Set("depth", formatInt(v))
+		if v, ok := optInt(r, "depth"); ok && v > 0 {
+			q.Set("depth", strconv.Itoa(v))
 		}
 		if v, ok := optBool(r, "beyondViewport"); ok && v {
 			q.Set("beyondViewport", "true")
@@ -375,8 +376,8 @@ func handleGetText(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.C
 		if format := optString(r, "format"); format != "" {
 			q.Set("format", format)
 		}
-		if v := optNumber(r, "maxChars"); v > 0 {
-			q.Set("maxChars", formatInt(v))
+		if v, ok := optInt(r, "maxChars"); ok && v > 0 {
+			q.Set("maxChars", strconv.Itoa(v))
 		}
 		if browser := optString(r, "browser"); browser != "" {
 			q.Set("browser", browser)

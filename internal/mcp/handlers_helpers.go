@@ -41,15 +41,6 @@ func optBool(r mcp.CallToolRequest, key string) (bool, bool) {
 	return v, ok
 }
 
-func optNumber(r mcp.CallToolRequest, key string) float64 {
-	v, _ := r.GetArguments()[key].(float64)
-	return v
-}
-
-func formatInt(v float64) string {
-	return fmt.Sprintf("%d", int(v))
-}
-
 func firstNonEmptyString(r mcp.CallToolRequest, keys ...string) string {
 	for _, key := range keys {
 		if v := optTrimmedString(r, key); v != "" {

@@ -536,3 +536,32 @@ func TestHandleCaptureForwardsBrowser(t *testing.T) {
 		t.Fatalf("capture browser = %q, want cloak; query=%v", got, captureQuery)
 	}
 }
+
+// MCP clients and LLM-generated tool calls routinely stringify numbers. Every
+// other numeric argument accepts that through optInt; the response-budget
+// arguments must too, or the cap is silently dropped and the caller gets a full
+// page instead of an error.
+func TestNumericArgumentsAcceptStringForm(t *testing.T) {
+	for _, tc := range []struct {
+		tool  string
+		key   string
+		value string
+	}{
+		{"pinchtab_get_text", "maxChars", "3000"},
+		{"pinchtab_snapshot", "maxTokens", "1500"},
+		{"pinchtab_snapshot", "depth", "4"},
+	} {
+		t.Run(tc.tool+"/"+tc.key, func(t *testing.T) {
+			srv := mockPinchTab()
+			defer srv.Close()
+
+			text := resultText(t, callTool(t, tc.tool, map[string]any{tc.key: tc.value}, srv))
+			if !strings.Contains(text, `"`+tc.key+`"`) {
+				t.Errorf("%s=%q was dropped from the query: %s", tc.key, tc.value, text)
+			}
+			if !strings.Contains(text, tc.value) {
+				t.Errorf("%s=%q did not reach the query: %s", tc.key, tc.value, text)
+			}
+		})
+	}
+}
