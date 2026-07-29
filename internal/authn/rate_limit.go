@@ -22,6 +22,7 @@ type AttemptLimiter struct {
 	maxAttempts int
 	attempts    map[string][]time.Time
 	now         func() time.Time
+	lastSweep   time.Time
 }
 
 func NewAttemptLimiter(cfg AttemptLimiterConfig) *AttemptLimiter {
@@ -81,8 +82,33 @@ func (l *AttemptLimiter) RecordFailure(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	l.sweepLocked(now)
 	filtered := l.pruneLocked(key, now)
 	l.attempts[key] = append(filtered, now)
+}
+
+// sweepLocked drops every key whose attempts have all aged out. pruneLocked
+// only ever touches the key being looked at, so without this a failed login
+// from each of many distinct peers leaves an entry alive indefinitely — the
+// key is never revisited, so it is never pruned. Rate-limited by window so a
+// burst of failures cannot turn each one into a full map scan.
+func (l *AttemptLimiter) sweepLocked(now time.Time) {
+	if now.Sub(l.lastSweep) < l.window {
+		return
+	}
+	l.lastSweep = now
+	for key, hits := range l.attempts {
+		live := false
+		for _, ts := range hits {
+			if now.Sub(ts) < l.window {
+				live = true
+				break
+			}
+		}
+		if !live {
+			delete(l.attempts, key)
+		}
+	}
 }
 
 func (l *AttemptLimiter) Reset(key string) {
