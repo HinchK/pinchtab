@@ -1,49 +1,10 @@
 package main
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/spf13/cobra"
 )
-
-// The current-tab existence probe must be debounced: a freshly written/validated
-// state file is trusted within tabProbeTTL so back-to-back commands skip the HTTP probe.
-func TestTabStateRecentlyValidated(t *testing.T) {
-	t.Setenv("XDG_STATE_HOME", t.TempDir())
-	path := tabStateFile()
-
-	if tabStateRecentlyValidated() {
-		t.Fatal("recentlyValidated true with no state file")
-	}
-
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte("tab_x\n"), 0644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
-	if !tabStateRecentlyValidated() {
-		t.Fatal("recentlyValidated false right after write")
-	}
-
-	// Backdate past the TTL → stale, probe should run.
-	old := time.Now().Add(-2 * tabProbeTTL)
-	if err := os.Chtimes(path, old, old); err != nil {
-		t.Fatalf("chtimes: %v", err)
-	}
-	if tabStateRecentlyValidated() {
-		t.Fatal("recentlyValidated true after backdating past TTL")
-	}
-
-	// Touch (post-validation) → fresh again.
-	touchTabStateFile()
-	if !tabStateRecentlyValidated() {
-		t.Fatal("recentlyValidated false after touch")
-	}
-}
 
 // Guard for the registration refactor: every browser root command must be in
 // the "browser" group, and the shared pointer-flag bundle (+ per-command extras)

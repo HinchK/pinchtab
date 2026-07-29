@@ -65,6 +65,21 @@ func handleAPIError(statusCode int, body []byte) {
 	fmt.Fprint(os.Stderr, renderAPIErrorBody(statusCode, body))
 }
 
+// ErrorRemedy lets the command layer append a remedy the server cannot know about.
+// A tab-not-found 404 naming an ID the user never typed is the case: only the CLI
+// knows the ID came from its cached current tab, so only the CLI can say what to do
+// about it. Unset by default; cmd/pinchtab installs one at startup.
+var ErrorRemedy func(statusCode int, body []byte) string
+
+func appendClientRemedy(b *strings.Builder, statusCode int, body []byte) {
+	if ErrorRemedy == nil {
+		return
+	}
+	if remedy := ErrorRemedy(statusCode, body); remedy != "" {
+		fmt.Fprintf(b, "   Remedy: %s\n", remedy)
+	}
+}
+
 func renderAPIErrorBody(statusCode int, body []byte) string {
 	var errResp struct {
 		Error   string         `json:"error"`
@@ -91,6 +106,7 @@ func renderAPIErrorBody(statusCode int, body []byte) string {
 			fmt.Fprintf(&b, "   Remedy: %s\n", remedy)
 		}
 	}
+	appendClientRemedy(&b, statusCode, body)
 	return b.String()
 }
 

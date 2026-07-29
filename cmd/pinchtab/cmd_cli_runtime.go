@@ -136,6 +136,18 @@ func resolveDefaultCLIBase(cfg *config.RuntimeConfig) string {
 	return fmt.Sprintf("http://127.0.0.1:%s", cfg.Port)
 }
 
+// resolveTabStateEndpoint resolves the server the cached current tab belongs to,
+// with the SAME precedence the command being guarded uses: --server/PINCHTAB_SERVER,
+// else the configured port; token from PINCHTAB_SESSION/PINCHTAB_TOKEN, else the
+// config file's. The tab probe used the env-only resolvers with a hardcoded 9867
+// fallback, so with a configured port it probed a different server than the command
+// — found nothing listening, assumed the stale tab valid, and refreshed its own
+// freshness window. Same target, same credential, or the probe cannot self-heal.
+var resolveTabStateEndpoint = func() (base, token string) {
+	cfg := config.Load()
+	return resolveBaseURL(resolveDefaultCLIBase(cfg)), resolveCLIToken(cfg)
+}
+
 // resolveBaseURL returns the server base URL from flag/env/default.
 // Shared by both the full CLI runtime path and the lightweight tab probe.
 func resolveBaseURL(defaultBase string) string {
