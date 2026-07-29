@@ -3,6 +3,7 @@ package autosolver
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 	"testing"
@@ -1073,5 +1074,92 @@ func TestOrderSolversDoesNotMutateInput(t *testing.T) {
 
 	if after := solverNames(priorityOrder); !reflect.DeepEqual(before, after) {
 		t.Fatalf("input reordered in place: %v -> %v", before, after)
+	}
+}
+
+type levelRecorder struct {
+	records []slog.Record
+}
+
+func (r *levelRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (r *levelRecorder) Handle(_ context.Context, rec slog.Record) error {
+	r.records = append(r.records, rec.Clone())
+	return nil
+}
+func (r *levelRecorder) WithAttrs([]slog.Attr) slog.Handler { return r }
+func (r *levelRecorder) WithGroup(string) slog.Handler      { return r }
+
+func (r *levelRecorder) find(t *testing.T, minLevel slog.Level, substr string) slog.Record {
+	t.Helper()
+	for _, rec := range r.records {
+		if rec.Level >= minLevel && strings.Contains(rec.Message, substr) {
+			return rec
+		}
+	}
+	for _, rec := range r.records {
+		if strings.Contains(rec.Message, substr) {
+			t.Fatalf("%q was logged at %s, want %s or above — an operator never sees it at the default level",
+				rec.Message, rec.Level, minLevel)
+		}
+	}
+	t.Fatalf("no log line containing %q (%d records)", substr, len(r.records))
+	return slog.Record{}
+}
+
+func recordAttrs(rec slog.Record) string {
+	var sb strings.Builder
+	rec.Attrs(func(a slog.Attr) bool {
+		fmt.Fprintf(&sb, "%s=%v ", a.Key, a.Value)
+		return true
+	})
+	return sb.String()
+}
+
+// After typo rejection, zero-match is still reachable: every configured solver
+// known but unavailable, e.g. capsolver named without its API key. The fallback
+// stays — refusing to solve is the worse failure — but it must be visible.
+func TestOrderSolversWarnsWhenNoConfiguredSolverIsAvailable(t *testing.T) {
+	recorder := &levelRecorder{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(recorder))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	priorityOrder := []Solver{
+		&mockSolver{name: "cloudflare", priority: 10},
+		&mockSolver{name: "jschallenge", priority: 20},
+	}
+	as := New(Config{Solvers: []string{"capsolver", "twocaptcha"}}, nil, nil)
+
+	got := solverNames(as.orderSolvers(priorityOrder))
+
+	if want := []string{"cloudflare", "jschallenge"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("fallback returned %v, want the priority order %v", got, want)
+	}
+
+	rec := recorder.find(t, slog.LevelWarn, "falling back to priority order")
+	attrs := recordAttrs(rec)
+	for _, want := range []string{"capsolver", "twocaptcha", "cloudflare", "jschallenge"} {
+		if !strings.Contains(attrs, want) {
+			t.Errorf("warn line does not name %q: %s", want, attrs)
+		}
+	}
+}
+
+// The partial-match case fires on the shipped default (semantic is a stage, not
+// a registry solver, so it never matches), so it stays below warn — promoting it
+// would put a warning in front of every operator on every run.
+func TestOrderSolversDoesNotWarnOnPartialMatch(t *testing.T) {
+	recorder := &levelRecorder{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(recorder))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	as := New(Config{Solvers: []string{"cloudflare", "capsolver"}}, nil, nil)
+	as.orderSolvers([]Solver{&mockSolver{name: "cloudflare", priority: 10}})
+
+	for _, rec := range recorder.records {
+		if rec.Level >= slog.LevelWarn {
+			t.Errorf("partial match logged at %s: %q — the shipped default hits this path every run", rec.Level, rec.Message)
+		}
 	}
 }

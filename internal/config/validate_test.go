@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/pinchtab/pinchtab/internal/autosolver"
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/browsers"
 	_ "github.com/pinchtab/pinchtab/internal/browsers/chrome"
 	_ "github.com/pinchtab/pinchtab/internal/browsers/cloak"
@@ -1108,6 +1110,85 @@ func TestValidationAcceptsRegisteredStubProvider(t *testing.T) {
 	for _, e := range errs2 {
 		if strings.Contains(e.Error(), "stub-target") && strings.Contains(e.Error(), "unknown") {
 			t.Fatalf("stub target provider should be accepted; got error: %s", e.Error())
+		}
+	}
+}
+
+// A misspelled solver name never failed at run time; it changed which solvers
+// ran, and in opposite directions depending on how many other names matched.
+func TestValidateFileConfig_UnknownSolverName(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		solvers []string
+		bad     string
+	}{
+		{
+			name:    "one typo beside a good name silently dropped that solver",
+			solvers: []string{"cloudlfare", "semantic"},
+			bad:     "cloudlfare",
+		},
+		{
+			name:    "every name a typo silently ran the whole registry",
+			solvers: []string{"cloudlfare"},
+			bad:     "cloudlfare",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := ValidateFileConfig(&FileConfig{
+				AutoSolver: AutoSolverFileConfig{Solvers: tc.solvers},
+			})
+
+			var msg string
+			for _, err := range errs {
+				if strings.Contains(err.Error(), tc.bad) {
+					msg = err.Error()
+				}
+			}
+			if msg == "" {
+				t.Fatalf("solvers %v produced no error naming %q: %v", tc.solvers, tc.bad, errs)
+			}
+			if !strings.Contains(msg, "autoSolver.solvers") {
+				t.Errorf("error does not name the field: %s", msg)
+			}
+			for _, known := range catalog.Names() {
+				if !strings.Contains(msg, known) {
+					t.Errorf("error does not list the valid name %q: %s", known, msg)
+				}
+			}
+		})
+	}
+}
+
+// Key-gated solvers are valid names whether or not their key is set — naming
+// one without its key is a different mistake, not an unknown solver.
+func TestValidateFileConfig_KnownSolverNamesAccepted(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		solvers []string
+	}{
+		{"full set", catalog.Names()},
+		{"subset", []string{"cloudflare", "semantic"}},
+		{"reordering", []string{"semantic", "jschallenge", "cloudflare"}},
+		{"key-gated without any key configured", catalog.KeyGated()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := ValidateFileConfig(&FileConfig{
+				AutoSolver: AutoSolverFileConfig{Solvers: tc.solvers},
+			})
+			for _, err := range errs {
+				if strings.Contains(err.Error(), "autoSolver.solvers") {
+					t.Errorf("solvers %v rejected: %s", tc.solvers, err)
+				}
+			}
+		})
+	}
+}
+
+// The shipped default must satisfy the validator it now passes through.
+func TestValidateFileConfig_DefaultSolversAreKnown(t *testing.T) {
+	for _, name := range autosolver.DefaultConfig().Solvers {
+		if !catalog.IsKnown(name) {
+			t.Errorf("default config names solver %q, which validation rejects (known: %v)", name, catalog.Names())
 		}
 	}
 }

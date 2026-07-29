@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/browsers"
 	"github.com/pinchtab/pinchtab/internal/config/geo"
 )
@@ -279,6 +280,19 @@ func ValidateFileConfig(fc *FileConfig) []error {
 			})
 			break
 		}
+	}
+	// An unmatched name does not fail at run time, it changes which solvers run:
+	// one typo alongside good names silently drops that solver, and a list of
+	// only typos silently runs every solver instead.
+	for i, solverName := range fc.AutoSolver.Solvers {
+		name := strings.TrimSpace(solverName)
+		if name == "" || catalog.IsKnown(name) {
+			continue
+		}
+		errs = append(errs, ValidationError{
+			Field:   fmt.Sprintf("autoSolver.solvers[%d]", i),
+			Message: fmt.Sprintf("unknown solver %q (known: %v)", name, catalog.Names()),
+		})
 	}
 
 	if fc.Observability.Activity.SessionIdleSec != nil && *fc.Observability.Activity.SessionIdleSec < 0 {

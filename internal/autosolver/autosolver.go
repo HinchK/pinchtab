@@ -200,9 +200,14 @@ func (as *AutoSolver) orderSolvers(matching []Solver) []Solver {
 			available = append(available, name)
 		}
 		sort.Strings(available)
-		slog.Debug("autosolver: configured solver order not found, using priority order",
+		// Warn, not debug: every configured solver is unavailable, so the run
+		// silently uses solvers the operator never listed. Refusing to solve
+		// would be the worse failure, so the fallback stays — but it stops
+		// being invisible at the default log level.
+		slog.Warn("autosolver: no configured solver is available, falling back to priority order",
 			"configured", as.config.Solvers,
-			"available", available)
+			"unavailable", missing,
+			"running", available)
 		return matching
 	}
 
@@ -272,7 +277,7 @@ func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor Action
 }
 
 func (as *AutoSolver) trySemantic(ctx context.Context, page Page, executor ActionExecutor, intent *Intent) (bool, *AttemptEntry) {
-	entry := &AttemptEntry{Solver: "semantic"}
+	entry := &AttemptEntry{Solver: SemanticSolverName}
 	semanticStart := time.Now()
 
 	if as.semantic == nil {

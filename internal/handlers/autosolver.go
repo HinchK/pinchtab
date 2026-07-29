@@ -9,6 +9,7 @@ import (
 
 	coreautosolver "github.com/pinchtab/pinchtab/internal/autosolver"
 	"github.com/pinchtab/pinchtab/internal/autosolver/adapters"
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/autosolver/external"
 	autosolverllm "github.com/pinchtab/pinchtab/internal/autosolver/llm"
 	autosolversemantic "github.com/pinchtab/pinchtab/internal/autosolver/semantic"
@@ -250,10 +251,9 @@ func (h *Handlers) buildAutoSolver(cfg coreautosolver.Config, includeSemantic bo
 
 func (h *Handlers) availableAutoSolverNames() []string {
 	cfg := h.normalizedAutoSolverConfig()
-	available := map[string]bool{
-		"cloudflare":  true,
-		"semantic":    true,
-		"jschallenge": true,
+	available := map[string]bool{}
+	for _, name := range catalog.AlwaysRegistered() {
+		available[name] = true
 	}
 	if h != nil && h.Config != nil {
 		if strings.TrimSpace(h.Config.AutoSolver.CapsolverKey) != "" {
@@ -277,7 +277,7 @@ func (h *Handlers) availableAutoSolverNames() []string {
 		seen[configured] = struct{}{}
 	}
 
-	for _, fallback := range []string{"cloudflare", "semantic", "jschallenge"} {
+	for _, fallback := range catalog.AlwaysRegistered() {
 		if !available[fallback] {
 			continue
 		}

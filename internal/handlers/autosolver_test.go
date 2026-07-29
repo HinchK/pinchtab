@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	coreautosolver "github.com/pinchtab/pinchtab/internal/autosolver"
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -148,5 +151,36 @@ func TestMaybeAutoSolve_InvokesRunnerWhenEnabled(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("autoSolverRunner calls with navigate trigger disabled = %d, want unchanged", got)
+	}
+}
+
+// The catalog is only a single owner if what actually registers stays inside it.
+// A new solver wired into buildAutoSolver but not added to the catalog would
+// leave config validation rejecting a name the product really accepts, and this
+// is the link that fails when that happens.
+func TestRegisteredSolversAreAllKnownToTheCatalog(t *testing.T) {
+	h := &Handlers{Config: &config.RuntimeConfig{AutoSolver: config.AutoSolverConfig{
+		CapsolverKey:  "test-capsolver-key",
+		TwoCaptchaKey: "test-twocaptcha-key",
+	}}}
+
+	as := h.buildAutoSolver(coreautosolver.DefaultConfig(), true)
+	registered := as.Registry().Names()
+	if len(registered) == 0 {
+		t.Fatal("no solvers registered — this guard is checking nothing")
+	}
+
+	for _, name := range registered {
+		if !catalog.IsKnown(name) {
+			t.Errorf("solver %q registers but config validation rejects it (known: %v)", name, catalog.Names())
+		}
+	}
+
+	// Both key-gated solvers registered above, so the catalog's key-gated list is
+	// the real one rather than a guess.
+	for _, gated := range catalog.KeyGated() {
+		if !slices.Contains(registered, gated) {
+			t.Errorf("catalog lists %q as key-gated but it did not register with a key set (registered: %v)", gated, registered)
+		}
 	}
 }

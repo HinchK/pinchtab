@@ -2,6 +2,12 @@ package autosolver
 
 import "time"
 
+// SemanticSolverName is what the built-in semantic stage answers to. It is a
+// stage rather than a registry solver, so it has no Name() method to own its
+// name — this constant is that owner, for the attempt entries it reports and
+// for the names autoSolver.solvers accepts.
+const SemanticSolverName = "semantic"
+
 // IntentType classifies the detected page state.
 type IntentType string
 
@@ -160,7 +166,7 @@ func DefaultConfig() Config {
 		Enabled:        true,
 		MaxAttempts:    8,
 		SolverTimeout:  30 * time.Second,
-		Solvers:        []string{"cloudflare", "semantic"},
+		Solvers:        []string{"cloudflare", SemanticSolverName},
 		LLMFallback:    false,
 		RetryBaseDelay: 500 * time.Millisecond,
 		RetryMaxDelay:  10 * time.Second,
