@@ -25,8 +25,18 @@ pt_ok scrape "$SITE_URL" --timeout 30 --json
 # consumers, so a bump must fail here and be acknowledged. internal/audit carries
 # its own SchemaVersion, still at 1.0 — the audit scenarios are a different
 # payload and are not stale.
+#
+# The type is part of the contract, so a bare string compare is not enough: it
+# would accept the JSON number 2.0 as well as the string, and each of absent, a
+# wrong type and unparseable output has to be distinguishable in the message
+# rather than all arriving as an empty value.
 EXPECTED_SCRAPE_SCHEMA="2.0"
-GOT_SCRAPE_SCHEMA=$(echo "$PT_OUT" | jq -r '.schemaVersion // "<absent>"' 2>/dev/null)
+GOT_SCRAPE_SCHEMA=$(echo "$PT_OUT" | jq -r '
+  .schemaVersion as $v
+  | if $v == null then "<absent>"
+    elif ($v | type) != "string" then "<not-a-string: \($v | type)>"
+    else $v end' 2>/dev/null)
+GOT_SCRAPE_SCHEMA="${GOT_SCRAPE_SCHEMA:-<unparseable-output>}"
 if [ "$GOT_SCRAPE_SCHEMA" = "$EXPECTED_SCRAPE_SCHEMA" ]; then
   pass_assert "report pins scrape schema version $EXPECTED_SCRAPE_SCHEMA"
 else
