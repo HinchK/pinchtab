@@ -278,6 +278,35 @@ func (nm *NetworkMonitor) bodyRetentionEnabled() bool {
 	return nm.retainBodies
 }
 
+// fetchResponseBody reads the body from the browser. Indirected so retention
+// policy can be exercised without a live CDP target.
+var fetchResponseBody = GetResponseBodyDirect
+
+func skipRetainedBody(buf *NetworkBuffer, requestID, reason string) {
+	buf.Update(requestID, func(entry *NetworkEntry) {
+		entry.BodyPending = false
+		entry.BodySkipped = true
+		entry.BodySkipReason = reason
+		entry.BodyError = ""
+	})
+}
+
+// clampRetainedBody applies a byte budget to a retained response body. Text is
+// cut on a rune boundary: a raw byte cut orphans UTF-8 continuation bytes and
+// the JSON encoder then emits U+FFFD the response never contained. A base64
+// body cannot be cut at all — the encoding's length and padding make a fragment
+// undecodable in whole, not only at the tail — so it is dropped for the caller
+// to report, rather than returned corrupt.
+func clampRetainedBody(body string, base64Encoded bool, limit int) (clamped string, truncated, dropped bool) {
+	if limit <= 0 || len(body) <= limit {
+		return body, false, false
+	}
+	if base64Encoded {
+		return "", false, true
+	}
+	return sanitize.TruncateUTF8Bytes(body, limit), true, false
+}
+
 func (nm *NetworkMonitor) maybeRetainBody(tabCtx context.Context, buf *NetworkBuffer, requestID string) {
 	// Every return path below resolves BodyPending via buf.Update; signal once on
 	// exit so retained-body readers wake instead of polling.
@@ -288,36 +317,21 @@ func (nm *NetworkMonitor) maybeRetainBody(tabCtx context.Context, buf *NetworkBu
 	maxBytes := nm.retainBodyMaxBytes
 	nm.mu.RUnlock()
 	if !enabled {
-		buf.Update(requestID, func(entry *NetworkEntry) {
-			entry.BodyPending = false
-			entry.BodySkipped = true
-			entry.BodySkipReason = "retention disabled"
-			entry.BodyError = ""
-		})
+		skipRetainedBody(buf, requestID, "retention disabled")
 		return
 	}
 	if buf.RetainedBytes() >= nm.retainBodyMaxPerTab {
-		buf.Update(requestID, func(entry *NetworkEntry) {
-			entry.BodyPending = false
-			entry.BodySkipped = true
-			entry.BodySkipReason = "retention budget exceeded"
-			entry.BodyError = ""
-		})
+		skipRetainedBody(buf, requestID, "retention budget exceeded")
 		return
 	}
 	select {
 	case nm.retainBodySemaphore <- struct{}{}:
 		defer func() { <-nm.retainBodySemaphore }()
 	default:
-		buf.Update(requestID, func(entry *NetworkEntry) {
-			entry.BodyPending = false
-			entry.BodySkipped = true
-			entry.BodySkipReason = "retention concurrency limit reached"
-			entry.BodyError = ""
-		})
+		skipRetainedBody(buf, requestID, "retention concurrency limit reached")
 		return
 	}
-	body, base64Encoded, err := GetResponseBodyDirect(tabCtx, requestID)
+	body, base64Encoded, err := fetchResponseBody(tabCtx, requestID)
 	if err != nil {
 		buf.Update(requestID, func(entry *NetworkEntry) {
 			entry.BodyPending = false
@@ -327,25 +341,22 @@ func (nm *NetworkMonitor) maybeRetainBody(tabCtx context.Context, buf *NetworkBu
 		})
 		return
 	}
-	truncated := false
-	if maxBytes > 0 && len(body) > maxBytes {
-		body = body[:maxBytes]
-		truncated = true
+	body, truncated, dropped := clampRetainedBody(body, base64Encoded, maxBytes)
+	if dropped {
+		skipRetainedBody(buf, requestID, "base64 body exceeds retention limit")
+		return
 	}
 	remainingBudget := int(nm.retainBodyMaxPerTab - buf.RetainedBytes())
 	if remainingBudget <= 0 {
-		buf.Update(requestID, func(entry *NetworkEntry) {
-			entry.BodyPending = false
-			entry.BodySkipped = true
-			entry.BodySkipReason = "retention budget exceeded"
-			entry.BodyError = ""
-		})
+		skipRetainedBody(buf, requestID, "retention budget exceeded")
 		return
 	}
-	if len(body) > remainingBudget {
-		body = body[:remainingBudget]
-		truncated = true
+	body, cutForBudget, dropped := clampRetainedBody(body, base64Encoded, remainingBudget)
+	if dropped {
+		skipRetainedBody(buf, requestID, "base64 body exceeds retention budget")
+		return
 	}
+	truncated = truncated || cutForBudget
 	buf.Update(requestID, func(entry *NetworkEntry) {
 		entry.ResponseBody = body
 		entry.Base64Encoded = base64Encoded
