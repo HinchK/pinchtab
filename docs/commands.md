@@ -4,6 +4,9 @@
 
 ```bash
 pinchtab server                         # Start the full server (dashboard + API)
+pinchtab server -b                      # Start it detached; logs go to <stateDir>/server.log
+pinchtab server -v                      # Full startup banner, and log at debug level
+pinchtab server --log-level warn        # Record warnings and errors only
 pinchtab server stop                    # Stop the running server (foreground or background)
 pinchtab server restart                 # Stop + restart in background (applies config changes)
 pinchtab bridge                         # Start the bridge-only runtime
@@ -16,6 +19,12 @@ pinchtab daemon restart                 # Restart the background service
 pinchtab daemon uninstall               # Remove the background service
 pinchtab completion <shell>             # Generate shell completions
 ```
+
+Logging is a level, not an on/off switch. Every run — foreground or `--background`
+— records the per-request access log (with its `requestId`), instance lifecycle
+transitions, warnings and errors. `-v` adds debug detail and the full startup
+banner; `--log-level debug|info|warn|error` sets the threshold explicitly and is
+the only thing that can drop request lines or warnings.
 
 ## Navigation
 

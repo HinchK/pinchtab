@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -39,9 +38,7 @@ import (
 
 var exitProcess = os.Exit
 
-// fatalStartup reports a startup failure on stderr and exits. Startup failures
-// must not travel through slog: the non-verbose default replaces the logger
-// with a discard handler, which would leave the process exiting in silence.
+// fatalStartup writes styled operator output with hints, not a log record.
 func fatalStartup(stage string, err error) {
 	fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("pinchtab: %s: %v", stage, err)))
 	for _, hint := range startupFatalHints(err) {
@@ -61,10 +58,6 @@ func startupFatalHints(err error) []string {
 }
 
 func RunDashboard(cfg *config.RuntimeConfig, version string) {
-	if !cfg.VerboseStartup {
-		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	}
-
 	providerhooks.CleanupProfile(config.NormalizeBrowser(cfg.DefaultBrowser), cfg.ProfileDir)
 
 	dashPort := cfg.Port
@@ -254,7 +247,7 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 		listenStatus = "running"
 	}
 
-	if cfg.VerboseStartup {
+	if cfg.VerboseBanner {
 		cli.PrintStartupBanner(cfg, cli.StartupBannerOptions{
 			Mode:         "server",
 			ListenAddr:   cfg.Bind + ":" + dashPort,
@@ -327,7 +320,7 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 			),
 		),
 	)
-	if cfg.VerboseStartup {
+	if cfg.VerboseBanner {
 		cli.LogSecurityWarnings(cfg)
 	}
 

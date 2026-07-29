@@ -3,6 +3,7 @@ package safelog
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
+
+// DefaultLevel is what a run records with no level set.
+const DefaultLevel = slog.LevelInfo
 
 const (
 	MaxStringValueBytes = 2 * 1024
@@ -22,7 +26,10 @@ type Handler struct {
 	next slog.Handler
 }
 
-var installOnce sync.Once
+var (
+	installOnce sync.Once
+	levelVar    = new(slog.LevelVar)
+)
 
 func NewHandler(next slog.Handler) *Handler {
 	if next == nil {
@@ -31,11 +38,42 @@ func NewHandler(next slog.Handler) *Handler {
 	return &Handler{next: next}
 }
 
+// InstallDefault is the only owner of the process default logger; nothing else
+// may call slog.SetDefault.
 func InstallDefault() {
 	installOnce.Do(func() {
-		base := slog.NewTextHandler(os.Stderr, nil)
-		slog.SetDefault(slog.New(NewHandler(base)))
+		slog.SetDefault(slog.New(NewDefaultHandler(os.Stderr)))
 	})
+}
+
+func NewDefaultHandler(w io.Writer) slog.Handler {
+	return NewHandler(slog.NewTextHandler(w, &slog.HandlerOptions{Level: levelVar}))
+}
+
+// SetLevel adjusts the installed threshold after flags are parsed, which is why
+// the level is a LevelVar and not a second slog.SetDefault.
+func SetLevel(l slog.Level) {
+	levelVar.Set(l)
+}
+
+func CurrentLevel() slog.Level {
+	return levelVar.Level()
+}
+
+func ParseLevel(value string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "":
+		return DefaultLevel, nil
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	}
+	return DefaultLevel, fmt.Errorf("unknown log level %q (want debug, info, warn or error)", value)
 }
 
 func (h *Handler) Enabled(ctx context.Context, level slog.Level) bool {

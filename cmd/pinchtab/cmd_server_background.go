@@ -38,6 +38,7 @@ type serverBackgroundOptions struct {
 	Yolo       bool
 	Headed     bool
 	Verbose    bool
+	LogLevel   string
 	Extensions []string
 	Browser    string
 	Bind       string
@@ -208,6 +209,9 @@ func backgroundServerArgs(marker string, opts serverBackgroundOptions) []string 
 	}
 	if opts.Verbose {
 		args = append(args, "-v")
+	}
+	if opts.LogLevel != "" {
+		args = append(args, "--log-level", opts.LogLevel)
 	}
 	for _, ext := range opts.Extensions {
 		args = append(args, "-e", ext)

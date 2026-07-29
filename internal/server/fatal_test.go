@@ -21,7 +21,7 @@ func runFatal(t *testing.T, fn func()) fatalRun {
 	t.Helper()
 
 	origLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	slog.SetDefault(slog.New(slog.NewTextHandler(new(bytes.Buffer), nil)))
 	origExit := exitProcess
 	var codes []int
 	exitProcess = func(code int) { codes = append(codes, code) }

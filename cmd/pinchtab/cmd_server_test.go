@@ -1,10 +1,12 @@
 package main
 
 import (
+	"log/slog"
 	"reflect"
 	"testing"
 
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/safelog"
 )
 
 func TestApplyServerAddressFlagsPrecedence(t *testing.T) {
@@ -73,5 +75,52 @@ func TestBackgroundServerArgsForwardsAddressFlags(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("backgroundServerArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestApplyLogLevelResolvesTheRunThreshold(t *testing.T) {
+	t.Cleanup(func() { safelog.SetLevel(safelog.DefaultLevel) })
+
+	for _, tc := range []struct {
+		name    string
+		level   string
+		verbose bool
+		want    slog.Level
+	}{
+		{name: "no flags keeps the default", want: safelog.DefaultLevel},
+		{name: "verbose means debug", verbose: true, want: slog.LevelDebug},
+		{name: "explicit level wins over verbose", level: "error", verbose: true, want: slog.LevelError},
+		{name: "explicit warn", level: "warn", want: slog.LevelWarn},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			safelog.SetLevel(slog.LevelInfo)
+			applyLogLevel(&config.RuntimeConfig{LogLevel: tc.level}, tc.verbose)
+			if got := safelog.CurrentLevel(); got != tc.want {
+				t.Errorf("level = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestDefaultLogLevelRecordsRequestsAndErrors(t *testing.T) {
+	if safelog.DefaultLevel > slog.LevelInfo {
+		t.Fatalf("DefaultLevel = %v, want info or lower so request lines survive", safelog.DefaultLevel)
+	}
+}
+
+// A quiet startup banner and recorded errors must be reachable together: the
+// banner is a separate field from the level, and neither flag touches the other.
+func TestQuietBannerKeepsDefaultLogging(t *testing.T) {
+	t.Cleanup(func() { safelog.SetLevel(safelog.DefaultLevel) })
+	safelog.SetLevel(slog.LevelError)
+
+	cfg := &config.RuntimeConfig{VerboseBanner: false}
+	applyLogLevel(cfg, false)
+
+	if cfg.VerboseBanner {
+		t.Errorf("applyLogLevel must not touch the banner")
+	}
+	if got := safelog.CurrentLevel(); got != safelog.DefaultLevel {
+		t.Errorf("level = %v, want the default with a quiet banner", got)
 	}
 }

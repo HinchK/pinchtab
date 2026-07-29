@@ -13,9 +13,10 @@ type RuntimeConfig struct {
 	InstancePortEnd   int // Ending port for instances (default 9968)
 	Token             string
 	StateDir          string
-	TrustProxyHeaders bool  // Only trust X-Forwarded-*/Forwarded headers when behind a trusted reverse proxy
-	CookieSecure      *bool // Nil = auto-detect based on request scheme/host for backward compatibility
-	VerboseStartup    bool  // Show full banner and slog output on server start
+	TrustProxyHeaders bool   // Only trust X-Forwarded-*/Forwarded headers when behind a trusted reverse proxy
+	CookieSecure      *bool  // Nil = auto-detect based on request scheme/host for backward compatibility
+	VerboseBanner     bool   // Show the full startup banner and security warnings
+	LogLevel          string // Minimum log level: debug, info (default), warn or error
 	BackgroundMarker  string
 
 	AllowEvaluate         bool
