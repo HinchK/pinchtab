@@ -3,6 +3,7 @@ package autosolver
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -997,5 +998,78 @@ func TestExecuteAction_LLMNavigate(t *testing.T) {
 	}
 	if ex.navigateCalled != 1 {
 		t.Errorf("expected navigate, got %d", ex.navigateCalled)
+	}
+}
+
+func solverNames(solvers []Solver) []string {
+	names := make([]string, 0, len(solvers))
+	for _, s := range solvers {
+		names = append(names, s.Name())
+	}
+	return names
+}
+
+func TestOrderSolvers(t *testing.T) {
+	priorityOrder := []Solver{
+		&mockSolver{name: "alpha", priority: 10},
+		&mockSolver{name: "beta", priority: 20},
+		&mockSolver{name: "gamma", priority: 30},
+	}
+
+	for _, tc := range []struct {
+		name       string
+		configured []string
+		want       []string
+	}{
+		{
+			name:       "all configured names present, configured order wins",
+			configured: []string{"gamma", "alpha", "beta"},
+			want:       []string{"gamma", "alpha", "beta"},
+		},
+		{
+			name:       "some configured names missing, matched subset in configured order",
+			configured: []string{"gamma", "absent", "alpha"},
+			want:       []string{"gamma", "alpha"},
+		},
+		{
+			name:       "no configured name matches, priority order unchanged",
+			configured: []string{"absent", "also-absent"},
+			want:       []string{"alpha", "beta", "gamma"},
+		},
+		{
+			name:       "empty config, priority order unchanged",
+			configured: nil,
+			want:       []string{"alpha", "beta", "gamma"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			as := New(Config{Solvers: tc.configured}, nil, nil)
+
+			got := solverNames(as.orderSolvers(priorityOrder))
+
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("orderSolvers = %v, want %v", got, tc.want)
+			}
+			for _, name := range got {
+				if name == "absent" || name == "also-absent" {
+					t.Errorf("unconfigured-but-missing name %q leaked into the result %v", name, got)
+				}
+			}
+		})
+	}
+}
+
+func TestOrderSolversDoesNotMutateInput(t *testing.T) {
+	priorityOrder := []Solver{
+		&mockSolver{name: "alpha", priority: 10},
+		&mockSolver{name: "beta", priority: 20},
+	}
+	before := solverNames(priorityOrder)
+
+	as := New(Config{Solvers: []string{"beta", "alpha"}}, nil, nil)
+	_ = as.orderSolvers(priorityOrder)
+
+	if after := solverNames(priorityOrder); !reflect.DeepEqual(before, after) {
+		t.Fatalf("input reordered in place: %v -> %v", before, after)
 	}
 }

@@ -174,6 +174,46 @@ func (as *AutoSolver) detectIntent(ctx context.Context, page Page) (*Intent, err
 	return detectIntentByTitle(page.Title()), nil
 }
 
+func (as *AutoSolver) orderSolvers(matching []Solver) []Solver {
+	if len(as.config.Solvers) == 0 {
+		return matching
+	}
+
+	byName := make(map[string]Solver, len(matching))
+	for _, s := range matching {
+		byName[s.Name()] = s
+	}
+
+	filtered := make([]Solver, 0, len(as.config.Solvers))
+	missing := make([]string, 0, len(as.config.Solvers))
+	for _, name := range as.config.Solvers {
+		if s, ok := byName[name]; ok {
+			filtered = append(filtered, s)
+			continue
+		}
+		missing = append(missing, name)
+	}
+
+	if len(filtered) == 0 {
+		available := make([]string, 0, len(byName))
+		for name := range byName {
+			available = append(available, name)
+		}
+		sort.Strings(available)
+		slog.Debug("autosolver: configured solver order not found, using priority order",
+			"configured", as.config.Solvers,
+			"available", available)
+		return matching
+	}
+
+	if len(missing) > 0 {
+		slog.Debug("autosolver: some configured solvers unavailable; using matched subset",
+			"configured", as.config.Solvers,
+			"missing", missing)
+	}
+	return filtered
+}
+
 func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor ActionExecutor) (bool, []AttemptEntry) {
 	solvers := as.registry.MatchingSolvers(ctx, page)
 	if len(solvers) == 0 {
@@ -183,41 +223,7 @@ func (as *AutoSolver) trySolvers(ctx context.Context, page Page, executor Action
 		}}
 	}
 
-	orderedSolvers := solvers
-	if len(as.config.Solvers) > 0 {
-		byName := make(map[string]Solver, len(solvers))
-		for _, s := range solvers {
-			byName[s.Name()] = s
-		}
-
-		filtered := make([]Solver, 0, len(as.config.Solvers))
-		missing := make([]string, 0, len(as.config.Solvers))
-		for _, name := range as.config.Solvers {
-			if s, ok := byName[name]; ok {
-				filtered = append(filtered, s)
-				continue
-			}
-			missing = append(missing, name)
-		}
-
-		if len(filtered) > 0 {
-			if len(missing) > 0 {
-				slog.Debug("autosolver: some configured solvers unavailable; using matched subset",
-					"configured", as.config.Solvers,
-					"missing", missing)
-			}
-			orderedSolvers = filtered
-		} else {
-			available := make([]string, 0, len(byName))
-			for name := range byName {
-				available = append(available, name)
-			}
-			sort.Strings(available)
-			slog.Debug("autosolver: configured solver order not found, using priority order",
-				"configured", as.config.Solvers,
-				"available", available)
-		}
-	}
+	orderedSolvers := as.orderSolvers(solvers)
 
 	entries := make([]AttemptEntry, 0, len(orderedSolvers))
 	for _, s := range orderedSolvers {
