@@ -60,10 +60,15 @@ func FetchLayout(ctx context.Context) (ViewportInfo, error) {
 // Each node costs one DOM.getBoxModel round trip; for the typical
 // FilterInteractive snapshot of <50 nodes the total budget is ~250ms.
 //
-// DOM.getBoxModel returns document-relative CSS coordinates. pageCoords=true
-// leaves boxes in that space for beyondViewport/clip captures. pageCoords=false
-// projects boxes into viewport coordinates by subtracting the current scroll
-// offset, matching the default viewport-only screenshot.
+// DOM.getBoxModel returns CSS coordinates relative to the MAIN FRAME'S VIEWPORT
+// — measured against getBoundingClientRect on a scrolled page, the two agree
+// exactly — which is what makes it correct for nodes inside iframes, where a
+// rect taken in the element's own context is frame-relative.
+//
+// pageCoords=true leaves boxes in that space for beyondViewport/clip captures.
+// pageCoords=false subtracts the current scroll offset; on a scrolled page that
+// shifts an already-viewport-relative box by the scroll, which is its own
+// defect and is deliberately left alone here.
 //
 // Visibility heuristic: a node is Visible if its rect has non-zero area and
 // intersects the viewport. The check is intentionally cheap — strict
@@ -89,6 +94,26 @@ func AnnotateBounds(ctx context.Context, nodes []A11yNode, pageCoords bool, vp V
 }
 
 func getBoxAABB(ctx context.Context, backendNodeID int64) (BoundingBox, bool) {
+	return boxModelAABB(ctx, backendNodeID, boxQuadContent)
+}
+
+// ElementBorderBox is the border-box rectangle of a node in document-relative
+// CSS coordinates, the same measurement the capture path uses. It is the
+// cross-frame-correct alternative to evaluating getBoundingClientRect in the
+// element's own context, which is relative to the document the element lives in
+// and therefore frame-relative for anything inside an iframe.
+func ElementBorderBox(ctx context.Context, backendNodeID int64) (BoundingBox, bool) {
+	return boxModelAABB(ctx, backendNodeID, boxQuadBorder)
+}
+
+type boxQuad string
+
+const (
+	boxQuadContent boxQuad = "content"
+	boxQuadBorder  boxQuad = "border"
+)
+
+func boxModelAABB(ctx context.Context, backendNodeID int64, quad boxQuad) (BoundingBox, bool) {
 	var result json.RawMessage
 	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.getBoxModel", map[string]any{
@@ -101,12 +126,16 @@ func getBoxAABB(ctx context.Context, backendNodeID int64) (BoundingBox, bool) {
 	var box struct {
 		Model struct {
 			Content []float64 `json:"content"`
+			Border  []float64 `json:"border"`
 		} `json:"model"`
 	}
 	if err := json.Unmarshal(result, &box); err != nil {
 		return BoundingBox{}, false
 	}
 	q := box.Model.Content
+	if quad == boxQuadBorder {
+		q = box.Model.Border
+	}
 	if len(q) < 8 {
 		return BoundingBox{}, false
 	}

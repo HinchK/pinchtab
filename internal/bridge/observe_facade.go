@@ -72,6 +72,10 @@ func AnnotateBounds(ctx context.Context, nodes []A11yNode, pageCoords bool, vp V
 	return bridgeobserve.AnnotateBounds(ctx, nodes, pageCoords, vp)
 }
 
+func ElementBorderBox(ctx context.Context, backendNodeID int64) (BoundingBox, bool) {
+	return bridgeobserve.ElementBorderBox(ctx, backendNodeID)
+}
+
 func FetchAXTree(ctx context.Context) ([]RawAXNode, error) {
 	return bridgeobserve.FetchAXTree(ctx)
 }
