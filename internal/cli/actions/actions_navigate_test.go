@@ -222,8 +222,6 @@ func TestReloadWithoutDismissBannersOmitsQuery(t *testing.T) {
 	}
 }
 
-// TestNavigatePrintTabID verifies that --print-tab-id makes `nav` emit only
-// the tab ID on stdout so agents can capture it via `$(pinchtab nav URL)`.
 func TestNavigatePrintTabID(t *testing.T) {
 	m := newMockServer()
 	m.response = `{"tabId":"ABC123","status":"ok"}`
@@ -238,7 +236,7 @@ func TestNavigatePrintTabID(t *testing.T) {
 	})
 	got := strings.TrimSpace(out)
 	if got != "ABC123" {
-		t.Errorf("expected stdout to be exactly 'ABC123', got %q", got)
+		t.Errorf("stdout = %q, want exactly the tab ID so $(pinchtab nav URL) stays usable", got)
 	}
 }
 
@@ -293,19 +291,17 @@ func TestNavigateIdentifiedCallerPrintsNoSessionHint(t *testing.T) {
 	}
 }
 
-// atTerminal makes the stdout check answer true for the duration of a test, so
-// the interactive branch is reachable — under `go test` stdout is a pipe.
-func atTerminal(t *testing.T) {
+func stdoutTerminal(t *testing.T, isTerminal bool) {
 	t.Helper()
 	old := stdoutIsTerminal
-	stdoutIsTerminal = func() bool { return true }
+	stdoutIsTerminal = func() bool { return isTerminal }
 	t.Cleanup(func() { stdoutIsTerminal = old })
 }
 
 // The landed URL is the cheap signal that a redirect, login wall or error page
-// intervened. The server already returns it; nav used to print only the tab ID.
+// intervened, and the server already returns it.
 func TestNavigateReportsTheLandedURLAtATerminal(t *testing.T) {
-	atTerminal(t)
+	stdoutTerminal(t, true)
 	m := newMockServer()
 	m.response = `{"tabId":"ABC123","title":"Example Domain","url":"https://example.com/"}`
 	defer m.close()
@@ -338,9 +334,7 @@ func TestNavigatePrintsOnlyTheTabIDWhenCaptured(t *testing.T) {
 		{name: "print-tab-id at a terminal", terminal: true, flag: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			old := stdoutIsTerminal
-			stdoutIsTerminal = func() bool { return tc.terminal }
-			t.Cleanup(func() { stdoutIsTerminal = old })
+			stdoutTerminal(t, tc.terminal)
 
 			m := newMockServer()
 			m.response = `{"tabId":"ABC123","url":"https://example.com/"}`
@@ -361,9 +355,11 @@ func TestNavigatePrintsOnlyTheTabIDWhenCaptured(t *testing.T) {
 	}
 }
 
-// back, forward and reload all come from one server handler that returns
-// {"tabId","url"}; reload used to discard it and print a bare OK.
-func TestHistoryNavigationPrintsTheLandedURL(t *testing.T) {
+// back, forward and reload share one server handler returning {"tabId","url"}, and
+// none of them has a tab ID on stdout to protect — so unlike nav they report the
+// landed URL through a pipe as well. The name says "through a pipe" because that
+// asymmetry is the thing a later reader might "tidy" in either direction.
+func TestHistoryNavigationPrintsTheLandedURLThroughAPipe(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		run  func(*http.Client, string, string, *cobra.Command)
@@ -378,13 +374,7 @@ func TestHistoryNavigationPrintsTheLandedURL(t *testing.T) {
 			m.response = `{"tabId":"ABC123","url":"https://example.com/landed"}`
 			defer m.close()
 
-			// Not a terminal, stated rather than inherited. These three have no
-			// tab ID on stdout to protect, so unlike nav they report the landed
-			// URL through a pipe too. Asserting it here is what stops that
-			// difference from being "fixed" in either direction by accident.
-			old := stdoutIsTerminal
-			stdoutIsTerminal = func() bool { return false }
-			t.Cleanup(func() { stdoutIsTerminal = old })
+			stdoutTerminal(t, false)
 
 			out := captureStdout(t, func() {
 				tc.run(m.server.Client(), m.base(), "", newHistoryCmd())
@@ -429,7 +419,7 @@ func TestLandingReportDegradesWithoutAURL(t *testing.T) {
 	}
 
 	t.Run("navigate", func(t *testing.T) {
-		atTerminal(t)
+		stdoutTerminal(t, true)
 		m := newMockServer()
 		m.response = `{"tabId":"ABC123"}`
 		defer m.close()
@@ -446,16 +436,15 @@ func TestLandingReportDegradesWithoutAURL(t *testing.T) {
 	})
 }
 
-// --json is the machine contract and predates this change: it must stay the raw
-// response body for all four commands, with no landed-URL line added.
+// --json is the machine contract: the raw response body for all four commands, with
+// no landed-URL line added.
 func TestJSONOutputIsTheRawResponseForAllFour(t *testing.T) {
 	const response = `{"tabId":"ABC123","url":"https://example.com/landed"}`
-	// DoPost pretty-prints the decoded body; that is the pre-existing contract and
-	// must not gain a landed-URL line.
+	// DoPost pretty-prints the decoded body, so that is what --json must equal.
 	const want = "{\n  \"tabId\": \"ABC123\",\n  \"url\": \"https://example.com/landed\"\n}"
 
 	t.Run("navigate", func(t *testing.T) {
-		atTerminal(t)
+		stdoutTerminal(t, true)
 		m := newMockServer()
 		m.response = response
 		defer m.close()
@@ -480,7 +469,7 @@ func TestJSONOutputIsTheRawResponseForAllFour(t *testing.T) {
 		{name: "reload", run: Reload},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			atTerminal(t)
+			stdoutTerminal(t, true)
 			m := newMockServer()
 			m.response = response
 			defer m.close()
@@ -499,7 +488,7 @@ func TestJSONOutputIsTheRawResponseForAllFour(t *testing.T) {
 
 // nav gained --text; the shared tail must actually run it.
 func TestNavigateTextFetchesPageText(t *testing.T) {
-	atTerminal(t)
+	stdoutTerminal(t, true)
 	m := newMockServer()
 	m.response = `{"tabId":"ABC123","url":"https://example.com/"}`
 	m.responses["GET /tabs/ABC123/text"] = mockResponse{statusCode: 200, body: `{"text":"PAGE TEXT"}`}
