@@ -590,3 +590,31 @@ func TestCoordinateArgumentsAcceptStringForm(t *testing.T) {
 		}
 	}
 }
+
+// The sibling of TestNumericArgumentsAcceptStringForm. Booleans are the larger
+// surface — twenty call sites — and withBounds is the only opt-out among them,
+// so dropping its string form means an explicit "off" is ignored and the
+// response looks like the default rather than like the request.
+func TestBooleanArgumentsAcceptStringForm(t *testing.T) {
+	for _, tc := range []struct {
+		tool  string
+		args  map[string]any
+		want  string
+		label string
+	}{
+		{"pinchtab_get_text", map[string]any{"raw": "true"}, "mode", "raw=true sets mode=raw"},
+		{"pinchtab_capture", map[string]any{"beyondViewport": "true"}, "beyondViewport", "opt-in flag applies"},
+		{"pinchtab_capture", map[string]any{"withBounds": "false"}, `"withBounds":["false"]`, "explicit off is forwarded"},
+		{"pinchtab_scrape", map[string]any{"url": "https://example.test/", "noBrowser": "TRUE"}, "noBrowser", "ParseBool spellings are accepted"},
+	} {
+		t.Run(tc.tool+"/"+tc.label, func(t *testing.T) {
+			srv := mockPinchTab()
+			defer srv.Close()
+
+			text := resultText(t, callTool(t, tc.tool, tc.args, srv))
+			if !strings.Contains(text, tc.want) {
+				t.Errorf("%s: %q missing from the outbound request: %s", tc.label, tc.want, text)
+			}
+		})
+	}
+}
