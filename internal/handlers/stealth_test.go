@@ -449,8 +449,10 @@ func TestEveryListedPairStillResolvesByteIdentically(t *testing.T) {
 	}
 }
 
-// os: "random" resolves to windows or mac, both of which have a chrome entry, so it
-// cannot reach the refusal path. Run enough times to see both arms of the weighting.
+// Scoped to the default browser deliberately — chrome is the one browser both
+// weighted os rows hold, so this arm cannot fail whatever the selection does. The
+// two tests below carry the non-chrome cases. Run enough times to see both arms of
+// the weighting.
 func TestRandomOSNeverReachesTheRefusalPath(t *testing.T) {
 	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
 
@@ -472,6 +474,99 @@ func TestRandomOSNeverReachesTheRefusalPath(t *testing.T) {
 	}
 }
 
+// os: "random" resolves only to an os whose row holds the requested browser. Picking
+// an os first and looking the pair up second made the same request body answer 200 or
+// 400 by coin flip: safari refused whenever the pick was windows. Asserted on every
+// iteration, because the defect it replaces was intermittent rather than absent.
+func TestRandomOSResolvesToAnOSThatHoldsTheRequestedBrowser(t *testing.T) {
+	const version = "144.0.7559.133"
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: version}}
+	reduced := stealth.ReducedBrowserVersion(version)
+	windowsChrome := stealth.ChromeUserAgent(stealth.PlatformWindows, reduced)
+	matrix := h.fingerprintMatrix()
+
+	for _, tc := range []struct {
+		browser      string
+		wantUA       string
+		wantPlatform string
+	}{
+		{browser: "safari", wantUA: matrix["mac"]["safari"].UserAgent, wantPlatform: "MacIntel"},
+		{browser: "edge", wantUA: stealth.EdgeUserAgent(windowsChrome, reduced), wantPlatform: "Win32"},
+	} {
+		t.Run(tc.browser, func(t *testing.T) {
+			for i := 0; i < 200; i++ {
+				fp, err := h.generateFingerprint(fingerprintRequest{OS: "random", Browser: tc.browser})
+				if err != nil {
+					t.Fatalf("draw %d: os=random browser=%s was refused: %v", i, tc.browser, err)
+				}
+				if fp.UserAgent != tc.wantUA {
+					t.Fatalf("draw %d: userAgent =\n  %q\nwant\n  %q", i, fp.UserAgent, tc.wantUA)
+				}
+				if fp.Platform != tc.wantPlatform {
+					t.Fatalf("draw %d: platform = %q, want %q", i, fp.Platform, tc.wantPlatform)
+				}
+			}
+		})
+	}
+}
+
+// Narrowing the random pick to the rows that hold the browser must not remove the
+// refusal this card exists to add: a browser no weighted row holds is still refused,
+// and the message names what the caller SENT. Being told windows/firefox is
+// unavailable after asking for os: "random" is not actionable — they never asked for
+// windows, and retrying may well succeed.
+func TestRandomOSStillRefusesABrowserNoRowHolds(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+
+	for i := 0; i < 200; i++ {
+		fp, err := h.generateFingerprint(fingerprintRequest{OS: "random", Browser: "firefox"})
+		if err == nil {
+			t.Fatalf("draw %d: os=random browser=firefox was accepted with userAgent %q", i, fp.UserAgent)
+		}
+		if fp != (fingerprint{}) {
+			t.Fatalf("draw %d: refused request returned a populated fingerprint: %+v", i, fp)
+		}
+		for _, want := range []string{`"firefox"`, `"random"`} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q does not name the requested %s", err, want)
+			}
+		}
+		for _, resolved := range []string{`os "windows"`, `os "mac"`} {
+			if strings.Contains(err.Error(), resolved) {
+				t.Fatalf("error %q reports a resolved os the caller never supplied", err)
+			}
+		}
+		for _, want := range availableFingerprintPairs(h.fingerprintMatrix()) {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("error %q omits the available pair %q", err, want)
+			}
+		}
+	}
+}
+
+// The weighting over the constrained candidates must stay the weighting: chrome is
+// held by both rows, so it keeps the 0.7/0.3 split rather than collapsing to one os.
+func TestRandomOSKeepsBothArmsForABrowserBothRowsHold(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+
+	seen := map[string]int{}
+	for i := 0; i < 400; i++ {
+		fp, err := h.generateFingerprint(fingerprintRequest{OS: "random", Browser: "chrome"})
+		if err != nil {
+			t.Fatalf("os=random browser=chrome was refused: %v", err)
+		}
+		seen[fp.Platform]++
+	}
+	for _, want := range []string{"Win32", "MacIntel"} {
+		if seen[want] == 0 {
+			t.Fatalf("os=random browser=chrome never resolved to %s in 400 draws: %v", want, seen)
+		}
+	}
+	if seen["Win32"] <= seen["MacIntel"] {
+		t.Errorf("windows is weighted 0.7 against mac 0.3 but drew %v", seen)
+	}
+}
+
 // The endpoint contract, not just the helper: an unlisted pair must be a 400 with a
 // machine-readable code, and must never be a 200 carrying an empty userAgent. The
 // refusal also has to happen before the browser is touched — a rejected request must
@@ -482,6 +577,7 @@ func TestHandleFingerprintRotateRefusesAnUnlistedPair(t *testing.T) {
 		`{"os":"mac","browser":"edge"}`,
 		`{"os":"windows","browser":"safari"}`,
 		`{"os":"bogus"}`,
+		`{"os":"random","browser":"firefox"}`,
 	} {
 		t.Run(body, func(t *testing.T) {
 			mb := &mockBridge{}

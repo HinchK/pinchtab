@@ -197,6 +197,48 @@ func availableFingerprintPairs(matrix map[string]map[string]fingerprint) []strin
 	return pairs
 }
 
+// randomFingerprintOSWeights is the weighted pick behind os: "random". linux is
+// absent on purpose: adding it would change what a default request returns.
+var randomFingerprintOSWeights = []struct {
+	name   string
+	weight float64
+}{
+	{name: "windows", weight: 0.7},
+	{name: "mac", weight: 0.3},
+}
+
+// resolveRandomFingerprintOS picks among the weighted os rows that actually hold
+// the requested browser, re-weighting over those candidates. Picking an os first
+// and looking the pair up second made os: "random" answer 200 or 400 by coin flip
+// for browsers only one os holds — safari refused whenever the pick was windows.
+// It reports no candidate when no weighted row holds the browser at all, which is
+// still a refusal: the constraint narrows the pick, it does not remove the refusal.
+func resolveRandomFingerprintOS(matrix map[string]map[string]fingerprint, browser string) (string, bool) {
+	total := 0.0
+	for _, candidate := range randomFingerprintOSWeights {
+		if _, ok := matrix[candidate.name][browser]; ok {
+			total += candidate.weight
+		}
+	}
+	if total == 0 {
+		return "", false
+	}
+
+	draw := rand.Float64() * total
+	picked := ""
+	for _, candidate := range randomFingerprintOSWeights {
+		if _, ok := matrix[candidate.name][browser]; !ok {
+			continue
+		}
+		picked = candidate.name
+		draw -= candidate.weight
+		if draw < 0 {
+			break
+		}
+	}
+	return picked, true
+}
+
 // generateFingerprint refuses an os/browser pair the matrix does not hold instead
 // of returning the zero identity. An empty userAgent delivered as a success is
 // worse than a refusal: the endpoint exists to hand back an identity to apply, and
@@ -207,18 +249,22 @@ func (h *Handlers) generateFingerprint(req fingerprintRequest) (fingerprint, err
 	fp := fingerprint{}
 	osConfigs := h.fingerprintMatrix()
 
-	os := req.OS
-	if os == "random" {
-		if rand.Float64() < 0.7 {
-			os = "windows"
-		} else {
-			os = "mac"
-		}
-	}
-
 	browser := req.Browser
 	if browser == "" {
 		browser = "chrome"
+	}
+
+	// The random pick is constrained by the browser, so the message can only ever
+	// name an os the caller supplied. A refusal reporting "windows" to someone who
+	// asked for os: "random" is not actionable — retrying may well succeed.
+	os := req.OS
+	if os == "random" {
+		picked, ok := resolveRandomFingerprintOS(osConfigs, browser)
+		if !ok {
+			return fingerprint{}, fmt.Errorf("no fingerprint for browser %q under os %q; available pairs: %s",
+				browser, req.OS, strings.Join(availableFingerprintPairs(osConfigs), ", "))
+		}
+		os = picked
 	}
 
 	// Before anything else is set, so a refused request carries no partial identity:
