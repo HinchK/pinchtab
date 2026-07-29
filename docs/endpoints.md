@@ -621,6 +621,21 @@ Solve body fields:
 - `maxAttempts` optional (defaults to `autoSolver.maxAttempts`, default `8`)
 - `timeout` optional in ms (auto-estimated when omitted, minimum `30000`)
 
+A named `solver` that cannot run is rejected with `400` before anything is
+solved, and the two reasons carry different codes:
+
+| Code | Meaning | Example message |
+| --- | --- | --- |
+| `unknown_solver` | No solver answers to that name — normally a misspelling. Lists what is available. | `unknown solver "cloudlfare" (available: [cloudflare semantic jschallenge])` |
+| `solver_key_missing` | A known key-gated solver whose API key is unset. Names the config key to set. | `solver "capsolver" is configured but its API key is not set; set autoSolver.external.capsolverKey to use it` |
+
+The API is deliberately stricter here than config validation, which accepts
+`capsolver` or `twocaptcha` in `autoSolver.solvers` with no key set — configuring
+a paid solver before its key is legitimate ordering, and the run falls back to
+the solvers that can run. A request naming one solver has no such fallback: it
+must not silently run a different solver, so it is rejected and told which key
+would enable it.
+
 `GET /config/autosolver` returns effective autosolver runtime settings and the
 currently available solver list.
 

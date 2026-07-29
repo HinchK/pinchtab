@@ -22,7 +22,9 @@ func KeyGatedSolvers() []KeyGatedSolver {
 	}
 }
 
-func keyGatedSolverNamed(name string) (KeyGatedSolver, bool) {
+// KeyGatedSolverNamed reports the key-gated solver answering to this name, so a
+// caller rejecting it can name the key that would enable it.
+func KeyGatedSolverNamed(name string) (KeyGatedSolver, bool) {
 	for _, gated := range KeyGatedSolvers() {
 		if gated.Name == name {
 			return gated, true

@@ -76,3 +76,10 @@ func IsKnown(name string) bool {
 	}
 	return false
 }
+
+// KeyGatedNamed reports the key-gated solver answering to this name together with
+// the config key that enables it. A caller that has already found the name
+// unavailable uses this to tell a missing key from an unknown name.
+func KeyGatedNamed(name string) (autosolver.KeyGatedSolver, bool) {
+	return autosolver.KeyGatedSolverNamed(name)
+}

@@ -1144,7 +1144,7 @@ func TestOrderSolversDoesNotWarnWhenTheMissingSolverIsNotKeyGated(t *testing.T) 
 	as := New(Config{Solvers: []string{"cloudflare", SemanticSolverName}}, nil, nil)
 	as.orderSolvers([]Solver{&mockSolver{name: "cloudflare", priority: 10}})
 
-	if _, ok := keyGatedSolverNamed(SemanticSolverName); ok {
+	if _, ok := KeyGatedSolverNamed(SemanticSolverName); ok {
 		t.Fatalf("%s is key-gated, so this test no longer covers the non-gated case", SemanticSolverName)
 	}
 	for _, rec := range recorder.records {

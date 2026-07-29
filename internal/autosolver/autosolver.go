@@ -230,7 +230,7 @@ func (as *AutoSolver) reportMissingSolvers(missing []string, running []Solver) {
 
 	unactionable := make([]string, 0, len(missing))
 	for _, name := range missing {
-		gated, ok := keyGatedSolverNamed(name)
+		gated, ok := KeyGatedSolverNamed(name)
 		if !ok || as.isRegistered(name) {
 			unactionable = append(unactionable, name)
 			continue
