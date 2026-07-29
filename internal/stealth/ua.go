@@ -50,22 +50,64 @@ func ReducedBrowserVersion(chromeVersion string) string {
 	return major + ".0.0.0"
 }
 
-func ResolveUserAgent(userAgent, chromeVersion string) string {
-	if userAgent != "" {
-		return userAgent
-	}
-	if chromeVersion == "" {
-		return ""
-	}
+// The platform vocabulary of the persona: the same values UserAgentDataProfile
+// reports and PlatformVersionFor is keyed on, so a caller names a platform once
+// and every UA fact follows from it.
+const (
+	PlatformWindows = "Windows"
+	PlatformMacOS   = "macOS"
+	PlatformLinux   = "Linux"
+)
 
-	switch goruntime.GOOS {
-	case "darwin":
+// ChromeUserAgent is the only place the Chrome UA string is spelled out. It is
+// keyed on a platform rather than on GOOS because its two callers select the
+// platform differently — the launch persona from the host, the fingerprint
+// endpoint from the request — and that selection is theirs, not the template's.
+// The frozen OS tokens (Mac OS X 10_15_7, Windows NT 10.0) are what Chrome's UA
+// reduction pins; they have changed before, and a second copy of them is a drift
+// waiting to happen. Callers pass a version already reduced by
+// ReducedBrowserVersion; handing it a full build emits a UA real Chrome never
+// sends.
+func ChromeUserAgent(platform, chromeVersion string) string {
+	switch platform {
+	case PlatformMacOS:
 		return "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeVersion + " Safari/537.36"
-	case "windows":
+	case PlatformWindows:
 		return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeVersion + " Safari/537.36"
 	default:
 		return "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/" + chromeVersion + " Safari/537.36"
 	}
+}
+
+// EdgeUserAgent decorates a Chrome UA with Edge's own token, which is what Edge
+// actually sends: the Chrome string plus Edg/<version>. Building it as a fourth
+// template would put the OS tokens in one more place.
+func EdgeUserAgent(chromeUserAgent, chromeVersion string) string {
+	return chromeUserAgent + " Edg/" + chromeVersion
+}
+
+// HostPlatform is the persona platform of the machine this process runs on.
+func HostPlatform() string {
+	switch goruntime.GOOS {
+	case "darwin":
+		return PlatformMacOS
+	case "windows":
+		return PlatformWindows
+	default:
+		return PlatformLinux
+	}
+}
+
+// resolveUserAgent honours an explicit custom UA verbatim and otherwise builds the
+// host's. It stays unexported: the only correct entry point is BuildPersona, which
+// reduces the version first — an exported form invites a caller to pass
+// cfg.BrowserVersion straight through and reintroduce the version drift the
+// fingerprint endpoint already had to be resynced for by hand.
+func resolveUserAgent(userAgent, chromeVersion string) string {
+	if userAgent != "" {
+		return userAgent
+	}
+	return ChromeUserAgent(HostPlatform(), chromeVersion)
 }
 
 func BuildPersona(userAgent, chromeVersion string) BrowserPersona {
@@ -78,19 +120,17 @@ func BuildPersona(userAgent, chromeVersion string) BrowserPersona {
 	// exposes the full build in navigator.userAgent — a UA like "Chrome/146.0.7680.80"
 	// is a fingerprint tell. The full build still lives in the high-entropy UA-CH
 	// (uaFullVersion / fullVersionList). An explicit custom userAgent is respected
-	// verbatim by ResolveUserAgent.
-	ua := ResolveUserAgent(userAgent, reduced)
+	// verbatim by resolveUserAgent.
+	ua := resolveUserAgent(userAgent, reduced)
 	language := "en-US"
 	languages := []string{"en-US", "en"}
 	acceptLanguage := "en-US,en"
-	if ua == "" {
-		return BrowserPersona{
-			Language:       language,
-			Languages:      languages,
-			AcceptLanguage: acceptLanguage,
-		}
-	}
 
+	// The platform is read back out of the UA rather than carried down from the
+	// caller, and that is not a round trip: on the custom-UA path no platform was
+	// ever selected, so the string is the only thing that knows. A custom Windows UA
+	// on a mac host must report Win32, which is why this sniff cannot be replaced by
+	// passing the generated platform through.
 	navigatorPlatform := "Linux x86_64"
 	uaDataPlatform := "Linux"
 	switch {

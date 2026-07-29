@@ -223,3 +223,81 @@ func TestHandleStealthStatus_WithTabOverride(t *testing.T) {
 		t.Fatalf("expected fingerprintRotateActive=true, got %v", got)
 	}
 }
+
+// The drift this pins already happened once on the version axis and had to be
+// resynced by hand; the OS-token axis was the next one. Comparing against
+// stealth.ChromeUserAgent rather than against a literal is what makes it
+// impossible rather than merely corrected: there is one template, and if it moves,
+// both sides move together or this test fails.
+func TestGenerateFingerprintUsesTheSharedChromeTemplate(t *testing.T) {
+	const version = "144.0.7559.133"
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: version}}
+	reduced := stealth.ReducedBrowserVersion(version)
+
+	for _, tc := range []struct {
+		os, browser  string
+		wantPlatform string
+		wantUA       string
+	}{
+		{os: "windows", browser: "chrome", wantPlatform: "Win32", wantUA: stealth.ChromeUserAgent(stealth.PlatformWindows, reduced)},
+		{os: "mac", browser: "chrome", wantPlatform: "MacIntel", wantUA: stealth.ChromeUserAgent(stealth.PlatformMacOS, reduced)},
+		{os: "linux", browser: "chrome", wantPlatform: "Linux x86_64", wantUA: stealth.ChromeUserAgent(stealth.PlatformLinux, reduced)},
+		{os: "windows", browser: "edge", wantPlatform: "Win32", wantUA: stealth.EdgeUserAgent(stealth.ChromeUserAgent(stealth.PlatformWindows, reduced), reduced)},
+	} {
+		t.Run(tc.os+"/"+tc.browser, func(t *testing.T) {
+			fp := h.generateFingerprint(fingerprintRequest{OS: tc.os, Browser: tc.browser})
+
+			if fp.UserAgent != tc.wantUA {
+				t.Errorf("user agent =\n %q\nwant the shared template's\n %q", fp.UserAgent, tc.wantUA)
+			}
+			if fp.Platform != tc.wantPlatform {
+				t.Errorf("platform = %q, want %q", fp.Platform, tc.wantPlatform)
+			}
+			// The reduced version is what real Chrome exposes; a full build here is the
+			// exact drift the comment above generateFingerprint was written for.
+			if strings.Contains(fp.UserAgent, version) {
+				t.Errorf("user agent carries the full build %q: %s", version, fp.UserAgent)
+			}
+		})
+	}
+}
+
+// The same template serves the launch persona, so the endpoint and the browser
+// PinchTab actually launches cannot describe different Chromes on the same host.
+func TestGenerateFingerprintAgreesWithTheLaunchPersonaOnThisHost(t *testing.T) {
+	const version = "144.0.7559.133"
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: version}}
+
+	hostOS := map[string]string{
+		stealth.PlatformWindows: "windows",
+		stealth.PlatformMacOS:   "mac",
+		stealth.PlatformLinux:   "linux",
+	}[stealth.HostPlatform()]
+
+	fp := h.generateFingerprint(fingerprintRequest{OS: hostOS, Browser: "chrome"})
+	persona := stealth.BuildPersona("", version)
+
+	if fp.UserAgent != persona.UserAgent {
+		t.Fatalf("fingerprint endpoint and launch persona disagree on this host:\n endpoint %q\n persona  %q", fp.UserAgent, persona.UserAgent)
+	}
+	if fp.Platform != persona.NavigatorPlatform {
+		t.Errorf("platform = %q, want the persona's %q", fp.Platform, persona.NavigatorPlatform)
+	}
+}
+
+// os: "linux" is answerable now; os: "random" is deliberately NOT extended to it,
+// because that would change what a default request returns. This states which.
+func TestGenerateFingerprintRandomStaysWindowsOrMac(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+	linuxUA := stealth.ChromeUserAgent(stealth.PlatformLinux, stealth.ReducedBrowserVersion("144.0.7559.133"))
+
+	for i := 0; i < 200; i++ {
+		fp := h.generateFingerprint(fingerprintRequest{OS: "random"})
+		if fp.UserAgent == linuxUA {
+			t.Fatalf("os: random returned the Linux UA; adding linux to the weighted pick changes what a default request returns")
+		}
+		if fp.Platform != "Win32" && fp.Platform != "MacIntel" {
+			t.Fatalf("os: random returned platform %q, want Win32 or MacIntel", fp.Platform)
+		}
+	}
+}

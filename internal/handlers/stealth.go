@@ -126,22 +126,30 @@ func (h *Handlers) generateFingerprint(req fingerprintRequest) fingerprint {
 	// pins Chrome/144.0.0.0 — a page/post-rotate version drift.
 	reducedBrowserVersion := stealth.ReducedBrowserVersion(h.Config.BrowserVersion)
 
+	// The Chrome UA strings come from stealth.ChromeUserAgent, the same template the
+	// launch persona uses, so the frozen OS tokens are spelled out once. mac/safari
+	// stays a literal on purpose: it is a Safari UA, not the Chrome template with a
+	// different OS token, and folding it in would manufacture a false sibling.
+	windowsChrome := stealth.ChromeUserAgent(stealth.PlatformWindows, reducedBrowserVersion)
+	macChrome := stealth.ChromeUserAgent(stealth.PlatformMacOS, reducedBrowserVersion)
+	linuxChrome := stealth.ChromeUserAgent(stealth.PlatformLinux, reducedBrowserVersion)
+
 	osConfigs := map[string]map[string]fingerprint{
 		"windows": {
 			"chrome": {
-				UserAgent: fmt.Sprintf("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s Safari/537.36", reducedBrowserVersion),
+				UserAgent: windowsChrome,
 				Platform:  "Win32",
 				Vendor:    "Google Inc.",
 			},
 			"edge": {
-				UserAgent: fmt.Sprintf("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s Safari/537.36 Edg/%s", reducedBrowserVersion, reducedBrowserVersion),
+				UserAgent: stealth.EdgeUserAgent(windowsChrome, reducedBrowserVersion),
 				Platform:  "Win32",
 				Vendor:    "Google Inc.",
 			},
 		},
 		"mac": {
 			"chrome": {
-				UserAgent: fmt.Sprintf("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/%s Safari/537.36", reducedBrowserVersion),
+				UserAgent: macChrome,
 				Platform:  "MacIntel",
 				Vendor:    "Google Inc.",
 			},
@@ -149,6 +157,16 @@ func (h *Handlers) generateFingerprint(req fingerprintRequest) fingerprint {
 				UserAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
 				Platform:  "MacIntel",
 				Vendor:    "Apple Computer, Inc.",
+			},
+		},
+		// A Linux host asking for a fingerprint used to get a foreign one, since only
+		// windows and mac had entries. os: "random" stays windows-or-mac: adding linux
+		// to the weighted pick would change what a default request returns.
+		"linux": {
+			"chrome": {
+				UserAgent: linuxChrome,
+				Platform:  "Linux x86_64",
+				Vendor:    "Google Inc.",
 			},
 		},
 	}
