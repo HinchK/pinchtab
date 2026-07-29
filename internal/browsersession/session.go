@@ -168,6 +168,8 @@ func (m *Manager) MaxLifetime() time.Duration {
 	if m == nil {
 		return DefaultSessionMaxLifetime
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.maxLifetime
 }
 
@@ -175,6 +177,8 @@ func (m *Manager) IdleTimeout() time.Duration {
 	if m == nil {
 		return DefaultSessionIdleTimeout
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.idleTimeout
 }
 
@@ -182,6 +186,8 @@ func (m *Manager) ElevationWindow() time.Duration {
 	if m == nil {
 		return DefaultSessionElevationWindow
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.elevationWindow
 }
 
@@ -190,15 +196,13 @@ func (m *Manager) UpdateConfig(cfg Config) {
 		return
 	}
 
-	persistPath := strings.TrimSpace(cfg.PersistPath)
-	persist := cfg.Persist && persistPath != ""
-
 	m.mu.Lock()
 	oldPath := m.persistPath
 	oldPersist := m.persist
 	m.applyConfigLocked(cfg)
 	m.pruneExpiredLocked(m.now())
 	m.saveLocked()
+	persist, persistPath := m.persist, m.persistPath
 	m.mu.Unlock()
 
 	if oldPersist && oldPath != "" && (!persist || oldPath != persistPath) {
@@ -341,8 +345,14 @@ func (m *Manager) saveLocked() {
 	if err := os.MkdirAll(filepath.Dir(m.persistPath), 0755); err != nil {
 		return
 	}
-	if err := os.WriteFile(m.persistPath, data, 0600); err != nil {
+	// Atomic write: a torn file here fails to unmarshal on the next start and
+	// silently logs every dashboard user out.
+	tmpPath := m.persistPath + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return
+	}
+	if err := os.Rename(tmpPath, m.persistPath); err != nil {
+		_ = os.Remove(tmpPath)
 	}
 }
 
