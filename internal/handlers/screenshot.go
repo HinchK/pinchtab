@@ -91,7 +91,7 @@ func (h *Handlers) HandleScreenshot(w http.ResponseWriter, r *http.Request) {
 
 	clip, clipErr := h.resolveScreenshotClip(tCtx, resolvedTabID, req.selector)
 	if clipErr != nil {
-		httpx.Error(w, clipErr.status, clipErr.err)
+		h.errorWithCrashContext(w, clipErr.status, clipErr.err)
 		return
 	}
 
@@ -112,7 +112,7 @@ func (h *Handlers) HandleScreenshot(w http.ResponseWriter, r *http.Request) {
 		DisableActivation: !h.Config.CaptureAllowActivation,
 	})
 	if captureErr != nil {
-		httpx.Error(w, 500, fmt.Errorf("screenshot: %w", captureErr))
+		h.errorWithCrashContext(w, 500, fmt.Errorf("screenshot: %w", captureErr))
 		return
 	}
 

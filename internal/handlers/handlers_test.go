@@ -49,6 +49,10 @@ type mockBridge struct {
 	createTabContexts []string
 }
 
+// BrowserContext answers the browser-context generation lookup the error paths
+// consult; a partial mock must still be able to say which browser it is serving.
+func (m *mockBridge) BrowserContext() context.Context { return context.Background() }
+
 func (m *mockBridge) TabContext(tabID string) (*bridge.TabHandle, string, error) {
 	if m.failTab {
 		return nil, "", fmt.Errorf("tab not found")

@@ -163,6 +163,62 @@ func (h *Handlers) ensureBrowser(cfg *config.RuntimeConfig) error {
 	return h.Bridge.EnsureBrowser(cfg)
 }
 
+// browserCrash returns the crash recorded for the browser context this request
+// is being served on, if any. The lookup is scoped to that context's generation:
+// crash state is process-global, so a crash belonging to a browser that has
+// since been replaced — or to another instance — must not answer for a healthy
+// one. HasCrashDiagnostics cannot serve here: it is a monotonic lifetime flag
+// that stays true until process exit.
+func (h *Handlers) browserCrash() (bridge.CrashEvent, bool) {
+	if h == nil || h.Bridge == nil {
+		return bridge.CrashEvent{}, false
+	}
+	return bridge.CrashForBrowserContext(h.Bridge.BrowserContext())
+}
+
+// annotateBrowserCrash rewrites a failing response's message and details to name
+// the browser crash behind it. Without a crash on the live browser context both
+// come back untouched, so uncrashed responses stay byte-identical.
+func (h *Handlers) annotateBrowserCrash(message string, details map[string]any) (string, map[string]any) {
+	crash, ok := h.browserCrash()
+	if !ok {
+		return message, details
+	}
+
+	annotated := make(map[string]any, len(details)+3)
+	for k, v := range details {
+		annotated[k] = v
+	}
+	annotated["browserCrashed"] = true
+	annotated["browserCrashReason"] = crash.Reason
+	annotated["hint"] = fmt.Sprintf(
+		"the browser crashed (%s at %s) — this error is a symptom of the dead browser, not of your selector or timeout; restart it with: pinchtab server restart",
+		crash.Reason, crash.Time.Format(time.RFC3339))
+	return fmt.Sprintf("%s (browser crashed: %s)", message, crash.Reason), annotated
+}
+
+// errorWithCrashContext is httpx.Error plus the crash annotation.
+func (h *Handlers) errorWithCrashContext(w http.ResponseWriter, status int, err error) {
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	annotated, details := h.annotateBrowserCrash(message, nil)
+	if len(details) == 0 {
+		httpx.Error(w, status, err)
+		return
+	}
+	httpx.ErrorCode(w, status, "browser_crashed", annotated, false, details)
+}
+
+// errorCodeWithCrashContext is httpx.ErrorCode plus the crash annotation. The
+// code is preserved so clients keying on it keep working; the crash arrives as
+// message text and details.
+func (h *Handlers) errorCodeWithCrashContext(w http.ResponseWriter, status int, code, message string, retryable bool, details map[string]any) {
+	annotated, annotatedDetails := h.annotateBrowserCrash(message, details)
+	httpx.ErrorCode(w, status, code, annotated, retryable, annotatedDetails)
+}
+
 func (h *Handlers) ensureBrowserOrRespond(w http.ResponseWriter, cfg *config.RuntimeConfig) bool {
 	if err := h.ensureBrowser(cfg); err != nil {
 		if h.writeBridgeUnavailable(w, err) {

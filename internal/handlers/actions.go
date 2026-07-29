@@ -357,7 +357,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 
 	selectorResolution, err := h.resolveActionRequestSelector(tCtx, resolvedTabID, &req)
 	if err != nil {
-		httpx.Error(w, selectorResolution.httpStatus(), err)
+		h.errorWithCrashContext(w, selectorResolution.httpStatus(), err)
 		return
 	}
 	refMissing := selectorResolution.refMissing
@@ -456,7 +456,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 				"doNotRetry": true,
 			}
 		}
-		httpx.ErrorCode(w, 500, "action_failed", fmt.Sprintf("action %s: %v", req.Kind, actionErr), retryable, details)
+		h.errorCodeWithCrashContext(w, 500, "action_failed", fmt.Sprintf("action %s: %v", req.Kind, actionErr), retryable, details)
 		return
 	}
 
