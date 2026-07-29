@@ -3,7 +3,9 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -167,28 +169,44 @@ func TestIsolatedNodeObjectIDFailsClosedWithoutContext(t *testing.T) {
 // that is the whole claim, and this table is what keeps the claim honest. A new
 // unprotected site appearing, or one of these being fixed without updating the
 // list, both fail here.
+// Keys are module-relative paths: pinchtab spreads CDP work over internal/bridge,
+// internal/bridge/cdpops and internal/cdptk, and a census of one directory would
+// report a clean boundary while three packages went unchecked.
 var mainWorldResolvers = map[string]string{
-	"action_form.go":       "form fill operates on an already-chosen field",
-	"semantic_metadata.go": "metadata enrichment reads an already-chosen node",
-	"tab_auto_switch.go":   "tab switching acts on an already-chosen target",
+	"internal/bridge/action_form.go":        "form fill operates on an already-chosen field",
+	"internal/bridge/semantic_metadata.go":  "metadata enrichment reads an already-chosen node",
+	"internal/bridge/tab_auto_switch.go":    "tab switching acts on an already-chosen target",
+	"internal/bridge/cdpops/element_ops.go": "element ops act on an already-chosen node",
+	"internal/bridge/cdpops/frame_dom.go":   "callFunctionOn helper for an already-chosen node",
+	"internal/bridge/cdpops/pointer.go":     "pointer actions act on an already-chosen node",
+	"internal/bridge/cdpops/validation.go":  "post-action validation reads an already-chosen node",
+	"internal/bridge/cdpops/geometry.go":    "click-point geometry for an already-chosen node",
+	"internal/cdptk/annotate.go":            "annotation reads already-chosen nodes",
 }
 
 func TestIsolatedWorldBoundaryCensus(t *testing.T) {
-	entries, err := os.ReadDir(".")
+	root, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	found := map[string]bool{}
 	checked := 0
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		raw, err := os.ReadFile(name)
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		name := filepath.ToSlash(rel)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
 		}
 		for _, block := range strings.Split(string(raw), `"DOM.resolveNode"`)[1:] {
 			checked++
@@ -204,9 +222,13 @@ func TestIsolatedWorldBoundaryCensus(t *testing.T) {
 				t.Errorf("%s resolves a node without an isolated executionContextId and is not a recorded operation path:\n%s", name, head)
 			}
 		}
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatal(walkErr)
 	}
 	if checked == 0 {
-		t.Fatal("no DOM.resolveNode call found in the package — this census is checking nothing")
+		t.Fatal("no DOM.resolveNode call found in the module — this census is checking nothing")
 	}
 	for name, why := range mainWorldResolvers {
 		if !found[name] {

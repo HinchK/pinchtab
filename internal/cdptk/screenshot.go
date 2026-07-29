@@ -18,25 +18,11 @@ func ClipForNode(ctx context.Context, nodeID int64, css1x bool) (*ScreenshotClip
 		return nil, fmt.Errorf("scroll into view: %w", err)
 	}
 
-	var resolveResult json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId": nodeID,
-		}, &resolveResult)
-	})); err != nil {
+	// Isolated world: boxFn reads getBoundingClientRect, so a main-world handle
+	// would let the page steer the clip origin by redefining it.
+	objectID, err := IsolatedNodeObjectID(ctx, nodeID)
+	if err != nil {
 		return nil, fmt.Errorf("resolve node: %w", err)
-	}
-
-	var resolved struct {
-		Object struct {
-			ObjectID string `json:"objectId"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(resolveResult, &resolved); err != nil {
-		return nil, fmt.Errorf("parse resolved node: %w", err)
-	}
-	if resolved.Object.ObjectID == "" {
-		return nil, fmt.Errorf("element not found in DOM (backendNodeId=%d)", nodeID)
 	}
 
 	// Translate the element box into top-level page coordinates. captureScreenshot
@@ -76,7 +62,7 @@ func ClipForNode(ctx context.Context, nodeID int64, css1x bool) (*ScreenshotClip
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.callFunctionOn", map[string]any{
 			"functionDeclaration": boxFn,
-			"objectId":            resolved.Object.ObjectID,
+			"objectId":            objectID,
 			"returnByValue":       true,
 		}, &callResult)
 	})); err != nil {

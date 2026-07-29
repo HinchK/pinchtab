@@ -10,6 +10,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 	bridgecdpops "github.com/pinchtab/pinchtab/internal/bridge/cdpops"
+	"github.com/pinchtab/pinchtab/internal/cdptk"
 	"github.com/pinchtab/pinchtab/internal/selector"
 )
 
@@ -73,43 +74,15 @@ func isolatedExecutionContextID(ctx context.Context, frameID string) (int64, err
 }
 
 // IsolatedNodeObjectID converts a backend node id to a JS object handle in the
-// isolated world. DOM.resolveNode without an executionContextId hands back a
-// main-world object, and every Runtime.callFunctionOn against it then runs where
-// page script can redefine the DOM methods it uses — so a scoped selector or a
-// clip origin could be steered by the page it is inspecting.
+// isolated world, so Runtime.callFunctionOn against it cannot be answered by
+// page script that has redefined the DOM methods the call uses.
 //
-// The isolated world is per-frame but a handle from any frame's world reaches a
-// node in another same-process frame, so the top frame's world is used rather
-// than the node's own: a bare backend node id does not carry its frame, and
-// DOM.describeNode reports frameId only for frame owner elements.
+// The rule has one owner in internal/cdptk, the lowest CDP layer, because the
+// same resolution is needed by the clip builder there and this package already
+// depends on it. A second implementation here is how the two capture paths
+// drifted apart before.
 func IsolatedNodeObjectID(ctx context.Context, backendNodeID int64) (string, error) {
-	execID, err := isolatedExecutionContextID(ctx, "")
-	if err != nil {
-		return "", err
-	}
-
-	var raw json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId":      backendNodeID,
-			"executionContextId": execID,
-		}, &raw)
-	})); err != nil {
-		return "", err
-	}
-
-	var parsed struct {
-		Object struct {
-			ObjectID string `json:"objectId"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		return "", err
-	}
-	if parsed.Object.ObjectID == "" {
-		return "", fmt.Errorf("backend node %d is no longer attached", backendNodeID)
-	}
-	return parsed.Object.ObjectID, nil
+	return cdptk.IsolatedNodeObjectID(ctx, backendNodeID)
 }
 
 func frameDocumentObjectID(ctx context.Context, frameID string) (string, error) {
