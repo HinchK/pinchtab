@@ -38,6 +38,26 @@ pinchtab text                           # Plain text output
 pinchtab text --json                    # JSON: {"url":"...","title":"...","text":"..."}
 ```
 
+## Extraction Mode
+
+Readability is an article heuristic, so on a landing page, dashboard, or docs
+index it can return one block instead of the page. `/text` measures its output
+against `document.body.innerText` and, when the coverage is too low, returns the
+raw text instead. The JSON envelope always says which extractor produced the
+text:
+
+| Field | Description |
+|-------|-------------|
+| `extraction` | `readability`, `raw` (explicitly requested), or `readability_fallback` (Readability collapsed, raw text returned) |
+| `textLength` | Length of the returned text |
+| `rawLength` | Length of `document.body.innerText`, so coverage is computable |
+
+With `format=text` the body stays bare and the mode is reported in the
+`X-PT-Text-Extraction` response header. `mode=raw` never runs the comparison.
+`truncated` keeps its meaning — text cut by `maxChars` — and is unaffected by a
+fallback. The CLI prints a one-line note on stderr when a fallback fired; stdout
+stays text-only.
+
 ## Examples
 
 ```bash

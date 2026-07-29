@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -56,5 +60,228 @@ func TestHandleTabText_NoTab(t *testing.T) {
 	h.HandleTabText(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("expected 404, got %d", w.Code)
+	}
+}
+
+const landingPageRawText = `PinchTab — browser control for AI agents
+
+Install: curl -fsSL https://pinchtab.com/install.sh | sh
+
+Endpoints: /navigate /snapshot /text /action /capture /find /evaluate
+
+🎯 Accessibility Tree — structured tree with stable refs (e0, e1...) for click, type, and read. Deterministic with no coordinate guessing.
+🧭 Navigation — drive tabs, frames, and history without a headful browser in the loop.
+📄 Text extraction — readable page text with an explicit raw mode when the heuristic collapses.
+🖼️ Capture — screenshots and PDFs of the live page, viewport or full document.
+🔍 Find — semantic element lookup that survives markup churn.
+🧪 Evaluate — run JavaScript in the page or in a specific frame.
+🔐 Profiles — reuse a dedicated automation profile with explicit approval.
+🧰 Macros — batch several actions into one request.
+📊 Activity — every request recorded with the route that served it.`
+
+const collapsedReadabilityText = `🎯 Accessibility Tree — structured tree with stable refs (e0, e1...) for click, type, and read.`
+
+func textScriptBridge(t *testing.T, readability, raw string) *mockBridge {
+	t.Helper()
+	return &mockBridge{
+		evaluateFn: func(expression string, result any) error {
+			out, ok := result.(*string)
+			if !ok {
+				t.Fatalf("evaluate result is %T, want *string", result)
+			}
+			if expression == rawTextScript {
+				*out = raw
+				return nil
+			}
+			*out = readability
+			return nil
+		},
+	}
+}
+
+func TestExtractDocumentText_ReadabilityCollapseFallsBackToRaw(t *testing.T) {
+	m := textScriptBridge(t, collapsedReadabilityText, landingPageRawText)
+	h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
+
+	extraction, err := h.extractDocumentText(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("extractDocumentText: %v", err)
+	}
+	if extraction.Mode != extractionReadabilityFallback {
+		t.Errorf("Mode = %q, want %q", extraction.Mode, extractionReadabilityFallback)
+	}
+	if extraction.Text != landingPageRawText {
+		t.Errorf("Text = %q, want the raw document text", extraction.Text)
+	}
+	if !extraction.RawKnown || extraction.RawLength != len(landingPageRawText) {
+		t.Errorf("RawLength = %d (known=%v), want %d", extraction.RawLength, extraction.RawKnown, len(landingPageRawText))
+	}
+}
+
+func TestExtractDocumentText_ArticleKeepsReadabilityOutput(t *testing.T) {
+	article := landingPageRawText[:len(landingPageRawText)*9/10]
+	m := textScriptBridge(t, article, landingPageRawText)
+	h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
+
+	extraction, err := h.extractDocumentText(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("extractDocumentText: %v", err)
+	}
+	if extraction.Mode != extractionReadability {
+		t.Errorf("Mode = %q, want %q", extraction.Mode, extractionReadability)
+	}
+	if extraction.Text != article {
+		t.Errorf("Text = %q, want the readability output", extraction.Text)
+	}
+	if extraction.RawLength != len(landingPageRawText) {
+		t.Errorf("RawLength = %d, want %d", extraction.RawLength, len(landingPageRawText))
+	}
+}
+
+func TestExtractDocumentText_RawModeSkipsCoverageComparison(t *testing.T) {
+	m := textScriptBridge(t, collapsedReadabilityText, landingPageRawText)
+	h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
+
+	extraction, err := h.extractDocumentText(context.Background(), "raw", "")
+	if err != nil {
+		t.Fatalf("extractDocumentText: %v", err)
+	}
+	if extraction.Mode != extractionRaw {
+		t.Errorf("Mode = %q, want %q", extraction.Mode, extractionRaw)
+	}
+	if len(m.evaluateExprs) != 1 || m.evaluateExprs[0] != rawTextScript {
+		t.Fatalf("mode=raw ran %d extractions (%v), want exactly the raw one", len(m.evaluateExprs), m.evaluateExprs)
+	}
+}
+
+func TestReadabilityCollapsed_FloorKeepsShortPages(t *testing.T) {
+	if readabilityCollapsed(1, readabilityCoverageFloorChars-1) {
+		t.Error("a page below the character floor must not trigger the fallback")
+	}
+	if !readabilityCollapsed(1, readabilityCoverageFloorChars) {
+		t.Error("a near-total collapse at the floor must trigger the fallback")
+	}
+	atRatio := int(float64(readabilityCoverageFloorChars) * readabilityCoverageRatio)
+	if readabilityCollapsed(atRatio, readabilityCoverageFloorChars) {
+		t.Error("coverage at the ratio must not trigger the fallback")
+	}
+}
+
+func textResponseRecorder(t *testing.T, extraction textExtraction, maxChars int, format string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/text", nil)
+	h.writeTextResponse(w, r, context.Background(), extraction, maxChars, format, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	return w
+}
+
+func decodeTextEnvelope(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var envelope map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, w.Body.String())
+	}
+	return envelope
+}
+
+func TestWriteTextResponse_EnvelopeReportsExtractionAndLengths(t *testing.T) {
+	extraction := textExtraction{
+		Text:      landingPageRawText,
+		Mode:      extractionReadabilityFallback,
+		RawLength: len(landingPageRawText),
+		RawKnown:  true,
+	}
+	w := textResponseRecorder(t, extraction, -1, "")
+	envelope := decodeTextEnvelope(t, w)
+
+	if envelope["extraction"] != extractionReadabilityFallback {
+		t.Errorf("extraction = %v, want %q", envelope["extraction"], extractionReadabilityFallback)
+	}
+	if envelope["textLength"] != float64(len(landingPageRawText)) {
+		t.Errorf("textLength = %v, want %d", envelope["textLength"], len(landingPageRawText))
+	}
+	if envelope["rawLength"] != float64(len(landingPageRawText)) {
+		t.Errorf("rawLength = %v, want %d", envelope["rawLength"], len(landingPageRawText))
+	}
+	if envelope["truncated"] != false {
+		t.Errorf("truncated = %v, want false: a fallback is not a truncation", envelope["truncated"])
+	}
+}
+
+func TestWriteTextResponse_TruncatedOnlyWhenMaxCharsCuts(t *testing.T) {
+	extraction := textExtraction{Text: landingPageRawText, Mode: extractionReadabilityFallback, RawLength: len(landingPageRawText), RawKnown: true}
+
+	cut := decodeTextEnvelope(t, textResponseRecorder(t, extraction, 50, ""))
+	if cut["truncated"] != true {
+		t.Errorf("truncated = %v, want true when maxChars cuts", cut["truncated"])
+	}
+	if cut["textLength"] != float64(50) {
+		t.Errorf("textLength = %v, want the returned length 50", cut["textLength"])
+	}
+
+	whole := decodeTextEnvelope(t, textResponseRecorder(t, extraction, len(landingPageRawText)+1, ""))
+	if whole["truncated"] != false {
+		t.Errorf("truncated = %v, want false when maxChars does not cut", whole["truncated"])
+	}
+}
+
+func TestWriteTextResponse_PlainFormatKeepsBareBodyAndReportsModeInHeader(t *testing.T) {
+	extraction := textExtraction{Text: landingPageRawText, Mode: extractionReadabilityFallback, RawLength: len(landingPageRawText), RawKnown: true}
+	w := textResponseRecorder(t, extraction, -1, "text")
+
+	if w.Body.String() != landingPageRawText {
+		t.Errorf("body = %q, want the bare text", w.Body.String())
+	}
+	if got := w.Header().Get(headerTextExtraction); got != extractionReadabilityFallback {
+		t.Errorf("%s = %q, want %q", headerTextExtraction, got, extractionReadabilityFallback)
+	}
+}
+
+type frameTextBridge struct {
+	mockBridge
+	frames      []string
+	scripts     []string
+	readability string
+	raw         string
+}
+
+func (b *frameTextBridge) EvaluateInFrame(_ context.Context, frameID, expression string, result any, _ bridge.EvalOpts) error {
+	b.frames = append(b.frames, frameID)
+	b.scripts = append(b.scripts, expression)
+	out, ok := result.(*string)
+	if !ok {
+		return fmt.Errorf("evaluate result is %T, want *string", result)
+	}
+	if expression == rawTextScript {
+		*out = b.raw
+		return nil
+	}
+	*out = b.readability
+	return nil
+}
+
+func TestExtractDocumentText_BaselineUsesTheSameFrameTraversal(t *testing.T) {
+	b := &frameTextBridge{readability: collapsedReadabilityText, raw: landingPageRawText}
+	h := New(b, &config.RuntimeConfig{}, nil, nil, nil)
+
+	extraction, err := h.extractDocumentText(context.Background(), "", "FRAME7")
+	if err != nil {
+		t.Fatalf("extractDocumentText: %v", err)
+	}
+	if extraction.Mode != extractionReadabilityFallback {
+		t.Fatalf("Mode = %q, want %q", extraction.Mode, extractionReadabilityFallback)
+	}
+	if len(b.frames) != 2 || b.frames[0] != "FRAME7" || b.frames[1] != "FRAME7" {
+		t.Fatalf("frames = %v, want both extractions scoped to FRAME7", b.frames)
+	}
+	if b.evaluateCalls != 0 {
+		t.Errorf("baseline escaped the frame scope: %d top-frame evaluates (%v)", b.evaluateCalls, b.evaluateExprs)
+	}
+	if b.scripts[1] != rawTextScript {
+		t.Errorf("baseline script = %q, want the raw text script", b.scripts[1])
 	}
 }

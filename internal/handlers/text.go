@@ -68,13 +68,15 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 		}
 
 		var text string
+		var extraction textExtraction
 		if selectorParam != "" || refParam != "" {
 			text, err = h.extractElementText(tCtx, resolvedTabID, selectorParam, refParam, modalNodeID)
 		} else if modalOpen {
 			err = h.Bridge.CallFunctionOnNode(tCtx, modalNodeID,
 				`function() { return this.innerText || this.textContent || ''; }`, nil, &text)
+			extraction = textExtraction{Text: text, Mode: extractionRaw, RawLength: len(text), RawKnown: true}
 		} else {
-			text, err = h.extractDocumentText(tCtx, mode, targetFrameID)
+			extraction, err = h.extractDocumentText(tCtx, mode, targetFrameID)
 		}
 
 		stable := true
@@ -101,7 +103,7 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 		if selectorParam != "" || refParam != "" {
 			h.writeElementTextResponse(w, r, tCtx, text)
 		} else {
-			h.writeTextResponse(w, r, tCtx, text, maxChars, format, textRoute)
+			h.writeTextResponse(w, r, tCtx, extraction, maxChars, format, textRoute)
 		}
 		return
 	}
@@ -120,25 +122,87 @@ func (h *Handlers) writeElementTextResponse(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+const rawTextScript = `document.body.innerText`
+
+// Extraction modes echoed to the caller: which extractor produced the text.
+const (
+	extractionReadability         = "readability"
+	extractionRaw                 = "raw"
+	extractionReadabilityFallback = "readability_fallback"
+)
+
+// Readability is an article heuristic; on a layout it does not recognise as an
+// article (landing page, dashboard, docs index) it returns the single block it
+// scored highest. Measured against document.body.innerText, a collapse retains
+// ~3% of the page while healthy article extraction retains ~91%, so any ratio in
+// the low tens of percent separates the two with wide margin on both sides.
+const readabilityCoverageRatio = 0.25
+
+// Under this many raw characters the ratio is noise — a short page legitimately
+// extracts to a couple of lines — so no fallback fires below it.
+const readabilityCoverageFloorChars = 400
+
+// headerTextExtraction reports the extraction mode on the format=text path,
+// which returns a bare body with nowhere to carry the signal.
+const headerTextExtraction = "X-PT-Text-Extraction"
+
+// textExtraction is the document text plus the story of how it was produced:
+// the mode that actually ran and the length of the raw document it was measured
+// against (RawKnown is false when the baseline extraction itself failed).
+type textExtraction struct {
+	Text      string
+	Mode      string
+	RawLength int
+	RawKnown  bool
+}
+
 // extractDocumentText reads the document's text (readability unless mode=="raw")
-// across all reachable frames, or scoped to targetFrameID when set. The
-// cross-frame path silently skips cross-origin frames and never errors.
-func (h *Handlers) extractDocumentText(tCtx context.Context, mode, targetFrameID string) (string, error) {
-	script := `document.body.innerText`
-	if mode != "raw" {
-		script = assets.ReadabilityJS
+// across all reachable frames, or scoped to targetFrameID when set. Readability
+// output that covers too little of the raw document is discarded in favour of
+// the raw text, reported as extractionReadabilityFallback.
+func (h *Handlers) extractDocumentText(tCtx context.Context, mode, targetFrameID string) (textExtraction, error) {
+	if mode == "raw" {
+		text, err := h.extractText(tCtx, rawTextScript, targetFrameID)
+		if err != nil {
+			return textExtraction{}, err
+		}
+		return textExtraction{Text: text, Mode: extractionRaw, RawLength: len(text), RawKnown: true}, nil
 	}
+
+	text, err := h.extractText(tCtx, assets.ReadabilityJS, targetFrameID)
+	if err != nil {
+		return textExtraction{}, err
+	}
+
+	raw, rawErr := h.extractText(tCtx, rawTextScript, targetFrameID)
+	if rawErr != nil {
+		return textExtraction{Text: text, Mode: extractionReadability}, nil
+	}
+	if readabilityCollapsed(len(text), len(raw)) {
+		return textExtraction{Text: raw, Mode: extractionReadabilityFallback, RawLength: len(raw), RawKnown: true}, nil
+	}
+	return textExtraction{Text: text, Mode: extractionReadability, RawLength: len(raw), RawKnown: true}, nil
+}
+
+func readabilityCollapsed(extractedLen, rawLen int) bool {
+	return rawLen >= readabilityCoverageFloorChars && float64(extractedLen) < float64(rawLen)*readabilityCoverageRatio
+}
+
+// extractText runs one extraction script through the traversal the request
+// selected: every reachable frame (joined), or the scoped frame's isolated world
+// so the expression sees the iframe's `document`, not the parent's. Both sides of
+// the coverage ratio go through here, so they are always built identically.
+func (h *Handlers) extractText(tCtx context.Context, script, targetFrameID string) (string, error) {
 	if targetFrameID == "" {
 		return h.extractTextAllFrames(tCtx, script), nil
 	}
-	// Frame-scoped path — evaluate in the frame's isolated world so the
-	// expression sees the iframe's `document`, not the parent's.
 	return h.evalTextInFrame(tCtx, script, targetFrameID)
 }
 
 // writeTextResponse truncates, IDPI-scans, and writes the document text as
 // plain text (format text/plain) or the JSON envelope.
-func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, text string, maxChars int, format string, route *browserops.RouteMetadata) {
+func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, extraction textExtraction, maxChars int, format string, route *browserops.RouteMetadata) {
+	text := extraction.Text
 	truncated := false
 	if maxChars > -1 && len(text) > maxChars {
 		text = text[:maxChars]
@@ -157,6 +221,7 @@ func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCt
 	}
 	result.SetHeaders(w)
 	text = result.Text
+	w.Header().Set(headerTextExtraction, extraction.Mode)
 
 	if format == "text" || format == "plain" {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -166,11 +231,16 @@ func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCt
 	}
 
 	resp := map[string]any{
-		"url":       url,
-		"title":     title,
-		"text":      text,
-		"truncated": truncated,
-		"route":     route,
+		"url":        url,
+		"title":      title,
+		"text":       text,
+		"truncated":  truncated,
+		"route":      route,
+		"extraction": extraction.Mode,
+		"textLength": len(text),
+	}
+	if extraction.RawKnown {
+		resp["rawLength"] = extraction.RawLength
 	}
 	if result.Warning != "" {
 		resp["idpiWarning"] = result.Warning
