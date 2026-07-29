@@ -161,6 +161,11 @@ func TestDaemonActionsReachManager(t *testing.T) {
 }
 
 func TestDaemonStatusMatchesBareForm(t *testing.T) {
+	// An empty HOME keeps both captures off the live service path and log dir:
+	// the overview's log tail would otherwise read ~/.pinchtab/logs between the
+	// two captures and differ by whatever the running daemon logged in between.
+	t.Setenv("HOME", t.TempDir())
+
 	for _, jsonOut := range []bool{false, true} {
 		bare := captureStdout(t, func() { dispatchDaemonCommand("", jsonOut) })
 		status := captureStdout(t, func() { dispatchDaemonCommand("status", jsonOut) })
