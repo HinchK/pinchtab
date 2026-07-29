@@ -51,18 +51,7 @@ func (i *Instance) CaptureScreenshot(ctx context.Context, format string, quality
 			cdpFormat = page.CaptureScreenshotFormatJpeg
 		}
 
-		// fromSurface=false reads the renderer's current view directly instead
-		// of waiting for a fresh compositor surface frame. On idle pages in
-		// headed browsers (e.g. Cloak) the surface stops swapping frames, so
-		// the default fromSurface=true blocks until the action deadline
-		// (~30s) — stalling one-shot screenshots and polling screencast alike.
-		// In headless Chrome the flag is a no-op.
-		//
-		// It also discards the clip: reading the view returns the whole
-		// viewport whatever region was asked for. So a clipped capture has to
-		// pay the surface path, and the BringToFront above is what keeps that
-		// affordable. Screencast polls with a nil clip and keeps the fast read.
-		shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(clip != nil)
+		shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(captureFromSurface(clip))
 		if clip != nil {
 			shot = shot.WithClip(&page.Viewport{
 				X:      clip.X,
@@ -83,6 +72,25 @@ func (i *Instance) CaptureScreenshot(ctx context.Context, format string, quality
 		return nil, fmt.Errorf("screenshot: %w", err)
 	}
 	return buf, nil
+}
+
+// captureFromSurface reports whether a capture has to go through the
+// compositor surface. Only a clipped one does.
+//
+// fromSurface=false reads the renderer's current view directly instead of
+// waiting for a fresh compositor surface frame. On idle pages in headed
+// browsers (e.g. Cloak) the surface stops swapping frames, so the default
+// fromSurface=true blocks until the action deadline (~30s) — stalling one-shot
+// screenshots and polling screencast alike. In headless Chrome the flag is a
+// no-op, which is why only this predicate, not a captured image, can pin the
+// choice.
+//
+// Reading the view also discards the clip and returns the whole viewport
+// whatever region was asked for, so a clipped capture pays the surface path and
+// the BringToFront above is what keeps that affordable. Screencast polls with a
+// nil clip and keeps the fast read.
+func captureFromSurface(clip *cdptk.ScreenshotClip) bool {
+	return clip != nil
 }
 
 func (i *Instance) Evaluate(ctx context.Context, expression string, result any, opts browsers.EvalOpts) error {
