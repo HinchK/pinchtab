@@ -59,6 +59,53 @@ resolve_gotestsum() {
   return 1
 }
 
+# print_skipped_tests lists every skipped test with the reason it gave, so the
+# skip list is reviewable: "skipped because Windows-only" and "skipped because we
+# could not find a browser that is in fact installed" otherwise look identical.
+# The reason is the last file:line log line the test emitted before it skipped,
+# which is exactly what t.Skip writes.
+print_skipped_tests() {
+  local json_file="$1"
+
+  [ ! -s "$json_file" ] && return
+
+  local lines
+  lines="$(
+  jq -r '
+    select(.Test != null and (.Action == "skip" or .Action == "output"))
+    | [.Package, .Test, .Action, ((.Output // "") | gsub("\r?\n$"; ""))] | @tsv
+  ' "$json_file" \
+    | awk -F'\t' '
+        {
+          key = $1 "\t" $2
+          if ($3 == "output") {
+            line = $4
+            sub(/^[[:space:]]+/, "", line)
+            if (line ~ /\.go:[0-9]+: /) { reason[key] = line }
+          } else if ($3 == "skip") {
+            skipped[key] = 1
+          }
+        }
+        END {
+          for (k in skipped) {
+            r = reason[k]
+            sub(/^[^ ]*\.go:[0-9]+: /, "", r)
+            if (r == "") { r = "(no reason given)" }
+            split(k, parts, "\t")
+            printf "      - %s %s — %s\n", parts[1], parts[2], r
+          }
+        }' \
+    | sort
+
+  )"
+
+  [ -z "$lines" ] && return
+
+  echo ""
+  echo -e "    ${ACCENT}Skipped tests:${NC}"
+  printf '%s\n' "$lines"
+}
+
 # Parse gotestsum JSON and print summary
 test_summary() {
   local json_file="$1"
@@ -138,6 +185,7 @@ test_summary() {
     jq -r 'select(.Test != null and .Action == "fail") | "      ✗ \(.Test)"' "$json_file" | sort -u
   fi
 
+  print_skipped_tests "$json_file"
 }
 
 # Live progress for go test -json streams
@@ -315,10 +363,12 @@ if [ "$SCOPE" = "all" ] || [ "$SCOPE" = "unit" ]; then
   fi
 
   if [ -n "$GOTESTSUM_BIN" ]; then
-    if ! "$GOTESTSUM_BIN" --format=pkgname --hide-summary=output --jsonfile "$UNIT_JSON" -- -p 1 -count=1 ./...; then
+    if ! "$GOTESTSUM_BIN" --format=pkgname --hide-summary=output,skipped --jsonfile "$UNIT_JSON" -- -p 1 -count=1 ./...; then
       fail "test:🔬:go unit"
+      print_skipped_tests "$UNIT_JSON"
       exit 1
     fi
+    print_skipped_tests "$UNIT_JSON"
   else
     echo -e "    ${MUTED}gotestsum not found; using built-in formatter${NC}"
     echo -e "    ${MUTED}Install: go install gotest.tools/gotestsum@latest${NC}"

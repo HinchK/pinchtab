@@ -3,36 +3,19 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
-	"os"
-	"os/exec"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
 	bridgeobserve "github.com/pinchtab/pinchtab/internal/bridge/observe"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
-
-// chromePathForTest deliberately does not go looking for the user's primary
-// Google Chrome (issue #583): it takes chromium from PATH, or an explicit
-// PINCHTAB_TEST_CHROME override, and skips otherwise.
-func chromePathForTest(t *testing.T) string {
-	t.Helper()
-	if path := strings.TrimSpace(os.Getenv("PINCHTAB_TEST_CHROME")); path != "" {
-		return path
-	}
-	if path, err := exec.LookPath("chromium"); err == nil {
-		return path
-	}
-	t.Skip("chromium not installed (set PINCHTAB_TEST_CHROME to run against another build)")
-	return ""
-}
 
 // The snapshot pipeline the /snapshot handler runs — fetch the a11y tree, flatten
 // it, then enrich from the DOM — against a real page, because the defect lives in
 // what the browser reports for a password field and no stub can stand in for it.
 func TestSnapshotDistinguishesEmptyAndFilledPasswordInRealBrowser(t *testing.T) {
-	chromePath := chromePathForTest(t)
+	chromePath := testbrowser.Path(t)
 
 	profile := t.TempDir()
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(

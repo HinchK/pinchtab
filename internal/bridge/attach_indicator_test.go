@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -13,13 +12,11 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/stealth"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
 func TestAttachIndicatorNamesPortPersistsAndClears(t *testing.T) {
-	chromePath, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Skip("chromium not installed")
-	}
+	chromePath := testbrowser.Path(t)
 	profile, err := os.MkdirTemp("", "pinchtab-attach-indicator-")
 	if err != nil {
 		t.Fatal(err)
