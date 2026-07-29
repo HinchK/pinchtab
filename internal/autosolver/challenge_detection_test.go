@@ -1,6 +1,211 @@
 package autosolver
 
-import "testing"
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// cloudflareTriggerTitles are the three titles isTurnstileChallenge matches.
+// They are kept in mixed case on purpose: DetectChallengeIntent lowercases
+// before calling containsAny, which does no folding itself, so these rows fail
+// if that lowercasing is moved or dropped.
+var cloudflareTriggerTitles = []string{
+	"Just a moment...",
+	"Attention Required! | Cloudflare",
+	"Checking your browser before accessing",
+}
+
+func TestChallengeTypeHasOneProducer(t *testing.T) {
+	root := filepath.Join("..", "..")
+	var producers []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", "dist", "vendor":
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		body, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(body), "ChallengeType:") {
+			producers = append(producers, filepath.ToSlash(filepath.Clean(path)))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+
+	want := []string{"../../internal/autosolver/challenge_detection.go"}
+	if strings.Join(producers, ",") != strings.Join(want, ",") {
+		t.Fatalf("ChallengeType must be produced only by challenge_detection.go, got %v", producers)
+	}
+}
+
+func TestDetectIntentByTitle_CloudflareTitlesAreTurnstile(t *testing.T) {
+	for _, title := range cloudflareTriggerTitles {
+		intent := detectIntentByTitle(title)
+		if intent.ChallengeType != "turnstile" {
+			t.Fatalf("%q: expected turnstile challenge type, got %q", title, intent.ChallengeType)
+		}
+		if intent.Confidence != 0.95 {
+			t.Fatalf("%q: expected confidence 0.95, got %v", title, intent.Confidence)
+		}
+		if intent.Details != "cloudflare turnstile challenge detected" {
+			t.Fatalf("%q: expected the canonical detector's details, got %q", title, intent.Details)
+		}
+	}
+}
+
+// titleRuleReachability names one title per pattern in titleIntentRules. Each
+// row must reach the local rule rather than DetectChallengeIntent, which runs
+// first; a pattern the canonical detector already answers cannot appear here
+// and must be deleted from the table instead.
+var titleRuleReachability = []struct {
+	pattern string
+	title   string
+}{
+	{"robot", "Are you a robot?"},
+	{"bot detection", "Bot detection in progress"},
+	{"log in", "Log In"},
+	{"login", "Login"},
+	{"sign in", "Sign In"},
+	{"signin", "Signin"},
+	{"sign up", "Sign Up"},
+	{"signup", "Signup"},
+	{"register", "Register"},
+	{"create account", "Create Account"},
+	{"join", "Join our community"},
+	{"getting started", "Getting Started"},
+	{"welcome", "Welcome"},
+	{"onboarding", "Onboarding"},
+	{"complete your profile", "Complete your profile"},
+	{"step 1", "Step 1 of 3"},
+	{"continue", "Continue"},
+	{"next step", "Next step"},
+	{"choose option", "Choose option"},
+	{"select plan", "Select plan"},
+	{"wizard", "Setup wizard"},
+	{"application form", "Application form"},
+	{"contact form", "Contact form"},
+	{"checkout", "Checkout"},
+	{"survey", "Survey"},
+	{"questionnaire", "Questionnaire"},
+	{"access denied", "Access Denied"},
+	{"forbidden", "Forbidden"},
+	{"blocked", "Blocked"},
+	{"unauthorized", "Unauthorized"},
+}
+
+func TestTitleIntentRules_EveryPatternIsReachable(t *testing.T) {
+	covered := make(map[string]string, len(titleRuleReachability))
+	for _, row := range titleRuleReachability {
+		if prev, dup := covered[row.pattern]; dup {
+			t.Fatalf("pattern %q covered twice (%q and %q)", row.pattern, prev, row.title)
+		}
+		covered[row.pattern] = row.title
+	}
+
+	for _, rule := range titleIntentRules {
+		for _, pattern := range rule.Patterns {
+			title, ok := covered[pattern]
+			if !ok {
+				t.Fatalf("pattern %q has no reachability row; prove it reachable or delete it", pattern)
+			}
+			intent := detectIntentByTitle(title)
+			if intent.Details != rule.Details {
+				t.Fatalf("pattern %q via %q: expected local details %q, got %q", pattern, title, rule.Details, intent.Details)
+			}
+			if intent.Type != rule.Type || intent.Confidence != rule.Confidence {
+				t.Fatalf("pattern %q via %q: expected %q/%v, got %q/%v", pattern, title, rule.Type, rule.Confidence, intent.Type, intent.Confidence)
+			}
+			if intent.ChallengeType != "" {
+				t.Fatalf("pattern %q via %q: local rules must not set a challenge type, got %q", pattern, title, intent.ChallengeType)
+			}
+			delete(covered, pattern)
+		}
+	}
+
+	for pattern := range covered {
+		t.Fatalf("reachability row for %q matches no pattern in titleIntentRules", pattern)
+	}
+}
+
+// detectIntentByTitleGolden is the classification an agent observes, captured
+// before the ladders became data-driven.
+var detectIntentByTitleGolden = []struct {
+	title         string
+	intentType    IntentType
+	challengeType string
+	confidence    float64
+	details       string
+}{
+	{"Just a moment...", IntentCaptcha, "turnstile", 0.95, "cloudflare turnstile challenge detected"},
+	{"Attention Required! | Cloudflare", IntentCaptcha, "turnstile", 0.95, "cloudflare turnstile challenge detected"},
+	{"Checking your browser before accessing", IntentCaptcha, "turnstile", 0.95, "cloudflare turnstile challenge detected"},
+	{"Captcha required", IntentCaptcha, "captcha-generic", 0.7, "generic captcha challenge detected"},
+	{"Please verify you are human", IntentCaptcha, "captcha-generic", 0.7, "generic captcha challenge detected"},
+	{"I am not a robot", IntentCaptcha, "captcha-generic", 0.7, "generic captcha challenge detected"},
+	{"reCAPTCHA verification", IntentCaptcha, "captcha-generic", 0.7, "generic captcha challenge detected"},
+	{"hCaptcha check", IntentCaptcha, "captcha-generic", 0.7, "generic captcha challenge detected"},
+	{"Are you a robot?", IntentCaptcha, "", 0.7, "generic captcha detected via title"},
+	{"Bot detection in progress", IntentCaptcha, "", 0.7, "generic captcha detected via title"},
+	{"Log In", IntentLogin, "", 0.6, "login page detected via title"},
+	{"Login", IntentLogin, "", 0.6, "login page detected via title"},
+	{"Sign In", IntentLogin, "", 0.6, "login page detected via title"},
+	{"Signin", IntentLogin, "", 0.6, "login page detected via title"},
+	{"Sign Up", IntentSignup, "", 0.6, "signup page detected via title"},
+	{"Signup", IntentSignup, "", 0.6, "signup page detected via title"},
+	{"Register", IntentSignup, "", 0.6, "signup page detected via title"},
+	{"Create Account", IntentSignup, "", 0.6, "signup page detected via title"},
+	{"Join our community", IntentSignup, "", 0.6, "signup page detected via title"},
+	{"Getting Started", IntentOnboarding, "", 0.65, "onboarding flow detected via title"},
+	{"Welcome", IntentOnboarding, "", 0.65, "onboarding flow detected via title"},
+	{"Onboarding", IntentOnboarding, "", 0.65, "onboarding flow detected via title"},
+	{"Complete your profile", IntentOnboarding, "", 0.65, "onboarding flow detected via title"},
+	{"Step 1 of 3", IntentOnboarding, "", 0.65, "onboarding flow detected via title"},
+	{"Continue", IntentNavigation, "", 0.6, "navigation flow detected via title"},
+	{"Next step", IntentNavigation, "", 0.6, "navigation flow detected via title"},
+	{"Choose option", IntentNavigation, "", 0.6, "navigation flow detected via title"},
+	{"Select plan", IntentNavigation, "", 0.6, "navigation flow detected via title"},
+	{"Setup wizard", IntentNavigation, "", 0.6, "navigation flow detected via title"},
+	{"Application form", IntentForm, "", 0.6, "form flow detected via title"},
+	{"Contact form", IntentForm, "", 0.6, "form flow detected via title"},
+	{"Checkout", IntentForm, "", 0.6, "form flow detected via title"},
+	{"Survey", IntentForm, "", 0.6, "form flow detected via title"},
+	{"Questionnaire", IntentForm, "", 0.6, "form flow detected via title"},
+	{"Access Denied", IntentBlocked, "", 0.7, "blocked page detected via title"},
+	{"Forbidden", IntentBlocked, "", 0.7, "blocked page detected via title"},
+	{"Blocked", IntentBlocked, "", 0.7, "blocked page detected via title"},
+	{"Unauthorized", IntentBlocked, "", 0.7, "blocked page detected via title"},
+	{"Security challenge", IntentNormal, "", 0.5, "no challenge indicators found in title"},
+	{"Verify your identity", IntentNormal, "", 0.5, "no challenge indicators found in title"},
+	{"Home page", IntentNormal, "", 0.5, "no challenge indicators found in title"},
+}
+
+func TestDetectIntentByTitle_Golden(t *testing.T) {
+	for _, want := range detectIntentByTitleGolden {
+		got := detectIntentByTitle(want.title)
+		if got.Type != want.intentType || got.ChallengeType != want.challengeType ||
+			got.Confidence != want.confidence || got.Details != want.details {
+			t.Fatalf("%q: got %q/%q/%v/%q, want %q/%q/%v/%q", want.title,
+				got.Type, got.ChallengeType, got.Confidence, got.Details,
+				want.intentType, want.challengeType, want.confidence, want.details)
+		}
+	}
+}
 
 func TestDetectChallengeIntent_Turnstile(t *testing.T) {
 	intent := DetectChallengeIntent(

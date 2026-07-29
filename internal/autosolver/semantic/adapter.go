@@ -24,6 +24,23 @@ func NewAdapter(m semantic.ElementMatcher) *Adapter {
 	return &Adapter{matcher: m}
 }
 
+// captchaRules and flowRules broaden autosolver.DetectChallengeIntent for
+// pages it does not classify. Patterns the canonical detector already answers
+// must not appear here: it runs first, so they would be unreachable.
+var (
+	captchaRules = []autosolver.IntentRule{
+		{Patterns: []string{"challenge", "verify"}, Type: autosolver.IntentCaptcha, Confidence: 0.8, Details: "captcha detected via semantic analysis"},
+	}
+
+	flowRules = []autosolver.IntentRule{
+		{Patterns: []string{"log in", "login", "sign in"}, Type: autosolver.IntentLogin, Confidence: 0.7, Details: "login page detected via semantic title analysis"},
+		{Patterns: []string{"sign up", "signup", "register", "create account"}, Type: autosolver.IntentSignup, Confidence: 0.7, Details: "signup page detected via semantic title analysis"},
+		{Patterns: []string{"getting started", "welcome", "onboarding", "complete your profile", "step 1"}, Type: autosolver.IntentOnboarding, Confidence: 0.65, Details: "onboarding flow detected via semantic title analysis"},
+		{Patterns: []string{"continue", "next step", "choose option", "select plan", "wizard"}, Type: autosolver.IntentNavigation, Confidence: 0.6, Details: "navigation flow detected via semantic title analysis"},
+		{Patterns: []string{"application form", "contact form", "checkout", "survey", "questionnaire"}, Type: autosolver.IntentForm, Confidence: 0.6, Details: "form flow detected via semantic title analysis"},
+	}
+)
+
 // DetectIntent classifies the current page state by analyzing the page
 // title and URL using semantic matching against known patterns.
 func (a *Adapter) DetectIntent(ctx context.Context, page autosolver.Page) (*autosolver.Intent, error) {
@@ -34,27 +51,8 @@ func (a *Adapter) DetectIntent(ctx context.Context, page autosolver.Page) (*auto
 		return challenge, nil
 	}
 
-	cfIndicators := []string{"just a moment", "attention required", "checking your browser"}
-	for _, indicator := range cfIndicators {
-		if strings.Contains(title, indicator) {
-			return &autosolver.Intent{
-				Type:          autosolver.IntentCaptcha,
-				Confidence:    0.95,
-				ChallengeType: "cloudflare-turnstile",
-				Details:       "cloudflare challenge detected via semantic title analysis",
-			}, nil
-		}
-	}
-
-	captchaIndicators := []string{"captcha", "challenge", "verify", "recaptcha", "hcaptcha"}
-	for _, indicator := range captchaIndicators {
-		if strings.Contains(title, indicator) || strings.Contains(strings.ToLower(url), indicator) {
-			return &autosolver.Intent{
-				Type:       autosolver.IntentCaptcha,
-				Confidence: 0.8,
-				Details:    "captcha detected via semantic analysis",
-			}, nil
-		}
+	if intent := autosolver.MatchIntentRules(captchaRules, title, strings.ToLower(url)); intent != nil {
+		return intent, nil
 	}
 
 	if a.matcher != nil {
@@ -64,59 +62,8 @@ func (a *Adapter) DetectIntent(ctx context.Context, page autosolver.Page) (*auto
 		}
 	}
 
-	loginPatterns := []string{"log in", "login", "sign in"}
-	for _, p := range loginPatterns {
-		if strings.Contains(title, p) {
-			return &autosolver.Intent{
-				Type:       autosolver.IntentLogin,
-				Confidence: 0.7,
-				Details:    "login page detected via semantic title analysis",
-			}, nil
-		}
-	}
-
-	signupPatterns := []string{"sign up", "signup", "register", "create account"}
-	for _, p := range signupPatterns {
-		if strings.Contains(title, p) {
-			return &autosolver.Intent{
-				Type:       autosolver.IntentSignup,
-				Confidence: 0.7,
-				Details:    "signup page detected via semantic title analysis",
-			}, nil
-		}
-	}
-
-	onboardingPatterns := []string{"getting started", "welcome", "onboarding", "complete your profile", "step 1"}
-	for _, p := range onboardingPatterns {
-		if strings.Contains(title, p) {
-			return &autosolver.Intent{
-				Type:       autosolver.IntentOnboarding,
-				Confidence: 0.65,
-				Details:    "onboarding flow detected via semantic title analysis",
-			}, nil
-		}
-	}
-
-	navigationPatterns := []string{"continue", "next step", "choose option", "select plan", "wizard"}
-	for _, p := range navigationPatterns {
-		if strings.Contains(title, p) {
-			return &autosolver.Intent{
-				Type:       autosolver.IntentNavigation,
-				Confidence: 0.6,
-				Details:    "navigation flow detected via semantic title analysis",
-			}, nil
-		}
-	}
-
-	formPatterns := []string{"application form", "contact form", "checkout", "survey", "questionnaire"}
-	for _, p := range formPatterns {
-		if strings.Contains(title, p) {
-			return &autosolver.Intent{
-				Type:       autosolver.IntentForm,
-				Confidence: 0.6,
-				Details:    "form flow detected via semantic title analysis",
-			}, nil
-		}
+	if intent := autosolver.MatchIntentRules(flowRules, title); intent != nil {
+		return intent, nil
 	}
 
 	return &autosolver.Intent{

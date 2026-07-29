@@ -2,102 +2,56 @@ package autosolver
 
 import "strings"
 
-// detectIntentByTitle provides a lightweight fallback for intent
-// detection when the semantic engine is unavailable. It uses
-// well-known page-title patterns to classify the page.
+// IntentRule maps a set of substrings to the Intent they produce.
+type IntentRule struct {
+	Patterns   []string
+	Type       IntentType
+	Confidence float64
+	Details    string
+}
+
+// MatchIntentRules returns the Intent of the first rule whose patterns appear
+// in any haystack, or nil when no rule matches. Haystacks must already be
+// lowercased.
+func MatchIntentRules(rules []IntentRule, haystacks ...string) *Intent {
+	for _, rule := range rules {
+		for _, pattern := range rule.Patterns {
+			for _, haystack := range haystacks {
+				if strings.Contains(haystack, pattern) {
+					return &Intent{
+						Type:       rule.Type,
+						Confidence: rule.Confidence,
+						Details:    rule.Details,
+					}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// titleIntentRules broadens DetectChallengeIntent for titles it does not
+// classify. Patterns the canonical detector already answers must not appear
+// here: it runs first, so they would be unreachable.
+var titleIntentRules = []IntentRule{
+	{[]string{"robot", "bot detection"}, IntentCaptcha, 0.7, "generic captcha detected via title"},
+	{[]string{"log in", "login", "sign in", "signin"}, IntentLogin, 0.6, "login page detected via title"},
+	{[]string{"sign up", "signup", "register", "create account", "join"}, IntentSignup, 0.6, "signup page detected via title"},
+	{[]string{"getting started", "welcome", "onboarding", "complete your profile", "step 1"}, IntentOnboarding, 0.65, "onboarding flow detected via title"},
+	{[]string{"continue", "next step", "choose option", "select plan", "wizard"}, IntentNavigation, 0.6, "navigation flow detected via title"},
+	{[]string{"application form", "contact form", "checkout", "survey", "questionnaire"}, IntentForm, 0.6, "form flow detected via title"},
+	{[]string{"access denied", "forbidden", "blocked", "unauthorized"}, IntentBlocked, 0.7, "blocked page detected via title"},
+}
+
+// detectIntentByTitle provides a lightweight fallback for intent detection
+// when the semantic engine is unavailable.
 func detectIntentByTitle(title string) *Intent {
-	lower := strings.ToLower(title)
 	if challenge := DetectChallengeIntent(title, "", ""); challenge != nil {
 		return challenge
 	}
 
-	cfPatterns := []string{"just a moment", "attention required", "checking your browser"}
-	for _, p := range cfPatterns {
-		if strings.Contains(lower, p) {
-			return &Intent{
-				Type:          IntentCaptcha,
-				Confidence:    0.9,
-				ChallengeType: "cloudflare",
-				Details:       "cloudflare challenge detected via title",
-			}
-		}
-	}
-
-	captchaPatterns := []string{"captcha", "verify you are human", "robot", "bot detection"}
-	for _, p := range captchaPatterns {
-		if strings.Contains(lower, p) {
-			return &Intent{
-				Type:       IntentCaptcha,
-				Confidence: 0.7,
-				Details:    "generic captcha detected via title",
-			}
-		}
-	}
-
-	loginPatterns := []string{"log in", "login", "sign in", "signin"}
-	for _, p := range loginPatterns {
-		if strings.Contains(lower, p) {
-			return &Intent{
-				Type:       IntentLogin,
-				Confidence: 0.6,
-				Details:    "login page detected via title",
-			}
-		}
-	}
-
-	signupPatterns := []string{"sign up", "signup", "register", "create account", "join"}
-	for _, p := range signupPatterns {
-		if strings.Contains(lower, p) {
-			return &Intent{
-				Type:       IntentSignup,
-				Confidence: 0.6,
-				Details:    "signup page detected via title",
-			}
-		}
-	}
-
-	onboardingPatterns := []string{"getting started", "welcome", "onboarding", "complete your profile", "step 1"}
-	for _, p := range onboardingPatterns {
-		if strings.Contains(lower, p) {
-			return &Intent{
-				Type:       IntentOnboarding,
-				Confidence: 0.65,
-				Details:    "onboarding flow detected via title",
-			}
-		}
-	}
-
-	navigationPatterns := []string{"continue", "next step", "choose option", "select plan", "wizard"}
-	for _, p := range navigationPatterns {
-		if strings.Contains(lower, p) {
-			return &Intent{
-				Type:       IntentNavigation,
-				Confidence: 0.6,
-				Details:    "navigation flow detected via title",
-			}
-		}
-	}
-
-	formPatterns := []string{"application form", "contact form", "checkout", "survey", "questionnaire"}
-	for _, p := range formPatterns {
-		if strings.Contains(lower, p) {
-			return &Intent{
-				Type:       IntentForm,
-				Confidence: 0.6,
-				Details:    "form flow detected via title",
-			}
-		}
-	}
-
-	blockedPatterns := []string{"access denied", "forbidden", "blocked", "unauthorized"}
-	for _, p := range blockedPatterns {
-		if strings.Contains(lower, p) {
-			return &Intent{
-				Type:       IntentBlocked,
-				Confidence: 0.7,
-				Details:    "blocked page detected via title",
-			}
-		}
+	if intent := MatchIntentRules(titleIntentRules, strings.ToLower(title)); intent != nil {
+		return intent
 	}
 
 	return &Intent{
