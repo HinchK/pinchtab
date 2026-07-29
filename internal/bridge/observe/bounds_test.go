@@ -11,14 +11,20 @@ import (
 	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
-func TestIsVisibleWithDocumentCoordinates(t *testing.T) {
+// The scroll offset must not enter the test: boxes reach isVisible in viewport
+// coordinates, so a page scrolled to y=1000 sees the same numbers as an
+// unscrolled one.
+func TestIsVisibleUsesViewportCoordinates(t *testing.T) {
 	vp := ViewportInfo{Width: 800, Height: 600, ScrollX: 0, ScrollY: 1000}
 
-	if !isVisible(BoundingBox{X: 20, Y: 1050, W: 100, H: 40}, true, vp) {
-		t.Fatal("box inside scrolled viewport should be visible")
+	if !isVisible(BoundingBox{X: 20, Y: 50, W: 100, H: 40}, vp) {
+		t.Fatal("box inside the viewport should be visible")
 	}
-	if isVisible(BoundingBox{X: 20, Y: 50, W: 100, H: 40}, true, vp) {
-		t.Fatal("box above scrolled viewport should not be visible")
+	if isVisible(BoundingBox{X: 20, Y: -200, W: 100, H: 40}, vp) {
+		t.Fatal("box scrolled above the viewport should not be visible")
+	}
+	if isVisible(BoundingBox{X: 20, Y: 700, W: 100, H: 40}, vp) {
+		t.Fatal("box below the viewport should not be visible")
 	}
 }
 
@@ -39,6 +45,11 @@ type scrollFixture struct {
 
 func newScrollFixture(t *testing.T, scrollX, scrollY int) scrollFixture {
 	t.Helper()
+	return newScrollFixtureFrom(t, scrollFixtureHTML, scrollX, scrollY)
+}
+
+func newScrollFixtureFrom(t *testing.T, html string, scrollX, scrollY int) scrollFixture {
+	t.Helper()
 	chromePath := testbrowser.Path(t)
 
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
@@ -56,7 +67,7 @@ func newScrollFixture(t *testing.T, scrollX, scrollY int) scrollFixture {
 		cancelAlloc()
 	})
 
-	dataURL := "data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(scrollFixtureHTML))
+	dataURL := "data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(html))
 	if err := chromedp.Run(ctx,
 		chromedp.Navigate(dataURL),
 		chromedp.WaitVisible("#target", chromedp.ByID),
@@ -200,5 +211,32 @@ func TestAnnotateBoundsVisibleIsIndependentOfCoordinateSpace(t *testing.T) {
 
 	if viewportVisible != documentVisible {
 		t.Errorf("Visible = %v in viewport space and %v in document space; it is computed from the same viewport-relative box either way", viewportVisible, documentVisible)
+	}
+}
+
+// onScreenFixtureHTML places the target where a scroll to (300,400) leaves it at
+// viewport (50,100) — well inside any default viewport. The existing scroll
+// fixture puts its target below the fold, so no test could tell a correct
+// Visible from one computed in the wrong coordinate space.
+const onScreenFixtureHTML = `<body style="margin:0;width:3000px;height:3000px">
+<div style="position:absolute;left:350px;top:500px;width:120px;height:40px">
+<button id="target">target</button>
+</div>
+</body>`
+
+func TestAnnotateBoundsVisibleForOnScreenNodeWhenScrolled(t *testing.T) {
+	f := newScrollFixtureFrom(t, onScreenFixtureHTML, 300, 400)
+
+	rect := f.clientRect(t)
+	if rect.X < 0 || rect.Y < 0 {
+		t.Fatalf("fixture target is not on screen: %+v", rect)
+	}
+
+	for _, pageCoords := range []bool{false, true} {
+		box, visible, vp := f.annotate(t, pageCoords)
+		if !visible {
+			t.Errorf("pageCoords=%v: target at viewport %+v in a %.0fx%.0f viewport reported not visible (box %+v)",
+				pageCoords, rect, vp.Width, vp.Height, box)
+		}
 	}
 }
