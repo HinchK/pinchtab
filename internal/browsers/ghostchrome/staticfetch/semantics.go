@@ -3,6 +3,8 @@ package staticfetch
 import (
 	"strings"
 
+	"github.com/pinchtab/pinchtab/internal/sanitize"
+
 	"github.com/gost-dom/browser/dom"
 	"github.com/gost-dom/browser/html"
 )
@@ -99,6 +101,13 @@ func getRole(el dom.Element) string {
 	return "generic"
 }
 
+// accessibleNameMaxBytes is the TOTAL byte budget for an accessible name,
+// marker included — sanitize.TruncateUTF8Bytes spends len(TruncationSuffix) of it
+// rather than adding to it. The name comes from arbitrary page text, so the cut
+// must land on a rune boundary: an invalid-UTF-8 name is the identity an agent
+// matches on to decide what to click, and it ends up in a JSON response.
+const accessibleNameMaxBytes = 100
+
 func getAccessibleName(el dom.Element) string {
 	if label, ok := el.GetAttribute("aria-label"); ok {
 		return label
@@ -118,11 +127,7 @@ func getAccessibleName(el dom.Element) string {
 		}
 	}
 	if isInteractive(el) {
-		text := strings.TrimSpace(el.TextContent())
-		if len(text) > 100 {
-			text = text[:100] + "..."
-		}
-		return text
+		return sanitize.TruncateUTF8Bytes(strings.TrimSpace(el.TextContent()), accessibleNameMaxBytes)
 	}
 	return ""
 }
