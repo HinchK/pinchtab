@@ -51,13 +51,18 @@ func (i *Instance) CaptureScreenshot(ctx context.Context, format string, quality
 			cdpFormat = page.CaptureScreenshotFormatJpeg
 		}
 
-		// WithFromSurface(false) reads the renderer's current view directly
-		// instead of waiting for a fresh compositor surface frame. On idle
-		// pages in headed browsers (e.g. Cloak) the surface stops swapping
-		// frames, so the default fromSurface=true blocks until the action
-		// deadline (~30s) — stalling one-shot screenshots and polling
-		// screencast alike. In headless Chrome the flag is a no-op.
-		shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(false)
+		// fromSurface=false reads the renderer's current view directly instead
+		// of waiting for a fresh compositor surface frame. On idle pages in
+		// headed browsers (e.g. Cloak) the surface stops swapping frames, so
+		// the default fromSurface=true blocks until the action deadline
+		// (~30s) — stalling one-shot screenshots and polling screencast alike.
+		// In headless Chrome the flag is a no-op.
+		//
+		// It also discards the clip: reading the view returns the whole
+		// viewport whatever region was asked for. So a clipped capture has to
+		// pay the surface path, and the BringToFront above is what keeps that
+		// affordable. Screencast polls with a nil clip and keeps the fast read.
+		shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(clip != nil)
 		if clip != nil {
 			shot = shot.WithClip(&page.Viewport{
 				X:      clip.X,
