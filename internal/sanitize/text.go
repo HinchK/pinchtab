@@ -14,6 +14,26 @@ var (
 	winAbs  = regexp.MustCompile(`(^|[\s"'(=:])([A-Za-z]:\\(?:[^\s"'():;<>{}\[\]]+\\?)+)`)
 )
 
+// PrefixUTF8Bytes returns the longest prefix of s that fits in maxBytes bytes
+// without splitting a rune. Nothing is appended: callers that want a
+// truncation marker use TruncateUTF8Bytes.
+func PrefixUTF8Bytes(s string, maxBytes int) string {
+	if maxBytes <= 0 {
+		return ""
+	}
+	if len(s) <= maxBytes {
+		return s
+	}
+	cut := 0
+	for i := range s {
+		if i > maxBytes {
+			break
+		}
+		cut = i
+	}
+	return s[:cut]
+}
+
 func TruncateUTF8Bytes(s string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
@@ -24,19 +44,7 @@ func TruncateUTF8Bytes(s string, maxBytes int) string {
 	if maxBytes <= len(TruncationSuffix) {
 		return TruncationSuffix[:maxBytes]
 	}
-
-	limit := maxBytes - len(TruncationSuffix)
-	cut := 0
-	for i := range s {
-		if i > limit {
-			break
-		}
-		cut = i
-	}
-	if cut == 0 && limit > 0 {
-		return TruncationSuffix
-	}
-	return s[:cut] + TruncationSuffix
+	return PrefixUTF8Bytes(s, maxBytes-len(TruncationSuffix)) + TruncationSuffix
 }
 
 func StripANSI(s string) string {

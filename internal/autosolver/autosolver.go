@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"sort"
 	"time"
+
+	"github.com/pinchtab/pinchtab/internal/htmltrim"
 )
 
 // AutoSolver orchestrates the challenge-detection and solving pipeline.
@@ -695,15 +697,10 @@ func (as *AutoSolver) tryLLM(ctx context.Context, page Page, executor ActionExec
 		return false, entry
 	}
 
-	// Trim HTML to reduce token usage (max ~4000 chars).
-	if len(html) > 4000 {
-		html = html[:4000]
-	}
-
 	resp, err := as.llm.SuggestNextAction(ctx, LLMRequest{
 		PageTitle:    page.Title(),
 		PageURL:      page.URL(),
-		TrimmedHTML:  html,
+		TrimmedHTML:  htmltrim.TrimHTML(html),
 		DetectedType: IntentUnknown,
 		PrevAttempts: history,
 	})

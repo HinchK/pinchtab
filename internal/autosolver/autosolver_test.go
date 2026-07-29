@@ -3,8 +3,12 @@ package autosolver
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
 
 type mockPage struct {
@@ -715,6 +719,49 @@ func TestSolve_LLMFallback(t *testing.T) {
 	}
 	if result.SolverUsed != "llm" {
 		t.Errorf("expected solver 'llm', got %q", result.SolverUsed)
+	}
+}
+
+func TestSolve_LLMRequestCarriesStrippedRuneSafeHTML(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxAttempts = 1
+	cfg.LLMFallback = true
+	cfg.RetryBaseDelay = time.Millisecond
+
+	llm := &mockLLM{resp: &LLMResponse{Action: ActionNone, Confidence: 0.8}}
+	as := New(cfg, nil, llm)
+
+	html := "<html><head><style>body{color:red}</style><script>var secret=1;</script></head><body>" +
+		strings.Repeat("héllo wörld ", 1000) + "</body></html>"
+	page := &mockPage{title: "Just a moment...", url: "https://example.com", html: html}
+
+	if _, err := as.Solve(context.Background(), page, &mockExecutor{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(llm.requests) != 1 {
+		t.Fatalf("expected a single LLM request, got %d", len(llm.requests))
+	}
+
+	sent := llm.requests[0].TrimmedHTML
+	for _, unwanted := range []string{"<style", "<script", "color:red", "var secret"} {
+		if strings.Contains(sent, unwanted) {
+			t.Errorf("TrimmedHTML still contains %q", unwanted)
+		}
+	}
+	if len(sent) >= len(html) {
+		t.Errorf("TrimmedHTML was not capped: %d bytes", len(sent))
+	}
+	if !utf8.ValidString(sent) {
+		t.Errorf("TrimmedHTML is not valid UTF-8")
+	}
+	if strings.ContainsRune(sent, utf8.RuneError) {
+		t.Errorf("TrimmedHTML contains U+FFFD absent from the source")
+	}
+	if strings.HasSuffix(sent, sanitize.TruncationSuffix) {
+		t.Errorf("TrimmedHTML got a truncation marker appended: %q", sent[len(sent)-8:])
+	}
+	if !strings.HasPrefix(sent, "<html><head></head><body>héllo wörld") {
+		t.Errorf("TrimmedHTML lost the page body: %q", sent[:40])
 	}
 }
 
