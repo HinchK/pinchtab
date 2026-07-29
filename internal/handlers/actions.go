@@ -116,9 +116,10 @@ func rejectMultiStepSubmitClicks(w http.ResponseWriter, actions []bridge.ActionR
 	return true
 }
 
+const dialogActionHint = "use --dialog-action accept or --dialog-action dismiss"
+
 type dialogBlockingError struct {
 	message    string
-	suggestion string
 	dialogType string
 	dialogText string
 }
@@ -128,7 +129,6 @@ func (h *Handlers) mapDialogBlockingError(err error, kind, tabID string) (dialog
 	if errors.As(err, &dialogErr) {
 		return dialogBlockingError{
 			message:    err.Error(),
-			suggestion: "use --dialog-action accept or --dialog-action dismiss",
 			dialogType: dialogErr.DialogType,
 			dialogText: dialogErr.DialogMessage,
 		}, true
@@ -136,8 +136,7 @@ func (h *Handlers) mapDialogBlockingError(err error, kind, tabID string) (dialog
 	if isClickTimeoutWithPendingDialog(err, kind, tabID, h.Bridge) {
 		if ds := h.Bridge.GetDialogManager().GetPending(tabID); ds != nil {
 			return dialogBlockingError{
-				message:    fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q)", kind, ds.Type, ds.Message),
-				suggestion: "use --dialog-action accept or --dialog-action dismiss",
+				message:    fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q) — %s", kind, ds.Type, ds.Message, dialogActionHint),
 				dialogType: ds.Type,
 				dialogText: ds.Message,
 			}, true
@@ -434,7 +433,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		}
 		if db, ok := h.mapDialogBlockingError(actionErr, req.Kind, resolvedTabID); ok {
 			httpx.ErrorCode(w, 500, "dialog_blocking", db.message, false, map[string]any{
-				"suggestion":     db.suggestion,
+				"suggestion":     dialogActionHint,
 				"dialog_type":    db.dialogType,
 				"dialog_message": db.dialogText,
 			})
