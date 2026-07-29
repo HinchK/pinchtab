@@ -65,22 +65,6 @@ func (h *Handlers) enforceTabNotPausedForHandoff(tabID string) error {
 	return fmt.Errorf("tab %s is paused for human handoff", tabID)
 }
 
-// buildActionRoute assembles the route metadata recorded by the single, batch,
-// and macro action endpoints: a single-browser route plus one attempt reflecting
-// the handle decision, with the originally requested browser when provided.
-func buildActionRoute(resolvedBrowser, requestBrowser string, decision browsers.HandleDecision) *browserops.RouteMetadata {
-	route := browserops.SingleBrowserRoute(resolvedBrowser)
-	route.Attempts = append(route.Attempts, browserops.RouteAttempt{
-		Browser:  resolvedBrowser,
-		Accepted: decision.Decision == browsers.DecisionHandle,
-		Reason:   decision.Reason,
-	})
-	if requestBrowser != "" {
-		route.RequestedBrowser = requestBrowser
-	}
-	return route
-}
-
 // rejectMixedBrowsers returns the first action's browser as the request browser,
 // rejecting (with a 400) any later action that names a different browser, since a
 // batch/macro executes on a single browser. noun/field tune the error wording
@@ -261,9 +245,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	requestBrowser := routing.RequestBrowser
 	resolvedBrowser := routing.Browser
-	handleDecision := routing.Decision
 	effectiveCfg := routing.EffectiveCfg
 
 	req.Browser = resolvedBrowser
@@ -465,7 +447,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		markCreatedTab(w, switched)
 		h.recordResolvedTab(r, switched)
 	}
-	actionRoute := buildActionRoute(resolvedBrowser, requestBrowser, handleDecision)
+	actionRoute := routeMetadataFor(routing)
 	h.recordActivity(r, activity.Update{Route: actionRoute})
 	resp := map[string]any{"success": true, "result": result, "route": actionRoute}
 	if recoveryResult != nil {
@@ -516,8 +498,6 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 	if !ok {
 		return
 	}
-	resolvedBrowser := routing.Browser
-	handleDecision := routing.Decision
 	effectiveCfg := routing.EffectiveCfg
 
 	var ctx context.Context
@@ -608,7 +588,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 		}
 	}
 
-	batchRoute := buildActionRoute(resolvedBrowser, requestBrowser, handleDecision)
+	batchRoute := routeMetadataFor(routing)
 	h.writeMultiStepActionResult(w, r, ctx, resolvedTabID, results, len(req.Actions), batchRoute, nil)
 }
 
@@ -729,6 +709,7 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	macroIntentBrowser := macroResolvedBrowser
 	macroHandleDecision, err := checkBrowserCanHandle(macroResolvedBrowser, browsers.RequestIntent{
 		Shape:         browsers.ShapeInteraction,
 		StateChanging: true,
@@ -815,6 +796,12 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	macroRoute := buildActionRoute(macroResolvedBrowser, macroRequestBrowser, macroHandleDecision)
+	macroRoute := routeMetadataFor(browserRouting{
+		Browser:        macroResolvedBrowser,
+		IntentBrowser:  macroIntentBrowser,
+		RequestBrowser: macroRequestBrowser,
+		EffectiveCfg:   macroEffectiveCfg,
+		Decision:       macroHandleDecision,
+	})
 	h.writeMultiStepActionResult(w, r, ctx, resolvedTabID, results, len(req.Steps), macroRoute, map[string]any{"kind": "macro"})
 }

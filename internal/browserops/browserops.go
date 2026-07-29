@@ -106,16 +106,6 @@ type RouteAttempt struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-func SingleBrowserRoute(browser string) *RouteMetadata {
-	return &RouteMetadata{
-		RequestedBrowser: browser,
-		UsedBrowser:      browser,
-		Attempts: []RouteAttempt{
-			{Browser: browser, Accepted: true},
-		},
-	}
-}
-
 // BrowserRuntime is the minimal interface implemented by browser operation
 // runtimes such as static fetch or browser-backed CDP adapters.
 type BrowserRuntime interface {

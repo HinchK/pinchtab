@@ -15,9 +15,9 @@ import (
 
 // resolveReadRouting performs the shared browser routing for a rendered/static
 // read: it resolves the browser, records the read request, builds the route
-// metadata (with the handle attempt and any requested browser), and records the
-// route activity. ok=false means an error response was already written. The
-// returned route is threaded back to the caller for the eventual response.
+// metadata, and records the route activity. ok=false means an error response was
+// already written. The returned route is threaded back to the caller for the
+// eventual response.
 func (h *Handlers) resolveReadRouting(w http.ResponseWriter, r *http.Request, tabID, recordName, shape string) (*config.RuntimeConfig, *browserops.RouteMetadata, bool) {
 	routing, ok := h.resolveBrowserForRequest(w, r, tabID, strings.TrimSpace(r.URL.Query().Get("browser")), browsers.RequestIntent{
 		Shape: shape,
@@ -28,15 +28,7 @@ func (h *Handlers) resolveReadRouting(w http.ResponseWriter, r *http.Request, ta
 
 	h.recordReadRequest(r, recordName, tabID)
 
-	route := browserops.SingleBrowserRoute(routing.Browser)
-	route.Attempts = append(route.Attempts, browserops.RouteAttempt{
-		Browser:  routing.Browser,
-		Accepted: routing.Decision.Decision == browsers.DecisionHandle,
-		Reason:   routing.Decision.Reason,
-	})
-	if routing.RequestBrowser != "" {
-		route.RequestedBrowser = routing.RequestBrowser
-	}
+	route := routeMetadataFor(routing)
 	h.recordActivity(r, activity.Update{Route: route})
 
 	return routing.EffectiveCfg, route, true

@@ -255,15 +255,7 @@ func (h *Handlers) validateNavigateTargets(w http.ResponseWriter, r *http.Reques
 // records it as activity, and returns it for the execute phase (the static-first
 // and escalation paths may replace it).
 func (h *Handlers) recordNavigateRoute(r *http.Request, routing browserRouting) *browserops.RouteMetadata {
-	navRoute := browserops.SingleBrowserRoute(routing.Browser)
-	navRoute.Attempts = append(navRoute.Attempts, browserops.RouteAttempt{
-		Browser:  routing.Browser,
-		Accepted: routing.Decision.Decision == browsers.DecisionHandle,
-		Reason:   routing.Decision.Reason,
-	})
-	if routing.RequestBrowser != "" {
-		navRoute.RequestedBrowser = routing.RequestBrowser
-	}
+	navRoute := routeMetadataFor(routing)
 	h.recordActivity(r, activity.Update{Route: navRoute})
 	return navRoute
 }
