@@ -97,8 +97,9 @@ func getBoxAABB(ctx context.Context, backendNodeID int64) (BoundingBox, bool) {
 	return boxModelAABB(ctx, backendNodeID, boxQuadContent)
 }
 
-// ElementBorderBox is the border-box rectangle of a node in document-relative
-// CSS coordinates, the same measurement the capture path uses. It is the
+// ElementBorderBox is the border-box rectangle of a node in viewport-relative
+// CSS coordinates, the space getBoxModel reports and the space /box and
+// ScrollIntoViewAndGetBox hand to their callers unchanged. It is the
 // cross-frame-correct alternative to evaluating getBoundingClientRect in the
 // element's own context, which is relative to the document the element lives in
 // and therefore frame-relative for anything inside an iframe.

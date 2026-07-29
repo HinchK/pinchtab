@@ -240,3 +240,29 @@ func TestAnnotateBoundsVisibleForOnScreenNodeWhenScrolled(t *testing.T) {
 		}
 	}
 }
+
+// ElementBorderBox is the third consumer of the getBoxModel premise, behind
+// /box and ScrollIntoViewAndGetBox, and both hand its numbers to callers
+// unchanged. The premise is only checkable on a scrolled page: at scroll 0 the
+// viewport and document answers are the same number, which is why the existing
+// /box fixture could not tell them apart.
+func TestElementBorderBoxIsViewportRelativeWhenScrolled(t *testing.T) {
+	f := newScrollFixtureFrom(t, onScreenFixtureHTML, 300, 400)
+
+	vp, err := FetchLayout(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vp.ScrollX == 0 || vp.ScrollY == 0 {
+		t.Fatalf("fixture did not scroll: %+v", vp)
+	}
+
+	box, ok := ElementBorderBox(f.ctx, f.nodeID)
+	if !ok {
+		t.Fatal("ElementBorderBox produced no box for the target")
+	}
+	rect := f.clientRect(t)
+
+	assertNear(t, "border-box x", box.X, rect.X)
+	assertNear(t, "border-box y", box.Y, rect.Y)
+}
