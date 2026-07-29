@@ -657,7 +657,7 @@ func (s nodeScope) resolveAt(ctx context.Context, sel selector.Selector, index i
 	return resolveSelectorAtWithinNode(ctx, s.backendNodeID, sel, index, fromEnd)
 }
 
-// resolveRef is where the two scopes genuinely differ. A cached ref still exists
+// resolveRef differs from the frame scope only in containment. A cached ref still exists
 // while the dialog owns the interaction surface, so it must be proven to lie
 // inside the scope subtree — otherwise a dialog-scoped action silently reaches
 // an element behind the dialog. The outside-scope sentinel is distinct from
@@ -667,7 +667,7 @@ func (s nodeScope) resolveRef(ctx context.Context, sel selector.Selector, refCac
 		return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
 	}
 	target, ok := refCache.Lookup(sel.Value)
-	if !ok || target.BackendNodeID == 0 {
+	if !ok {
 		return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
 	}
 	inside, err := BackendNodeWithinScope(ctx, s.backendNodeID, target.BackendNodeID)

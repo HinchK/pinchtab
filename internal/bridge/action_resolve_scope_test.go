@@ -127,10 +127,10 @@ func TestResolveWrapperRejectionsUnchanged(t *testing.T) {
 // back whatever the cache holds; nodeScope proves containment first. This pins
 // the half that needs no browser — the containment half is pinned against a real
 // dialog in the modal test.
-func TestScopeRefBehaviourDiffersByDesign(t *testing.T) {
-	cache := &RefCache{Targets: map[string]RefTarget{"e0": {BackendNodeID: 99}}}
+func TestBothScopesRefuseAZeroBackendNodeIDRef(t *testing.T) {
 	sel := selector.Parse("ref:e0")
 
+	cache := &RefCache{Targets: map[string]RefTarget{"e0": {BackendNodeID: 99}}}
 	got, err := (frameScope{}).resolveRef(context.Background(), sel, cache)
 	if err != nil || got != 99 {
 		t.Fatalf("frame scope ref = (%d, %v), want (99, nil)", got, err)
@@ -143,15 +143,62 @@ func TestScopeRefBehaviourDiffersByDesign(t *testing.T) {
 		t.Errorf("node scope with no cache = %v, want ErrSelectorNoMatch", err)
 	}
 
-	// Divergence between the former copies, preserved rather than reconciled:
-	// a cached ref carrying a zero backend node id is a successful resolution to
-	// 0 in the frame scope and a not-in-cache error in the node scope.
-	zero := &RefCache{Targets: map[string]RefTarget{"e0": {BackendNodeID: 0}}}
-	if got, err := (frameScope{}).resolveRef(context.Background(), sel, zero); err != nil || got != 0 {
-		t.Errorf("frame scope zero-id ref = (%d, %v), want (0, nil) as before", got, err)
+	// The two scopes used to disagree here: a zero backend node id was a
+	// successful resolution to node 0 in the frame scope and a not-in-cache error
+	// in the node scope. Zero is not a node, so both now refuse it, and the rule
+	// lives in RefCache.Lookup rather than in either resolver.
+	//
+	// Both maps are driven, because a cache built from only one of them cannot
+	// tell which branch of Lookup enforces the rule. The ghost-chrome static
+	// snapshot route writes a zero into BOTH, so fixing only the Refs fallback
+	// would leave the real-world case resolving to node 0 through Targets.
+	for _, tc := range []struct {
+		name  string
+		cache *RefCache
+	}{
+		{name: "zero in Targets", cache: &RefCache{Targets: map[string]RefTarget{"e0": {BackendNodeID: 0}}}},
+		{name: "zero in Refs", cache: &RefCache{Refs: map[string]int64{"e0": 0}}},
+		{
+			name: "zero in both, as the ghost-chrome static route writes it",
+			cache: &RefCache{
+				Refs:    map[string]int64{"e0": 0},
+				Targets: map[string]RefTarget{"e0": {}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, ok := tc.cache.Lookup("e0"); ok {
+				t.Errorf("Lookup reported success for a zero backend node id")
+			}
+			if got, err := (frameScope{}).resolveRef(context.Background(), sel, tc.cache); !errors.Is(err, ErrSelectorNoMatch) {
+				t.Errorf("frame scope zero-id ref = (%d, %v), want ErrSelectorNoMatch", got, err)
+			}
+			if _, err := (nodeScope{backendNodeID: 1}).resolveRef(context.Background(), sel, tc.cache); !errors.Is(err, ErrSelectorNoMatch) {
+				t.Errorf("node scope zero-id ref = %v, want ErrSelectorNoMatch", err)
+			}
+		})
 	}
-	if _, err := (nodeScope{backendNodeID: 1}).resolveRef(context.Background(), sel, zero); !errors.Is(err, ErrSelectorNoMatch) {
-		t.Errorf("node scope zero-id ref = %v, want ErrSelectorNoMatch as before", err)
+}
+
+// A ref that later gains a real node id must resolve again: the ghost-chrome
+// escalation remap is what turns a static zero into a live Chrome node, so making
+// zero unresolvable must not make the ref permanently dead.
+func TestARefRemappedFromZeroToALiveNodeResolvesAgain(t *testing.T) {
+	sel := selector.Parse("ref:e0")
+	cache := &RefCache{
+		Refs:    map[string]int64{"e0": 0},
+		Targets: map[string]RefTarget{"e0": {}},
+	}
+	if _, err := (frameScope{}).resolveRef(context.Background(), sel, cache); !errors.Is(err, ErrSelectorNoMatch) {
+		t.Fatalf("precondition: the static ref must start unresolvable, got %v", err)
+	}
+
+	cache.Refs["e0"] = 77
+	cache.Targets["e0"] = RefTarget{BackendNodeID: 77}
+
+	got, err := (frameScope{}).resolveRef(context.Background(), sel, cache)
+	if err != nil || got != 77 {
+		t.Errorf("after escalation, frame scope ref = (%d, %v), want (77, nil)", got, err)
 	}
 }
 

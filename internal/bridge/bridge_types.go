@@ -45,17 +45,29 @@ type RefCache struct {
 	DomEpoch string
 }
 
+// Lookup answers whether a ref names a node that can be acted on. A zero backend
+// node id is not such a node, so an entry carrying one is reported as absent —
+// this is the single owner of that invariant, which is why neither resolveRef
+// restates it.
+//
+// Both maps need the check, and for different reasons. RefTargetsFromNodes
+// already skips zero-id nodes, but the ghost-chrome static-snapshot route writes
+// Targets directly and deliberately stores a zero alongside a zero in Refs: those
+// refs exist so an agent can read a statically fetched page, before anything has
+// escalated to Chrome and given them real node ids. Zero there means "a known ref
+// with no live node yet", which is a third state, not a defect — the snapshot
+// keeps returning those refs, and only resolution refuses them.
 func (c *RefCache) Lookup(ref string) (RefTarget, bool) {
 	if c == nil {
 		return RefTarget{}, false
 	}
 	if c.Targets != nil {
-		if target, ok := c.Targets[ref]; ok {
+		if target, ok := c.Targets[ref]; ok && target.BackendNodeID != 0 {
 			return target, true
 		}
 	}
 	if c.Refs != nil {
-		if nid, ok := c.Refs[ref]; ok {
+		if nid, ok := c.Refs[ref]; ok && nid != 0 {
 			return RefTarget{BackendNodeID: nid}, true
 		}
 	}
