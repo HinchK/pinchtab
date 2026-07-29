@@ -1,6 +1,7 @@
 package stealth
 
 import (
+	"os"
 	"os/exec"
 	goruntime "runtime"
 	"strings"
@@ -37,8 +38,58 @@ func TestPlatformVersionForHostPlatformTracksHost(t *testing.T) {
 	if got := PlatformVersionFor(uaDataPlatform); got != want {
 		t.Fatalf("PlatformVersionFor(%q) = %q, want host version %q", uaDataPlatform, got, want)
 	}
-	if got := PlatformVersionFor(uaDataPlatform); got == defaultPlatformVersions[uaDataPlatform] && want != defaultPlatformVersions[uaDataPlatform] {
-		t.Fatalf("PlatformVersionFor(%q) returned the frozen default", uaDataPlatform)
+}
+
+// Windows is the one platform whose platformVersion must NOT come from the host,
+// and the reason lives here rather than in a comment because a comment cannot
+// fail. Chrome's Sec-CH-UA-Platform-Version on Windows is derived from the
+// UniversalApiContract version, not the OS version: Windows 11 22H2 reports
+// 15.0.0 while its OS version is 10.0.22621. A Windows arm reading host data would
+// emit something like 10.0.26100 — a value real Chrome never sends — making the
+// fingerprint worse than the constant it replaced.
+//
+// hostPlatformVersion has no Windows branch, so this exercises the same code path
+// on every GOOS: the guard is real on the macOS and Linux runners that exist, and
+// its value does not wait for a Windows runner. No build tag, no skip, no oracle —
+// a guard that skips is the failure mode this test exists to close.
+func TestWindowsPlatformVersionIsNotDerivedFromTheHostBecauseChromeSendsAnAPIContractVersion(t *testing.T) {
+	if got := hostPlatformVersion("Windows"); got != "" {
+		t.Errorf("hostPlatformVersion(\"Windows\") = %q, want empty.\n"+
+			"Chrome derives Sec-CH-UA-Platform-Version on Windows from the UniversalApiContract version, not the OS version "+
+			"(Windows 11 22H2 sends 15.0.0 while its OS version is 10.0.22621), so a host-derived value is one real Chrome never sends. "+
+			"Completing the switch with a Windows arm makes the persona easier to detect, not harder — the constant is the correct answer here.", got)
+	}
+
+	// The rule is about where the value comes from, not about emptiness: the
+	// advertised Windows version stays the frozen default, so this test cannot be
+	// satisfied by making PlatformVersionFor return nothing.
+	if got, want := PlatformVersionFor("Windows"), "15.0.0"; got != want {
+		t.Errorf("PlatformVersionFor(%q) = %q, want the frozen %q that matches what Chrome sends", "Windows", got, want)
+	}
+
+	// The assertion above cannot see the edit this test exists to stop. A Windows
+	// arm gated on GOOS == "windows" — the shape a contributor "completing the
+	// switch" would write — never executes on a macOS or Linux runner, so calling
+	// hostPlatformVersion here returns empty either way and the guard would pass on
+	// every machine this project actually tests on. The arms themselves are what
+	// must be checked, and reading them is GOOS-independent.
+	raw, err := os.ReadFile("ua.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)[strings.Index(string(raw), "func hostPlatformVersion("):]
+	if end := strings.Index(body, "\nfunc "); end >= 0 {
+		body = body[:end]
+	}
+	if strings.Contains(body, `"Windows"`) {
+		t.Errorf("hostPlatformVersion gained a Windows arm:\n%s\n"+
+			"Chrome derives Sec-CH-UA-Platform-Version on Windows from the UniversalApiContract version, not the OS version, "+
+			"so any host-derived value there is one real Chrome never sends. Leave Windows on the frozen default.", body)
+	}
+	for _, hostArm := range []string{`"macOS" && goruntime.GOOS == "darwin"`, `"Linux" && goruntime.GOOS == "linux"`} {
+		if !strings.Contains(body, hostArm) {
+			t.Errorf("hostPlatformVersion no longer reads the host for %s; this test would then be pinning an empty switch rather than the Windows exception", hostArm)
+		}
 	}
 }
 
