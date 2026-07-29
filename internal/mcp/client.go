@@ -101,37 +101,6 @@ func (c *Client) Delete(ctx context.Context, path string, query url.Values) ([]b
 	return c.do(req)
 }
 
-// PostStream performs a POST request and returns the response body as a
-// ReadCloser so the caller can stream large responses directly to disk.
-// The caller must close the returned body.
-func (c *Client) PostStream(ctx context.Context, path string, payload any) (io.ReadCloser, int, error) {
-	var body io.Reader
-	if payload != nil {
-		b, err := json.Marshal(payload)
-		if err != nil {
-			return nil, 0, fmt.Errorf("marshal payload: %w", err)
-		}
-		body = bytes.NewReader(b)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url(path), body)
-	if err != nil {
-		return nil, 0, err
-	}
-	if payload != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-	req.Header.Set(activity.HeaderAgentID, "mcp")
-	req.Header.Set(activity.HeaderPTSource, "mcp")
-	resp, err := c.HTTPClient.Do(req)
-	if err != nil {
-		return nil, 0, fmt.Errorf("request %s %s: %w", req.Method, req.URL.Path, err)
-	}
-	return resp.Body, resp.StatusCode, nil
-}
-
 // Post performs a POST request with a JSON body.
 func (c *Client) Post(ctx context.Context, path string, payload any) ([]byte, int, error) {
 	var body io.Reader
