@@ -53,3 +53,32 @@ func TestTrimHTMLLeavesShortInputUncapped(t *testing.T) {
 		t.Fatalf("TrimHTML(%q) = %q, want it unchanged", html, got)
 	}
 }
+
+// Stripping has to happen before the cap, and neither of the assertions above can
+// tell. Cap first and no script survives (stripping still runs) and the result is
+// still under the cap — both stay green while the prompt budget is spent on
+// content that is then thrown away, which is the token waste this package exists
+// to remove. On a page whose interactive markup sits after a large script or style
+// block, that markup is not merely crowded out, it is absent: the model is asked
+// to act on a page with no form in it.
+func TestTrimHTMLSpendsTheBudgetOnMarkupNotOnStrippedContent(t *testing.T) {
+	html := "<html><head><style>" + strings.Repeat("body{color:red}", 200) +
+		"</style><script>" + strings.Repeat("var x=1;doSomething();", 300) +
+		"</script></head><body>" +
+		`<form><input id="user" name="user"><input id="pass" type="password">` +
+		`<button id="go">Sign in</button></form>` +
+		"</body></html>"
+
+	if len(html) <= maxTrimmedBytes {
+		t.Fatalf("fixture is %d bytes, must exceed the %d-byte cap or the ordering is not exercised", len(html), maxTrimmedBytes)
+	}
+
+	got := TrimHTML(html)
+
+	// The interactive markup is the whole reason the prompt carries HTML at all.
+	for _, want := range []string{`id="go"`, `type="password"`, `id="user"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("trimmed HTML lost %s — the cap was applied before stripping, so the budget went on script and style that were then discarded:\n%s", want, got)
+		}
+	}
+}
