@@ -69,6 +69,8 @@ Most element commands accept a unified selector:
 - label, placeholder, alt, title, or test id selectors such as `label:Email`, `placeholder:Search`, `alt:Logo`, `title:Close`, `testid:submit`
 - positional wrappers such as `first:button`, `last:role:button`, or `nth:2:button` (`nth` is zero-based)
 
+Selector prefixes are case-insensitive, so `CSS:#login` and `css:#login` mean the same thing. Only the prefix is case-folded; the value after it is passed through unchanged.
+
 Structured forms such as `role:`, `label:`, and `testid:` are matched by the semantic engine against enriched snapshot descriptors. CSS, XPath, refs, the existing `text:` action selector, and bare CSS/text wrappers remain browser-side selector resolution.
 
 Selector lookup is explicit by frame. Unscoped selectors search only the current frame scope, which defaults to `main`. Use `pinchtab frame ...` before selector-based iframe work. Same-origin iframe scopes are supported; cross-origin iframe descendants are not currently exposed.

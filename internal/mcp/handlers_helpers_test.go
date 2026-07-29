@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -47,17 +48,27 @@ func TestLooksLikeStructuredSelector(t *testing.T) {
 	}
 }
 
-func TestHasKnownSelectorPrefixIsCaseInsensitive(t *testing.T) {
-	for _, in := range []string{"css:#a", "CSS:#a", "Find:submit", "NTH:2:div", "  text:hello"} {
-		if !hasKnownSelectorPrefix(in) {
-			t.Errorf("hasKnownSelectorPrefix(%q) = false, want true", in)
+func TestActionSelectorArgUsesTheGrammarsPrefixVocabulary(t *testing.T) {
+	// "find: login button" and "Role: Save" are the discriminating cases: the
+	// space after the colon keeps looksLikeStructuredSelector from claiming
+	// them, so only the grammar's prefix vocabulary passes them through.
+	for _, in := range []string{"css:#a", "CSS:#a", "Find:submit", "NTH:2:div", "  text:hello", "find: login button", "Role: Save"} {
+		want := strings.TrimSpace(in)
+		if got := actionSelectorArg(queryRequest(in)); got != want {
+			t.Errorf("actionSelectorArg(%q) = %q, want %q passed through as a selector", in, got, want)
 		}
 	}
-	for _, in := range []string{"submit", "unknownprefix:value"} {
-		if hasKnownSelectorPrefix(in) {
-			t.Errorf("hasKnownSelectorPrefix(%q) = true, want false", in)
+	for _, in := range []string{"submit", "unknownprefix value"} {
+		if got := actionSelectorArg(queryRequest(in)); got != "find:"+in {
+			t.Errorf("actionSelectorArg(%q) = %q, want it wrapped as find:", in, got)
 		}
 	}
+}
+
+func queryRequest(query string) mcp.CallToolRequest {
+	req := mcp.CallToolRequest{}
+	req.Params.Arguments = map[string]any{"query": query}
+	return req
 }
 
 func TestActionSelectorArgRoutesSpaceSeparatedProseToFind(t *testing.T) {

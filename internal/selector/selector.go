@@ -15,6 +15,9 @@
 //	"testid:submit"   → Test id locator
 //	"last:button"     → Positional selector wrapper
 //
+// Prefixes match case-insensitively, so "CSS:#login" and "css:#login" are the
+// same selector. Values are never case-folded.
+//
 // Bare strings that look like CSS selectors (start with ., #, [,
 // or contain tag-like patterns) are treated as CSS. Everything else
 // without a prefix is treated as a ref if it matches the eN pattern,
@@ -97,7 +100,7 @@ func (s Selector) IsEmpty() bool {
 
 // Parse interprets a selector string and returns a typed Selector.
 //
-// Explicit prefixes take priority:
+// Explicit prefixes take priority and match case-insensitively:
 //
 //	"css:..."    → CSS
 //	"xpath:..."  → XPath
@@ -130,50 +133,8 @@ func Parse(s string) Selector {
 		return Selector{}
 	}
 
-	if after, ok := cutPrefix(s, "css:"); ok {
-		return Selector{Kind: KindCSS, Value: after}
-	}
-	if after, ok := cutPrefix(s, "xpath:"); ok {
-		return Selector{Kind: KindXPath, Value: after}
-	}
-	if after, ok := cutPrefix(s, "text:"); ok {
-		return Selector{Kind: KindText, Value: after}
-	}
-	if after, ok := cutPrefix(s, "find:"); ok {
-		return Selector{Kind: KindSemantic, Value: after}
-	}
-	if after, ok := cutPrefix(s, "semantic:"); ok {
-		return Selector{Kind: KindSemantic, Value: after}
-	}
-	if after, ok := cutPrefix(s, "role:"); ok {
-		return Selector{Kind: KindRole, Value: after}
-	}
-	if after, ok := cutPrefix(s, "label:"); ok {
-		return Selector{Kind: KindLabel, Value: after}
-	}
-	if after, ok := cutPrefix(s, "placeholder:"); ok {
-		return Selector{Kind: KindPlaceholder, Value: after}
-	}
-	if after, ok := cutPrefix(s, "alt:"); ok {
-		return Selector{Kind: KindAlt, Value: after}
-	}
-	if after, ok := cutPrefix(s, "title:"); ok {
-		return Selector{Kind: KindTitle, Value: after}
-	}
-	if after, ok := cutPrefix(s, "testid:"); ok {
-		return Selector{Kind: KindTestID, Value: after}
-	}
-	if after, ok := cutPrefix(s, "first:"); ok {
-		return Selector{Kind: KindFirst, Value: after}
-	}
-	if after, ok := cutPrefix(s, "last:"); ok {
-		return Selector{Kind: KindLast, Value: after}
-	}
-	if after, ok := cutPrefix(s, "nth:"); ok {
-		return Selector{Kind: KindNth, Value: after}
-	}
-	if after, ok := cutPrefix(s, "ref:"); ok {
-		return Selector{Kind: KindRef, Value: after}
+	if kind, value, ok := cutKnownPrefix(s); ok {
+		return Selector{Kind: kind, Value: value}
 	}
 
 	if strings.HasPrefix(s, "//") || strings.HasPrefix(s, "(//") {
@@ -310,9 +271,51 @@ func ParseNth(value string) (index int, nested string, err error) {
 	return index, rawSelector, nil
 }
 
-func cutPrefix(s, prefix string) (string, bool) {
-	if strings.HasPrefix(s, prefix) {
-		return s[len(prefix):], true
+// prefixKind binds one explicit prefix to the Kind it produces.
+type prefixKind struct {
+	Prefix string
+	Kind   Kind
+}
+
+// prefixKinds is the one vocabulary of explicit selector prefixes. Parse and
+// HasKnownPrefix both read it, so a new kind is a single edit that cannot be
+// half-applied. Several prefixes may share a Kind: "find:" and "semantic:"
+// both produce KindSemantic.
+//
+// The unprefixed forms Parse also accepts — "//div" and "(//div)" as XPath, a
+// bare "e5" as a ref — are pattern matches rather than prefixes and stay out,
+// so HasKnownPrefix keeps meaning what its name says.
+var prefixKinds = []prefixKind{
+	{"css:", KindCSS},
+	{"xpath:", KindXPath},
+	{"text:", KindText},
+	{"find:", KindSemantic},
+	{"semantic:", KindSemantic},
+	{"role:", KindRole},
+	{"label:", KindLabel},
+	{"placeholder:", KindPlaceholder},
+	{"alt:", KindAlt},
+	{"title:", KindTitle},
+	{"testid:", KindTestID},
+	{"first:", KindFirst},
+	{"last:", KindLast},
+	{"nth:", KindNth},
+	{"ref:", KindRef},
+}
+
+// HasKnownPrefix reports whether s starts with an explicit selector prefix
+// Parse recognises. It answers false for the unprefixed forms Parse
+// auto-detects, such as "//div" and "e5".
+func HasKnownPrefix(s string) bool {
+	_, _, ok := cutKnownPrefix(strings.TrimSpace(s))
+	return ok
+}
+
+func cutKnownPrefix(s string) (Kind, string, bool) {
+	for _, pk := range prefixKinds {
+		if len(s) >= len(pk.Prefix) && strings.EqualFold(s[:len(pk.Prefix)], pk.Prefix) {
+			return pk.Kind, s[len(pk.Prefix):], true
+		}
 	}
-	return s, false
+	return KindNone, s, false
 }

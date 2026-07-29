@@ -39,9 +39,20 @@ func optInt(r mcp.CallToolRequest, key string) (int, bool) {
 	return int(v), ok
 }
 
+// Booleans get the same tolerance as numbers, and for the same reason. The one
+// opt-out argument makes it matter more than the opt-in flags: dropping
+// withBounds="false" leaves bounds switched on, so the response looks like the
+// default rather than like the request.
 func optBool(r mcp.CallToolRequest, key string) (bool, bool) {
-	v, ok := r.GetArguments()[key].(bool)
-	return v, ok
+	if v, ok := r.GetArguments()[key].(bool); ok {
+		return v, true
+	}
+	if raw := optTrimmedString(r, key); raw != "" {
+		if v, err := strconv.ParseBool(raw); err == nil {
+			return v, true
+		}
+	}
+	return false, false
 }
 
 func firstNonEmptyString(r mcp.CallToolRequest, keys ...string) string {
@@ -51,25 +62,6 @@ func firstNonEmptyString(r mcp.CallToolRequest, keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func hasKnownSelectorPrefix(v string) bool {
-	lower := strings.ToLower(strings.TrimSpace(v))
-	return strings.HasPrefix(lower, "css:") ||
-		strings.HasPrefix(lower, "xpath:") ||
-		strings.HasPrefix(lower, "text:") ||
-		strings.HasPrefix(lower, "find:") ||
-		strings.HasPrefix(lower, "semantic:") ||
-		strings.HasPrefix(lower, "role:") ||
-		strings.HasPrefix(lower, "label:") ||
-		strings.HasPrefix(lower, "placeholder:") ||
-		strings.HasPrefix(lower, "alt:") ||
-		strings.HasPrefix(lower, "title:") ||
-		strings.HasPrefix(lower, "testid:") ||
-		strings.HasPrefix(lower, "first:") ||
-		strings.HasPrefix(lower, "last:") ||
-		strings.HasPrefix(lower, "nth:") ||
-		strings.HasPrefix(lower, "ref:")
 }
 
 func looksLikeStructuredSelector(v string) bool {
@@ -135,7 +127,7 @@ func actionSelectorArg(r mcp.CallToolRequest) string {
 	if query == "" {
 		return ""
 	}
-	if hasKnownSelectorPrefix(query) || selector.IsRef(query) || looksLikeStructuredSelector(query) {
+	if selector.HasKnownPrefix(query) || selector.IsRef(query) || looksLikeStructuredSelector(query) {
 		return query
 	}
 	return "find:" + query

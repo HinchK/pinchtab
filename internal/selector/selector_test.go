@@ -1,6 +1,7 @@
 package selector
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -506,5 +507,102 @@ func TestParseNth(t *testing.T) {
 	}
 	if _, _, err := ParseNth("2:   "); err == nil {
 		t.Error("expected blank nested selector to fail")
+	}
+}
+
+// TestPrefixTableDrivesBothParseAndHasKnownPrefix is the guard that keeps the
+// two readers of prefixKinds from drifting: every table entry must parse to its
+// own Kind and be recognised by the predicate, in lower, upper and mixed case.
+func TestPrefixTableDrivesBothParseAndHasKnownPrefix(t *testing.T) {
+	if len(prefixKinds) == 0 {
+		t.Fatal("prefixKinds is empty; the guard would pass vacuously")
+	}
+
+	for _, pk := range prefixKinds {
+		for _, spelling := range []string{
+			pk.Prefix,
+			strings.ToUpper(pk.Prefix),
+			strings.ToUpper(pk.Prefix[:1]) + pk.Prefix[1:],
+		} {
+			input := spelling + "value"
+			t.Run(input, func(t *testing.T) {
+				if !HasKnownPrefix(input) {
+					t.Errorf("HasKnownPrefix(%q) = false, want true", input)
+				}
+				got := Parse(input)
+				if got.Kind != pk.Kind {
+					t.Errorf("Parse(%q).Kind = %q, want %q", input, got.Kind, pk.Kind)
+				}
+				if got.Value != "value" {
+					t.Errorf("Parse(%q).Value = %q, want %q", input, got.Value, "value")
+				}
+			})
+		}
+	}
+}
+
+func TestPrefixTableCoversEveryKindWithAPrefix(t *testing.T) {
+	tabled := map[Kind]bool{}
+	for _, pk := range prefixKinds {
+		tabled[pk.Kind] = true
+	}
+	for _, kind := range []Kind{
+		KindRef, KindCSS, KindXPath, KindText, KindSemantic, KindRole, KindLabel,
+		KindPlaceholder, KindAlt, KindTitle, KindTestID, KindFirst, KindLast, KindNth,
+	} {
+		if !tabled[kind] {
+			t.Errorf("kind %q has no prefix in prefixKinds", kind)
+		}
+	}
+	if got := Parse("semantic:login button"); got.Kind != KindSemantic {
+		t.Errorf(`Parse("semantic:...").Kind = %q, want %q`, got.Kind, KindSemantic)
+	}
+	if got := Parse("find:login button"); got.Kind != KindSemantic {
+		t.Errorf(`Parse("find:...").Kind = %q, want %q`, got.Kind, KindSemantic)
+	}
+}
+
+func TestHasKnownPrefixExcludesTheAutoDetectedForms(t *testing.T) {
+	for _, in := range []string{"//div", "(//div)", "e5", "#id", ".class", "submit", "unknownprefix:value", ""} {
+		if HasKnownPrefix(in) {
+			t.Errorf("HasKnownPrefix(%q) = true, want false", in)
+		}
+	}
+
+	if got := Parse("//div"); got.Kind != KindXPath || got.Value != "//div" {
+		t.Errorf(`Parse("//div") = %+v, want xpath //div`, got)
+	}
+	if got := Parse("(//div)"); got.Kind != KindXPath || got.Value != "(//div)" {
+		t.Errorf(`Parse("(//div)") = %+v, want xpath (//div)`, got)
+	}
+	if got := Parse("e5"); got.Kind != KindRef || got.Value != "e5" {
+		t.Errorf(`Parse("e5") = %+v, want ref e5`, got)
+	}
+
+	if !HasKnownPrefix("  text:hello") {
+		t.Error(`HasKnownPrefix("  text:hello") = false; leading space must be trimmed as Parse trims it`)
+	}
+}
+
+func TestParseMixedCasePrefixesMatchTheirLowercaseForm(t *testing.T) {
+	pairs := [][2]string{
+		{"CSS:#id", "css:#id"},
+		{"Text:hello", "text:hello"},
+		{"XPath://div", "xpath://div"},
+		{"Find:login button", "find:login button"},
+		{"Role:button Save", "role:button Save"},
+		{"TestID:submit", "testid:submit"},
+		{"NTH:2:div", "nth:2:div"},
+		{"Ref:e5", "ref:e5"},
+	}
+	for _, pair := range pairs {
+		mixed, lower := Parse(pair[0]), Parse(pair[1])
+		if mixed != lower {
+			t.Errorf("Parse(%q) = %+v, want it identical to Parse(%q) = %+v", pair[0], mixed, pair[1], lower)
+		}
+	}
+
+	if got := Parse("CSS:#id"); got.Kind != KindCSS || got.Value != "#id" {
+		t.Errorf(`Parse("CSS:#id") = %+v, want css #id`, got)
 	}
 }
