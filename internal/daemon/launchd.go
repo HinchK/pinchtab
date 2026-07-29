@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"os"
@@ -177,7 +178,24 @@ func isLaunchdIgnorableError(err error) bool {
 		strings.Contains(msg, launchdAlreadyBootstrapped)
 }
 
+// plistString escapes a value for inclusion in a plist <string> element. The
+// paths reaching here are user-influenced (--config / PINCHTAB_CONFIG, and the
+// home directory), and a bare "&" — ordinary in a macOS directory name like
+// "R&D" — otherwise makes launchctl reject the file as malformed XML.
+func plistString(value string) string {
+	var b strings.Builder
+	if err := xml.EscapeText(&b, []byte(value)); err != nil {
+		return ""
+	}
+	return b.String()
+}
+
 func renderLaunchdPlist(execPath, configPath, homeDir, stdoutPath, stderrPath string) string {
+	execPath = plistString(execPath)
+	configPath = plistString(configPath)
+	homeDir = plistString(homeDir)
+	stdoutPath = plistString(stdoutPath)
+	stderrPath = plistString(stderrPath)
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
