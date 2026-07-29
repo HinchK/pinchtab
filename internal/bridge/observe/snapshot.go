@@ -12,6 +12,22 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
+// MaskedValue stands in for a sensitive field's content in snapshots. Its width
+// is fixed on purpose: snapshots are persisted and rendered elsewhere, so a
+// length-proportional mask would leak the secret's length. It says "there is a
+// value here", nothing more — an empty sensitive field carries no value at all.
+const MaskedValue = "••••••••"
+
+// IsSensitiveAutocomplete reports whether an autocomplete token marks a field
+// whose content must never be printed.
+func IsSensitiveAutocomplete(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "current-password", "new-password":
+		return true
+	}
+	return false
+}
+
 type A11yNode struct {
 	Ref            string       `json:"ref"`
 	Role           string       `json:"role"`
@@ -451,11 +467,12 @@ func BuildSnapshot(nodes []RawAXNode, filter string, maxDepth int) ([]A11yNode, 
 			if prop.Name == "focused" && prop.Value.String() == "true" {
 				entry.Focused = true
 			}
-			if prop.Name == "autocomplete" {
-				v := strings.ToLower(prop.Value.String())
-				if v == "current-password" || v == "new-password" {
-					entry.Value = "••••••••"
-				}
+			// Unconditional by design: this pass has no DOM access, and the DOM
+			// enrichment that knows whether the field is empty is best-effort. If
+			// it never runs, this mask is what keeps a password out of the
+			// snapshot, so it must not depend on a signal available only there.
+			if prop.Name == "autocomplete" && IsSensitiveAutocomplete(prop.Value.String()) {
+				entry.Value = MaskedValue
 			}
 		}
 

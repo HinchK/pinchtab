@@ -141,7 +141,14 @@ func Load(path, encryptionKey string) (*StateFile, error) {
 		return nil, fmt.Errorf("read state file: %w", err)
 	}
 
-	if encryptionKey != "" {
+	// The extension records what Save actually did, so trust it over the
+	// caller's key: a plaintext file must still load when a key happens to be
+	// configured. json.Valid also catches encrypted payloads written by older
+	// versions that did not use the .enc extension.
+	if strings.HasSuffix(path, fileExtension(true)) || !json.Valid(data) {
+		if encryptionKey == "" {
+			return nil, fmt.Errorf("state file is encrypted: an encryption key is required")
+		}
 		decrypted, decErr := Decrypt(data, encryptionKey)
 		if decErr != nil {
 			return nil, fmt.Errorf("decrypt state file: %w", decErr)

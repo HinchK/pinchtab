@@ -6,17 +6,24 @@ import (
 	"strings"
 
 	"github.com/chromedp/chromedp"
+	bridgeobserve "github.com/pinchtab/pinchtab/internal/bridge/observe"
 )
 
 type nodeDOMMetadata struct {
-	Tag         string `json:"tag"`
-	Label       string `json:"label"`
-	Placeholder string `json:"placeholder"`
-	Alt         string `json:"alt"`
-	Title       string `json:"title"`
-	TestID      string `json:"testid"`
-	Text        string `json:"text"`
-	InputType   string `json:"inputType"`
+	Tag          string `json:"tag"`
+	Label        string `json:"label"`
+	Placeholder  string `json:"placeholder"`
+	Alt          string `json:"alt"`
+	Title        string `json:"title"`
+	TestID       string `json:"testid"`
+	Text         string `json:"text"`
+	InputType    string `json:"inputType"`
+	Autocomplete string `json:"autocomplete"`
+	// HasValue is the DOM's own emptiness answer (!!el.value). The value itself
+	// never crosses this boundary, and the accessibility tree cannot answer it —
+	// browsers routinely suppress AXValue for password inputs, so gating on the
+	// node's existing value would render a filled password as empty.
+	HasValue bool `json:"hasValue"`
 }
 
 // EnrichA11yNodesWithDOMMetadata adds DOM-backed descriptor fields used by the
@@ -111,9 +118,24 @@ func applyNodeDOMMetadata(node *A11yNode, meta nodeDOMMetadata) {
 	node.Title = strings.TrimSpace(meta.Title)
 	node.TestID = strings.TrimSpace(meta.TestID)
 	node.Text = strings.TrimSpace(meta.Text)
-	if strings.EqualFold(strings.TrimSpace(meta.InputType), "password") {
-		node.Value = "••••••••"
+	if !isSensitiveField(meta) {
+		return
 	}
+	// This is the only site allowed to clear a mask, and only on the DOM's
+	// positive "no value" answer: an empty field must read as empty, a filled one
+	// must never show its content.
+	if meta.HasValue {
+		node.Value = bridgeobserve.MaskedValue
+		return
+	}
+	node.Value = ""
+}
+
+// isSensitiveField is the union of the two password signals: the input type and
+// the autocomplete token. Either one alone marks the field sensitive.
+func isSensitiveField(meta nodeDOMMetadata) bool {
+	return strings.EqualFold(strings.TrimSpace(meta.InputType), "password") ||
+		bridgeobserve.IsSensitiveAutocomplete(meta.Autocomplete)
 }
 
 const domMetadataFn = `function() {
@@ -171,6 +193,8 @@ const domMetadataFn = `function() {
 		title: attr("title"),
 		testid: testID(),
 		text: text.length > 500 ? text.slice(0, 500) : text,
-		inputType: (el.tagName && el.tagName.toLowerCase() === "input") ? (el.type || "") : ""
+		inputType: (el.tagName && el.tagName.toLowerCase() === "input") ? (el.type || "") : "",
+		autocomplete: attr("autocomplete"),
+		hasValue: !!el.value
 	};
 }`
