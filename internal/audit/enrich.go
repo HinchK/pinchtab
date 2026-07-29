@@ -209,7 +209,6 @@ func MapInteractiveElements(nodes []observe.A11yNode) []InteractiveElement {
 			Tag:      n.Tag,
 			Label:    n.Label,
 			Disabled: n.Disabled,
-			Visible:  !n.Hidden,
 		})
 	}
 	return out

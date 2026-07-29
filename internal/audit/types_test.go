@@ -3,8 +3,11 @@ package audit
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/pinchtab/pinchtab/pkg/pinchtabaudit"
 )
 
 func roundTrip[T any](t *testing.T, name string, in T) {
@@ -41,7 +44,7 @@ func sampleBrokenAsset() BrokenAsset {
 }
 
 func sampleInteractiveElement() InteractiveElement {
-	return InteractiveElement{Ref: "e5", Role: "button", Name: "Submit", Tag: "button", Label: "Submit form", Disabled: true, Visible: true}
+	return InteractiveElement{Ref: "e5", Role: "button", Name: "Submit", Tag: "button", Label: "Submit form", Disabled: true}
 }
 
 func sampleTimingMetrics() BrowserTimingMetrics {
@@ -134,5 +137,48 @@ func TestNewAuditReportSchemaVersion(t *testing.T) {
 	}
 	if got := raw["schemaVersion"]; got != SchemaVersion {
 		t.Fatalf("schemaVersion JSON field = %v, want %q", got, SchemaVersion)
+	}
+}
+
+// The audit snapshot path never measures layout (no bounds pass, no on-screen
+// test), so the report must make no visibility claim at all. The positive
+// assertions are here because an empty payload would satisfy the negative.
+func TestReportJSONHasNoVisibleKeyForInteractiveElements(t *testing.T) {
+	data, err := json.Marshal(sampleAuditReport())
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	report := string(data)
+
+	if strings.Contains(report, "visible") {
+		t.Errorf("audit report JSON carries a visible key:\n%s", report)
+	}
+	for _, want := range []string{`"interactiveElements":[{`, `"ref":"e5"`, `"role":"button"`, `"tag":"button"`, `"label":"Submit form"`, `"disabled":true`} {
+		if !strings.Contains(report, want) {
+			t.Errorf("audit report JSON lost %s:\n%s", want, report)
+		}
+	}
+}
+
+// The SDK mirrors this struct by hand so the public surface never imports
+// internal packages, which means nothing but this guard keeps a field removed
+// from one side from surviving on the other.
+func TestInteractiveElementMatchesTheSDKMirror(t *testing.T) {
+	shape := func(rt reflect.Type) []string {
+		var out []string
+		for i := 0; i < rt.NumField(); i++ {
+			f := rt.Field(i)
+			out = append(out, f.Name+" "+f.Type.String()+" "+f.Tag.Get("json"))
+		}
+		return out
+	}
+
+	got := shape(reflect.TypeOf(InteractiveElement{}))
+	want := shape(reflect.TypeOf(pinchtabaudit.InteractiveElement{}))
+	if len(got) == 0 {
+		t.Fatal("InteractiveElement has no fields; the guard would pass vacuously")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("InteractiveElement diverges from the SDK mirror\n internal: %v\n      sdk: %v", got, want)
 	}
 }

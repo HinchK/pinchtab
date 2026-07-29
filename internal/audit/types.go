@@ -79,8 +79,6 @@ type InteractiveElement struct {
 	Label string `json:"label,omitempty"`
 	// Disabled reports whether the element is disabled.
 	Disabled bool `json:"disabled,omitempty"`
-	// Visible reports whether the element is visible in the layout.
-	Visible bool `json:"visible,omitempty"`
 }
 
 // BrowserTimingMetrics holds browser-level performance timings for a page,

@@ -45,7 +45,6 @@ type InteractiveElement struct {
 	Tag      string `json:"tag,omitempty"`
 	Label    string `json:"label,omitempty"`
 	Disabled bool   `json:"disabled,omitempty"`
-	Visible  bool   `json:"visible,omitempty"`
 }
 
 // TimingMetrics holds browser-level performance timings in milliseconds.

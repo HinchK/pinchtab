@@ -14,63 +14,51 @@
         "interactiveElements": [
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Broken assets",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Console errors",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Accessibility issues",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Clean page",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Forms",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Cookie echo",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Product 1",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Product 2",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Product 3",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Product 4",
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
             "name": "Product 5",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -118,8 +106,7 @@
         "interactiveElements": [
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -181,8 +168,7 @@
         "interactiveElements": [
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -206,21 +192,17 @@
         "consoleLogs": [],
         "interactiveElements": [
           {
-            "role": "textbox",
-            "visible": true
+            "role": "textbox"
           },
           {
-            "role": "link",
-            "visible": true
+            "role": "link"
           },
           {
-            "role": "button",
-            "visible": true
+            "role": "button"
           },
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -251,18 +233,15 @@
         "interactiveElements": [
           {
             "name": "Search",
-            "role": "textbox",
-            "visible": true
+            "role": "textbox"
           },
           {
             "name": "Search",
-            "role": "button",
-            "visible": true
+            "role": "button"
           },
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -287,23 +266,19 @@
         "interactiveElements": [
           {
             "name": "Username",
-            "role": "textbox",
-            "visible": true
+            "role": "textbox"
           },
           {
             "name": "Password",
-            "role": "textbox",
-            "visible": true
+            "role": "textbox"
           },
           {
             "name": "Sign in",
-            "role": "button",
-            "visible": true
+            "role": "button"
           },
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -341,8 +316,7 @@
         "interactiveElements": [
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -367,8 +341,7 @@
         "interactiveElements": [
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -393,8 +366,7 @@
         "interactiveElements": [
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -419,8 +391,7 @@
         "interactiveElements": [
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -445,8 +416,7 @@
         "interactiveElements": [
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [
@@ -471,8 +441,7 @@
         "interactiveElements": [
           {
             "name": "Home",
-            "role": "link",
-            "visible": true
+            "role": "link"
           }
         ],
         "networkRequests": [

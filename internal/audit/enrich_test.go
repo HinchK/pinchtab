@@ -158,7 +158,7 @@ func TestMapInteractiveElementsFiltersRolesAndHidden(t *testing.T) {
 		{Ref: "e2", Role: "paragraph", Name: "text"},
 		{Ref: "e3", Role: "link", Name: "x", Hidden: true},
 	})
-	if len(got) != 1 || got[0].Ref != "e1" || !got[0].Visible {
+	if len(got) != 1 || got[0].Ref != "e1" {
 		t.Errorf("MapInteractiveElements = %+v", got)
 	}
 }
