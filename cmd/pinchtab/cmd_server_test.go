@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -215,5 +217,120 @@ func TestServerCommandAssignsTheLogLevelOnlyInsideResolveLogLevel(t *testing.T) 
 	}
 	if !strings.Contains(src, "resolveLogLevel(cfg, logLevel, verbose)") {
 		t.Error("the server command no longer calls resolveLogLevel with the flag and the verbose flag")
+	}
+}
+
+// captureRunLog installs the handler a real run installs, at the level a real run
+// starts from, so the load-then-resolve sequence below is the production one
+// rather than a level set up front.
+func captureRunLog(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(safelog.NewDefaultHandler(&buf)))
+	safelog.SetLevel(safelog.DefaultLevel)
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+		safelog.SetLevel(safelog.DefaultLevel)
+	})
+	return &buf
+}
+
+func writeRunConfig(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", path)
+	t.Setenv("PINCHTAB_TOKEN", "test-token")
+	return path
+}
+
+// The sequence the defect lived in: the loader describes reading the very file
+// that carries server.logLevel, so the diagnostics have to outlive the load and be
+// emitted once the level is known.
+func loadThenResolve(t *testing.T, flag string, verbose bool) *config.RuntimeConfig {
+	t.Helper()
+	cfg, diags, err := config.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	resolveLogLevel(cfg, flag, verbose)
+	config.EmitLoadDiagnostics(diags)
+	return cfg
+}
+
+func TestConfigFileDebugLevelRecordsTheConfigLoadDiagnostic(t *testing.T) {
+	path := writeRunConfig(t, `{"server":{"port":"9867","logLevel":"debug"}}`)
+	buf := captureRunLog(t)
+
+	loadThenResolve(t, "", false)
+
+	out := buf.String()
+	if !strings.Contains(out, "loading config file") {
+		t.Errorf("server.logLevel=debug did not record the config-load diagnostic:\n%s", out)
+	}
+	if !strings.Contains(out, path) {
+		t.Errorf("the diagnostic does not name the file that was read (%s):\n%s", path, out)
+	}
+}
+
+// Shape 2 of the card: the flag route works too, so --log-level debug can tell you
+// which config file it read even when the file itself says nothing about levels.
+func TestLogLevelFlagRecordsTheConfigLoadDiagnostic(t *testing.T) {
+	path := writeRunConfig(t, `{"server":{"port":"9867"}}`)
+	buf := captureRunLog(t)
+
+	loadThenResolve(t, "debug", false)
+
+	if out := buf.String(); !strings.Contains(out, "loading config file") || !strings.Contains(out, path) {
+		t.Errorf("--log-level debug did not record the config-load diagnostic with its path:\n%s", out)
+	}
+}
+
+// A silently rewritten config is the case a user most needs to see.
+func TestLegacyBrowserMigrationNoticeIsReachableAtDebug(t *testing.T) {
+	writeRunConfig(t, `{"server":{"port":"9867","logLevel":"debug"},"browser":{"binary":"/tmp/chrome"}}`)
+	buf := captureRunLog(t)
+
+	cfg := loadThenResolve(t, "", false)
+
+	if !cfg.TargetsSynthesized {
+		t.Fatalf("precondition: the legacy browser config was not migrated, so there is no notice to record")
+	}
+	if out := buf.String(); !strings.Contains(out, "migrated legacy browser config") {
+		t.Errorf("the migration notice is unreachable at debug:\n%s", out)
+	}
+}
+
+// The fix must not promote the diagnostics: a default run stays quiet about which
+// file it read, while a warn-level diagnostic from the same load still lands.
+func TestDefaultRunRecordsNoConfigLoadDiagnosticButKeepsWarnings(t *testing.T) {
+	writeRunConfig(t, `{"server":{"port":"9867"},"browsers":{"default":"not-a-browser"}}`)
+	buf := captureRunLog(t)
+
+	loadThenResolve(t, "", false)
+
+	out := buf.String()
+	if strings.Contains(out, "loading config file") {
+		t.Errorf("a default run recorded the debug config-load diagnostic:\n%s", out)
+	}
+	if !strings.Contains(out, "not a known browser") {
+		t.Errorf("a warn diagnostic from the same load was dropped:\n%s", out)
+	}
+}
+
+// internal/config must not grow its own precedence: it collects diagnostics and
+// emits them on request, and the level decision stays in resolveLogLevel.
+func TestConfigPackageHoldsNoLogLevelPrecedence(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "config", "config_load.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"safelog.", "SetLevel("} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Errorf("internal/config/config_load.go references %q — the level decision must stay in resolveLogLevel", forbidden)
+		}
 	}
 }

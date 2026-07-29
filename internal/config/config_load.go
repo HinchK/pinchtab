@@ -118,7 +118,33 @@ type LoadDiagnostic struct {
 // defaults. It is a thin wrapper over LoadConfig that emits the load diagnostics
 // via slog and terminates the process on a fatal config error.
 func Load() *RuntimeConfig {
+	cfg, diags := LoadDeferringDiagnostics()
+	EmitLoadDiagnostics(diags)
+	return cfg
+}
+
+// LoadDeferringDiagnostics loads the config and hands back its diagnostics
+// unemitted, for a caller that must resolve the log level before they are
+// written. The load diagnostics describe reading the very file that carries
+// server.logLevel, so emitting them during the load drops every debug one at any
+// setting. A fatal config error still terminates here: it is reported at error
+// level, which no level suppresses, and there is nothing to resolve afterwards.
+//
+// This carries no precedence logic — the caller decides the level and then calls
+// EmitLoadDiagnostics.
+func LoadDeferringDiagnostics() (*RuntimeConfig, []LoadDiagnostic) {
 	cfg, diags, err := LoadConfig()
+	if err != nil {
+		EmitLoadDiagnostics(diags)
+		slog.Error(err.Error())
+		os.Exit(1)
+	}
+	return cfg, diags
+}
+
+// EmitLoadDiagnostics writes collected load diagnostics through slog at the level
+// each one declares.
+func EmitLoadDiagnostics(diags []LoadDiagnostic) {
 	for _, d := range diags {
 		switch d.Level {
 		case slog.LevelDebug:
@@ -129,11 +155,6 @@ func Load() *RuntimeConfig {
 			slog.Warn(d.Message, d.Attrs...)
 		}
 	}
-	if err != nil {
-		slog.Error(err.Error())
-		os.Exit(1)
-	}
-	return cfg
 }
 
 // LoadConfig builds the RuntimeConfig (env > file > defaults) with no logging and
@@ -293,7 +314,7 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 		diags = append(diags, LoadDiagnostic{slog.LevelWarn, "config validation error", []any{"path", res.Path, "error", e}})
 	}
 
-	applyFileConfig(cfg, res.FC)
+	diags = append(diags, applyFileConfig(cfg, res.FC)...)
 	finalizeProfileConfig(cfg)
 
 	if cfg.Port == "" {
@@ -343,18 +364,19 @@ func finalizeProfileConfig(cfg *RuntimeConfig) {
 	}
 }
 
-func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
+func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) []LoadDiagnostic {
 	applyServerConfig(cfg, fc.Server)
 	applySecurityConfig(cfg, fc.Security)
 	applyObservabilityConfig(cfg, fc.Observability)
 	applySessionsConfig(cfg, fc.Sessions)
-	applyBrowserConfig(cfg, &fc.Browser, fc.Browsers)
+	diags := applyBrowserConfig(cfg, &fc.Browser, fc.Browsers)
 	applyInstanceDefaultsConfig(cfg, &fc.InstanceDefaults)
 	applyProfilesConfig(cfg, fc.Profiles)
 	applyMultiInstanceConfig(cfg, fc.MultiInstance)
 	applyTimeoutsConfig(cfg, fc.Timeouts)
 	applySchedulerConfig(cfg, fc.Scheduler)
 	applyAutoSolverConfig(cfg, fc.AutoSolver)
+	return diags
 }
 
 func applyServerConfig(cfg *RuntimeConfig, s ServerConfig) {
@@ -531,12 +553,16 @@ func applySessionsConfig(cfg *RuntimeConfig, s SessionsFileConfig) {
 	}
 }
 
-func applyBrowserConfig(cfg *RuntimeConfig, browser *BrowserConfig, browsersCfg BrowsersConfig) {
+// applyBrowserConfig returns its notices rather than logging them: a debug notice
+// emitted during the load is written before any command has resolved the level,
+// so logging here made a silently rewritten config unreadable at every setting.
+func applyBrowserConfig(cfg *RuntimeConfig, browser *BrowserConfig, browsersCfg BrowsersConfig) []LoadDiagnostic {
+	var diags []LoadDiagnostic
 	synthesized, conflict := migrateLegacyBrowserConfig(browser, browsersCfg.Default)
 	if conflict {
-		slog.Warn("config has both browser.targets and legacy browser.binary/extraFlags/cloak/proxy set; targets are used as authored (no legacy synthesis), but the legacy fields still seed the base runtime config that target resolution overlays per-field")
+		diags = append(diags, LoadDiagnostic{slog.LevelWarn, "config has both browser.targets and legacy browser.binary/extraFlags/cloak/proxy set; targets are used as authored (no legacy synthesis), but the legacy fields still seed the base runtime config that target resolution overlays per-field", nil})
 	} else if synthesized {
-		slog.Debug("migrated legacy browser config into browser.targets.default")
+		diags = append(diags, LoadDiagnostic{slog.LevelDebug, "migrated legacy browser config into browser.targets.default", nil})
 	}
 	cfg.Targets = cloneBrowserTargetsConfig(browser.Targets)
 	cfg.DefaultTarget = browser.DefaultTarget
@@ -546,8 +572,8 @@ func applyBrowserConfig(cfg *RuntimeConfig, browser *BrowserConfig, browsersCfg 
 	if browsersCfg.Default != "" {
 		cfg.DefaultBrowser = strings.ToLower(strings.TrimSpace(browsersCfg.Default))
 		if _, ok := browsers.Get(strings.ToLower(strings.TrimSpace(browsersCfg.Default))); !ok {
-			slog.Warn("browsers.default is not a known browser; launches will fall back to chrome",
-				"configured", browsersCfg.Default, "known", browsers.IDs())
+			diags = append(diags, LoadDiagnostic{slog.LevelWarn, "browsers.default is not a known browser; launches will fall back to chrome",
+				[]any{"configured", browsersCfg.Default, "known", browsers.IDs()}})
 		}
 	} else if name := ResolveDefaultTarget(cfg); name != "" && !cfg.TargetsSynthesized && cfg.Targets[name].Provider != "" {
 		cfg.DefaultBrowser = NormalizeBrowser(cfg.Targets[name].Provider)
@@ -594,6 +620,8 @@ func applyBrowserConfig(cfg *RuntimeConfig, browser *BrowserConfig, browsersCfg 
 	} else {
 		cfg.BrowsersAvailable = []string{"chrome"}
 	}
+
+	return diags
 }
 
 func applyInstanceDefaultsConfig(cfg *RuntimeConfig, d *InstanceDefaultsConfig) {
@@ -809,7 +837,7 @@ func ApplyFileConfigToRuntime(cfg *RuntimeConfig, fc *FileConfig) {
 		return
 	}
 
-	applyFileConfig(cfg, fc)
+	EmitLoadDiagnostics(applyFileConfig(cfg, fc))
 	finalizeProfileConfig(cfg)
 }
 

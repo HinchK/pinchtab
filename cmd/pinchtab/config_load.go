@@ -17,6 +17,18 @@ func loadConfig() *config.RuntimeConfig {
 	return cfg
 }
 
+// loadConfigDeferringDiagnostics is loadConfig for the commands that resolve a log
+// level: the returned diagnostics stay unemitted until resolveLogLevel has run,
+// so a debug level asked for in the config file can show the load of that file.
+// The caller must pass them to config.EmitLoadDiagnostics.
+func loadConfigDeferringDiagnostics() (*config.RuntimeConfig, []config.LoadDiagnostic) {
+	if err := ensureMandatoryToken(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+	return config.LoadDeferringDiagnostics()
+}
+
 func loadLocalConfig() *config.RuntimeConfig {
 	return config.Load()
 }

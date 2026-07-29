@@ -20,7 +20,7 @@ var serverCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		maybeRunWizard()
 
-		cfg := loadConfig()
+		cfg, loadDiags := loadConfigDeferringDiagnostics()
 		backgroundMarker, _ := cmd.Flags().GetString("background-child")
 		cfg.BackgroundMarker = backgroundMarker
 
@@ -56,6 +56,7 @@ var serverCmd = &cobra.Command{
 		cfg.VerboseBanner = verbose
 		logLevel, _ := cmd.Flags().GetString("log-level")
 		resolveLogLevel(cfg, logLevel, verbose)
+		config.EmitLoadDiagnostics(loadDiags)
 
 		browserName, _ := cmd.Flags().GetString("browser")
 		if browserName != "" {
@@ -101,9 +102,19 @@ func applyServerAddressFlags(cfg *config.RuntimeConfig, bind, port string) {
 
 // resolveLogLevel settles a run's threshold from the only inputs that carry it, in
 // precedence order: --log-level, then server.logLevel from the config file, then
-// -v, then the default. Every command that logs calls this rather than assigning
-// cfg.LogLevel itself — an unconditional assignment erased server.logLevel on
-// every flagless run, which is every daemon-installed and auto-started server.
+// -v, then the default. It is the one place that decides that precedence, and no
+// caller assigns cfg.LogLevel itself — an unconditional assignment erased
+// server.logLevel on every flagless run, which is every daemon-installed and
+// auto-started server.
+//
+// The long-running runtimes call it: `server` and `bridge`. The short-lived
+// commands do not, and do not need to. cmd_server_ensure.go and
+// cmd_server_background.go log about spawning a server rather than being one, so
+// their warnings and errors are recorded at the default level and their two
+// slog.Debug lines are deliberately not reachable — a CLI command that
+// auto-starts a server has no --log-level of its own to honour, and the server it
+// starts resolves its own. Give either of them a level flag and it must route
+// through here.
 func resolveLogLevel(cfg *config.RuntimeConfig, logLevel string, verbose bool) {
 	if v := strings.TrimSpace(logLevel); v != "" {
 		cfg.LogLevel = v

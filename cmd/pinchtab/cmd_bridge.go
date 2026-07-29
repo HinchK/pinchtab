@@ -35,7 +35,7 @@ Examples:
     --browser cloak --remote-browser-name cloak-manager-profile
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg := loadConfig()
+		cfg, loadDiags := loadConfigDeferringDiagnostics()
 		if v := strings.TrimSpace(bridgeCDPAttach); v != "" {
 			cdpURL, err := validateBridgeCDPURL(v)
 			if err != nil {
@@ -60,6 +60,7 @@ Examples:
 			cfg.RemoteBrowserName = v
 		}
 		resolveLogLevel(cfg, bridgeLogLevel, false)
+		config.EmitLoadDiagnostics(loadDiags)
 
 		server.RunBridgeServer(cfg, version)
 		return nil
