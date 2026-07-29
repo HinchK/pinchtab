@@ -58,9 +58,11 @@ import (
 // from the CDP call that creates an isolated handle instead of from these names.
 var isolatedHandleTokens = []string{"IsolatedNodeObjectID", "FrameExecutionContextID"}
 
-// isolatedResolveWindow is how far after a DOM.resolveNode the executionContextId
+// isolatedResolveWindow is how far after a DOM.resolveNode the isolating argument
 // has to appear to belong to it. The resolution census uses the same span for the
-// same reason: the two are one call written across a few lines.
+// same reason: the two are one call written across a few lines. The spellings come
+// from that census's resolveNodeSpellings table, so both guards share one
+// definition of "an isolated resolve" by construction rather than by coincidence.
 const isolatedResolveWindow = 200
 
 // A file that resolves a node with an executionContextId produces a top-frame
@@ -94,14 +96,24 @@ func TestIsolatedHandleProducersAreAllInScope(t *testing.T) {
 		}
 		src := string(raw)
 
+		// Both spellings, from the one table the resolution census already owns. That
+		// census added the typed pairing precisely because a check knowing only the
+		// string literal reads as module-wide while every typed call site goes
+		// unchecked; borrowing its window without its spellings would reproduce that
+		// here, and this check's failure mode is silence.
 		isolating := false
-		for _, block := range strings.Split(src, `"DOM.resolveNode"`)[1:] {
-			head := block
-			if len(head) > isolatedResolveWindow {
-				head = head[:isolatedResolveWindow]
+		for _, spelling := range resolveNodeSpellings {
+			for _, block := range strings.Split(src, spelling.call)[1:] {
+				head := block
+				if len(head) > isolatedResolveWindow {
+					head = head[:isolatedResolveWindow]
+				}
+				if strings.Contains(head, spelling.isolated) {
+					isolating = true
+					break
+				}
 			}
-			if strings.Contains(head, "executionContextId") {
-				isolating = true
+			if isolating {
 				break
 			}
 		}
