@@ -53,6 +53,51 @@ func TestCleanErrorRedactsAbsolutePaths(t *testing.T) {
 	}
 }
 
+// The mirror of the Prefix table below. Carrying the marker is the only thing
+// that separates these two exported helpers, and it is the reason callers pick
+// one over the other, so it is asserted where the rule is owned rather than left
+// to whichever downstream package happens to notice.
+func TestTruncateUTF8BytesCutsOnRuneBoundaryWithMarker(t *testing.T) {
+	const s = "héllo"
+
+	tests := []struct {
+		name     string
+		input    string
+		maxBytes int
+		want     string
+	}{
+		{name: "empty input", input: "", maxBytes: 8, want: ""},
+		{name: "whole string fits exactly", input: s, maxBytes: len(s), want: s},
+		{name: "budget beyond the string", input: s, maxBytes: len(s) + 10, want: s},
+		{name: "over the limit gains the marker", input: s, maxBytes: 4, want: "h" + TruncationSuffix},
+		{name: "marker budget lands inside a two-byte rune", input: s, maxBytes: 5, want: "h" + TruncationSuffix},
+		{name: "budget is exactly the marker", input: s, maxBytes: len(TruncationSuffix), want: TruncationSuffix},
+		{name: "budget below the marker keeps what fits", input: s, maxBytes: 1, want: "."},
+		{name: "zero budget", input: s, maxBytes: 0, want: ""},
+		{name: "negative budget", input: s, maxBytes: -1, want: ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TruncateUTF8Bytes(tt.input, tt.maxBytes)
+			if got != tt.want {
+				t.Fatalf("TruncateUTF8Bytes(%q, %d) = %q, want %q", tt.input, tt.maxBytes, got, tt.want)
+			}
+			if !utf8.ValidString(got) {
+				t.Fatalf("TruncateUTF8Bytes(%q, %d) is not valid UTF-8", tt.input, tt.maxBytes)
+			}
+			if len(got) > tt.maxBytes && tt.maxBytes > 0 {
+				t.Fatalf("TruncateUTF8Bytes(%q, %d) = %q exceeds the byte budget", tt.input, tt.maxBytes, got)
+			}
+			// Below the marker's own length there is no room for it, so the
+			// output is a prefix of the marker rather than content plus marker.
+			if len(tt.input) > tt.maxBytes && tt.maxBytes > len(TruncationSuffix) && !strings.Contains(got, TruncationSuffix) {
+				t.Fatalf("TruncateUTF8Bytes(%q, %d) = %q cut silently; the marker is what distinguishes it from PrefixUTF8Bytes", tt.input, tt.maxBytes, got)
+			}
+		})
+	}
+}
+
 func TestPrefixUTF8BytesCutsOnRuneBoundaryWithoutMarker(t *testing.T) {
 	const s = "héllo"
 
