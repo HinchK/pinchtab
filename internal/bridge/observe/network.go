@@ -291,20 +291,34 @@ func skipRetainedBody(buf *NetworkBuffer, requestID, reason string) {
 	})
 }
 
-// clampRetainedBody applies a byte budget to a retained response body. Text is
-// cut on a rune boundary: a raw byte cut orphans UTF-8 continuation bytes and
-// the JSON encoder then emits U+FFFD the response never contained. A base64
-// body cannot be cut at all — the encoding's length and padding make a fragment
-// undecodable in whole, not only at the tail — so it is dropped for the caller
-// to report, rather than returned corrupt.
-func clampRetainedBody(body string, base64Encoded bool, limit int) (clamped string, truncated, dropped bool) {
+// Operator-facing names of the two budgets a retained body is cut against, used
+// to build the skip reason so a dropped body says which one dropped it.
+const (
+	retentionLimitScope  = "retention limit"
+	retentionBudgetScope = "retention budget"
+)
+
+// clampRetainedBody applies a byte budget to a retained response body. One rule:
+// a retained body is a byte-exact prefix of the response, or there is no retained
+// body. Text is cut on a rune boundary with the suffix-free helper — the display
+// variant appends "..." inside the budget, and a machine-read body must not carry
+// characters the response never contained when bodyTruncated already says it was
+// cut. A base64 body cannot be cut at all (the encoding's length and padding make
+// a fragment undecodable in whole, not only at the tail), and a budget smaller
+// than the body's first character leaves no whole rune to keep; both are dropped
+// with a reason rather than returned corrupt or returned empty-but-retained.
+func clampRetainedBody(body string, base64Encoded bool, limit int, scope string) (clamped string, truncated bool, dropReason string) {
 	if limit <= 0 || len(body) <= limit {
-		return body, false, false
+		return body, false, ""
 	}
 	if base64Encoded {
-		return "", false, true
+		return "", false, "base64 body exceeds " + scope
 	}
-	return sanitize.TruncateUTF8Bytes(body, limit), true, false
+	prefix := sanitize.PrefixUTF8Bytes(body, limit)
+	if prefix == "" {
+		return "", false, scope + " is smaller than the body's first character"
+	}
+	return prefix, true, ""
 }
 
 func (nm *NetworkMonitor) maybeRetainBody(tabCtx context.Context, buf *NetworkBuffer, requestID string) {
@@ -341,9 +355,9 @@ func (nm *NetworkMonitor) maybeRetainBody(tabCtx context.Context, buf *NetworkBu
 		})
 		return
 	}
-	body, truncated, dropped := clampRetainedBody(body, base64Encoded, maxBytes)
-	if dropped {
-		skipRetainedBody(buf, requestID, "base64 body exceeds retention limit")
+	body, truncated, dropReason := clampRetainedBody(body, base64Encoded, maxBytes, retentionLimitScope)
+	if dropReason != "" {
+		skipRetainedBody(buf, requestID, dropReason)
 		return
 	}
 	remainingBudget := int(nm.retainBodyMaxPerTab - buf.RetainedBytes())
@@ -351,9 +365,9 @@ func (nm *NetworkMonitor) maybeRetainBody(tabCtx context.Context, buf *NetworkBu
 		skipRetainedBody(buf, requestID, "retention budget exceeded")
 		return
 	}
-	body, cutForBudget, dropped := clampRetainedBody(body, base64Encoded, remainingBudget)
-	if dropped {
-		skipRetainedBody(buf, requestID, "base64 body exceeds retention budget")
+	body, cutForBudget, dropReason := clampRetainedBody(body, base64Encoded, remainingBudget, retentionBudgetScope)
+	if dropReason != "" {
+		skipRetainedBody(buf, requestID, dropReason)
 		return
 	}
 	truncated = truncated || cutForBudget
@@ -435,7 +449,9 @@ func normalizeNetworkEntry(entry NetworkEntry) NetworkEntry {
 	entry.StatusText = sanitize.TruncateUTF8Bytes(entry.StatusText, maxNetworkStatusTextBytes)
 	entry.MimeType = sanitize.TruncateUTF8Bytes(entry.MimeType, maxNetworkMimeTypeBytes)
 	entry.Error = sanitize.TruncateUTF8Bytes(entry.Error, maxNetworkErrorBytes)
-	entry.PostData = sanitize.TruncateUTF8Bytes(entry.PostData, maxNetworkPostDataBytes)
+	// PostData is the request body: machine-read like the response body, so it is
+	// cut to a byte-exact prefix rather than display-truncated with an ellipsis.
+	entry.PostData = sanitize.PrefixUTF8Bytes(entry.PostData, maxNetworkPostDataBytes)
 	entry.RequestHeaders = normalizeNetworkHeaders(entry.RequestHeaders)
 	entry.ResponseHeaders = normalizeNetworkHeaders(entry.ResponseHeaders)
 	return entry

@@ -3,9 +3,12 @@ package observe
 import (
 	"context"
 	"encoding/base64"
+	"os"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
 
 // multiByteBody's cut offsets fall inside a 3-byte and a 4-byte character, so a
@@ -43,6 +46,21 @@ func assertBodyIsCleanUTF8(t *testing.T, source, got string) {
 	}
 	if strings.Count(got, "�") > strings.Count(source, "�") {
 		t.Fatalf("retained body gained replacement characters: %q", got)
+	}
+	assertRetainedIsPrefix(t, source, got)
+}
+
+// The clamp exists to keep characters the response never contained out of the
+// payload, and valid-UTF-8-plus-no-new-U+FFFD does not say that: a retained body
+// of ".." passes both. A retained body is machine-read and bodyTruncated already
+// carries the signal, so the only honest shape is a byte-exact prefix.
+func assertRetainedIsPrefix(t *testing.T, source, got string) {
+	t.Helper()
+	if len(got) > len(source) {
+		t.Fatalf("retained body is longer than the source: %d > %d bytes (%q)", len(got), len(source), got)
+	}
+	if got != source[:len(got)] {
+		t.Fatalf("retained body is not a byte-exact prefix of the response:\n got %q\nwant %q", got, source[:len(got)])
 	}
 }
 
@@ -147,5 +165,120 @@ func TestRetainBodiesUnderBudgetAreUnchanged(t *testing.T) {
 				t.Fatalf("base64Encoded = %v, want %v", entry.Base64Encoded, tc.base64Encoded)
 			}
 		})
+	}
+}
+
+// firstRuneWideBody's first character is 4 bytes, so budgets 1..3 leave no whole
+// rune to keep. multiByteBody cannot reach that case — it opens with "{" — which
+// is why the fabricated-suffix bug survived a loop over every offset of it.
+const firstRuneWideBody = `🎯 target reached`
+
+func TestRetainTextBodyIsDroppedWhenNoWholeRuneFits(t *testing.T) {
+	for _, site := range []struct {
+		name       string
+		limitFor   func(int) (int, int64)
+		wantReason string
+	}{
+		{
+			name:       "retainBodyMaxBytes limit",
+			limitFor:   func(limit int) (int, int64) { return limit, 1 << 20 },
+			wantReason: "retention limit is smaller than the body's first character",
+		},
+		{
+			name:       "per-tab remaining budget",
+			limitFor:   func(limit int) (int, int64) { return 0, int64(limit) },
+			wantReason: "retention budget is smaller than the body's first character",
+		},
+	} {
+		t.Run(site.name, func(t *testing.T) {
+			for limit := 1; limit < 4; limit++ {
+				maxBytes, perTab := site.limitFor(limit)
+				entry := retainWithBody(t, firstRuneWideBody, false, maxBytes, perTab)
+
+				if entry.ResponseBody != "" {
+					t.Errorf("limit=%d: kept %q of a body whose first character does not fit", limit, entry.ResponseBody)
+				}
+				if entry.BodyRetained {
+					t.Errorf("limit=%d: reported bodyRetained with nothing retained: %+v", limit, entry)
+				}
+				if entry.BodyTruncated {
+					t.Errorf("limit=%d: reported bodyTruncated for a body that was dropped, not cut", limit)
+				}
+				if !entry.BodySkipped {
+					t.Errorf("limit=%d: a dropped body must report bodySkipped: %+v", limit, entry)
+				}
+				if entry.BodySkipReason != site.wantReason {
+					t.Errorf("limit=%d: skip reason = %q, want %q", limit, entry.BodySkipReason, site.wantReason)
+				}
+			}
+
+			// One byte more and the whole first rune fits, so the body comes back as a
+			// prefix — the drop above is the budget being too small, not a dead branch.
+			maxBytes, perTab := site.limitFor(4)
+			entry := retainWithBody(t, firstRuneWideBody, false, maxBytes, perTab)
+			if entry.ResponseBody != "🎯" {
+				t.Fatalf("limit=4: body = %q, want the first character alone", entry.ResponseBody)
+			}
+			if !entry.BodyRetained || !entry.BodyTruncated || entry.BodySkipped {
+				t.Fatalf("limit=4: want retained+truncated and not skipped: %+v", entry)
+			}
+			assertRetainedIsPrefix(t, firstRuneWideBody, entry.ResponseBody)
+		})
+	}
+}
+
+// PostData is the request body — the same field class as the response body, and it
+// went through the same display helper. It has no truncated flag of its own, so a
+// fabricated ellipsis there is indistinguishable from content the client sent.
+func TestPostDataIsCutToAByteExactPrefix(t *testing.T) {
+	long := strings.Repeat("a", maxNetworkPostDataBytes-2) + "🎯" + "tail"
+
+	got := normalizeNetworkEntry(NetworkEntry{PostData: long}).PostData
+
+	if len(got) > maxNetworkPostDataBytes {
+		t.Fatalf("PostData = %d bytes, want at most %d", len(got), maxNetworkPostDataBytes)
+	}
+	if got != long[:len(got)] {
+		t.Fatalf("PostData is not a byte-exact prefix of what was sent: tail = %q", got[max(0, len(got)-8):])
+	}
+	if strings.Contains(got, sanitize.TruncationSuffix) && !strings.Contains(long, sanitize.TruncationSuffix) {
+		t.Fatalf("PostData gained the display truncation suffix: tail = %q", got[max(0, len(got)-8):])
+	}
+}
+
+// The display fields are the case the ellipsis is right for: a human reads a URL
+// or an error string and the marker is the point. This pins the split both ways —
+// the two body fields must not reach the ellipsis variant, and the metadata fields
+// must not lose it.
+func TestBodyClampsAndDisplayFieldsUseTheirOwnHelper(t *testing.T) {
+	raw, err := os.ReadFile("network.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+
+	clamp := src[strings.Index(src, "func clampRetainedBody("):]
+	if end := strings.Index(clamp, "\nfunc "); end >= 0 {
+		clamp = clamp[:end]
+	}
+	if !strings.Contains(clamp, "sanitize.PrefixUTF8Bytes(") {
+		t.Error("clampRetainedBody no longer cuts with the suffix-free helper")
+	}
+	if strings.Contains(clamp, "sanitize.TruncateUTF8Bytes(") {
+		t.Error("clampRetainedBody reaches the ellipsis variant again: the retained body would carry characters the response never sent")
+	}
+	if !strings.Contains(src, "entry.PostData = sanitize.PrefixUTF8Bytes(") {
+		t.Error("PostData no longer cuts with the suffix-free helper")
+	}
+
+	for _, field := range []string{"entry.URL", "entry.Method", "entry.ResourceType", "entry.StatusText", "entry.MimeType", "entry.Error"} {
+		if !strings.Contains(src, field+" = sanitize.TruncateUTF8Bytes(") {
+			t.Errorf("%s no longer uses the ellipsis variant; a human reads it and the marker is the signal", field)
+		}
+	}
+	for _, headerClamp := range []string{"key = sanitize.TruncateUTF8Bytes(", "value = sanitize.TruncateUTF8Bytes("} {
+		if !strings.Contains(src, headerClamp) {
+			t.Errorf("header clamp %q no longer uses the ellipsis variant", headerClamp)
+		}
 	}
 }
