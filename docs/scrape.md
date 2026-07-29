@@ -137,6 +137,29 @@ summary:   contentTypes, httpPages, browserPages, failedPages, recommendations
 without `--output-dir`): a single digest with the site overview, the page tree
 by URL pattern, and each page's content (or its snippet in preview mode).
 
+### Schema history
+
+`schemaVersion` is stamped into every report so a consumer can detect format
+changes. The current version is **`2.0`**.
+
+**`1.0` → `2.0` (breaking).** `site.totalDiscovered` was **removed** and replaced
+by `site.totalURLsInSitemap`.
+
+The number itself did not change — the name did. `totalDiscovered` only ever
+counted URLs listed in the site's sitemap, never everything the crawl found, so on
+a site with no sitemap it read `0` while pages were plainly being scraped
+(`N page(s) discovered of 0`). It was renamed to state what it holds.
+
+Two things to change in a `1.0` reader:
+
+- Read `totalURLsInSitemap` where you read `totalDiscovered`; the value is the
+  same measurement.
+- It is now `omitempty`, so it is **absent** rather than `0` when the site has no
+  sitemap. Pair it with `sitemapFound` rather than treating a missing key as zero.
+
+If what you actually wanted was how many pages the crawl reached, that is
+`site.sampledPages` (or the `pages[]` length) — it never was `totalDiscovered`.
+
 ## HTTP API
 
 The CLI is a thin client over one endpoint:

@@ -140,6 +140,29 @@ func TestNewAuditReportSchemaVersion(t *testing.T) {
 	}
 }
 
+// TestNewAuditReportSchemaVersion above compares the report to the constant that
+// stamped it, so it proves the report is stamped and the JSON field is spelled
+// right but cannot notice the constant changing. The literal here is the second
+// copy that can, and it is the point of the test.
+//
+// The audit version happens to be rendered into the report goldens, so a bump
+// also reds internal/audit/report — but incidentally, and only because those
+// goldens compare content: 1.0 and 9.9 are the same width, so a length-only
+// golden would miss it. This assertion does not depend on that.
+func TestSchemaVersionIsPinnedSoABumpMustBeAcknowledged(t *testing.T) {
+	const pinned = "1.0"
+
+	if SchemaVersion != pinned {
+		t.Fatalf("audit SchemaVersion = %q, pinned at %q.\n"+
+			"An audit schema bump changes what report consumers receive. If it is intended, update all three:\n"+
+			"  1. this literal,\n"+
+			"  2. the audit report goldens — run `go test ./internal/audit/report -update` and review the diff,\n"+
+			"  3. schemaVersion in tests/e2e/fixtures/audit-site/golden-report.json.\n"+
+			"The audit e2e scenarios assert the field EXISTS rather than pinning a value, so there is no EXPECTED_*_SCHEMA to change — unlike scrape.",
+			SchemaVersion, pinned)
+	}
+}
+
 // The audit snapshot path never measures layout (no bounds pass, no on-screen
 // test), so the report must make no visibility claim at all. The positive
 // assertions are here because an empty payload would satisfy the negative.
