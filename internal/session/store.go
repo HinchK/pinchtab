@@ -5,6 +5,7 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -414,6 +415,52 @@ func (s *Store) UpdateConfig(cfg Config) {
 		s.writeSnapshot(job)
 	}
 	s.dispatchLifecycle(events)
+}
+
+// MaintenanceInterval is how often RunMaintenance sweeps expired sessions.
+const MaintenanceInterval = 5 * time.Minute
+
+// PruneExpired drops revoked and expired sessions, persists the result, and
+// dispatches the resulting lifecycle events so downstream bindings are cleared.
+func (s *Store) PruneExpired() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	events := s.pruneExpiredLocked()
+	var (
+		job     snapshotJob
+		persist bool
+	)
+	if len(events) > 0 {
+		job, persist = s.snapshotLocked()
+	}
+	s.mu.Unlock()
+	if persist {
+		s.writeSnapshot(job)
+	}
+	s.dispatchLifecycle(events)
+}
+
+// RunMaintenance sweeps expired sessions until ctx is done. Expiry is otherwise
+// only noticed when a session's own token is presented again, so a session that
+// is simply abandoned — the usual end of an agent run — is never detected, and
+// it plus any downstream binding keyed on its id survive for the life of the
+// process.
+func (s *Store) RunMaintenance(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	t := time.NewTicker(MaintenanceInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.PruneExpired()
+		}
+	}
 }
 
 // Enabled reports whether session auth is enabled.

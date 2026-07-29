@@ -2,9 +2,11 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -35,6 +37,29 @@ import (
 	_ "github.com/pinchtab/pinchtab/internal/strategy/simple"
 )
 
+var exitProcess = os.Exit
+
+// fatalStartup reports a startup failure on stderr and exits. Startup failures
+// must not travel through slog: the non-verbose default replaces the logger
+// with a discard handler, which would leave the process exiting in silence.
+func fatalStartup(stage string, err error) {
+	fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("pinchtab: %s: %v", stage, err)))
+	for _, hint := range startupFatalHints(err) {
+		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.MutedStyle, "         "+hint))
+	}
+	exitProcess(1)
+}
+
+func startupFatalHints(err error) []string {
+	if !errors.Is(err, syscall.EADDRINUSE) {
+		return nil
+	}
+	return []string{
+		"Another process is already listening on that address.",
+		"Check for a running service with `pinchtab daemon`, or stop it with `pinchtab server stop`.",
+	}
+}
+
 func RunDashboard(cfg *config.RuntimeConfig, version string) {
 	if !cfg.VerboseStartup {
 		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
@@ -47,8 +72,7 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 
 	profilesDir := cfg.ProfilesBaseDir
 	if err := os.MkdirAll(profilesDir, 0755); err != nil {
-		slog.Error("cannot create profiles dir", "err", err)
-		os.Exit(1)
+		fatalStartup("cannot create profiles dir", err)
 	}
 
 	profMgr := profiles.NewProfileManager(profilesDir)
@@ -123,8 +147,7 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 		},
 	}, cfg.ActivityStateDir())
 	if err != nil {
-		slog.Error("activity store", "err", err)
-		os.Exit(1)
+		fatalStartup("activity store", err)
 	}
 	profMgr.SetActivityRecorder(actStore)
 
@@ -209,8 +232,7 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 		slog.Warn("unknown strategy, falling back to always-on", "strategy", strategyName, "err", err)
 		activeStrategy, err = strategy.New("always-on")
 		if err != nil {
-			slog.Error("failed to initialize fallback strategy", "strategy", "always-on", "err", err)
-			os.Exit(1)
+			fatalStartup("failed to initialize fallback strategy always-on", err)
 		}
 	}
 	if runtimeAware, ok := activeStrategy.(strategy.RuntimeConfigAware); ok {
@@ -325,6 +347,7 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 
 	maintenanceCtx, maintenanceCancel := context.WithCancel(context.Background())
 	go orch.RunMaintenance(maintenanceCtx)
+	go sessionStore.RunMaintenance(maintenanceCtx)
 
 	shutdownOnce := &sync.Once{}
 	doShutdown := func() {
@@ -372,10 +395,13 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 		os.Exit(130)
 	}()
 
+	listener, err := net.Listen("tcp", srv.Addr)
+	if err != nil {
+		fatalStartup("cannot listen on "+srv.Addr, err)
+	}
 	slog.Info("dashboard started", "port", dashPort)
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		slog.Error("server", "err", err)
-		os.Exit(1)
+	if err := srv.Serve(listener); err != http.ErrServerClosed {
+		fatalStartup("server error", err)
 	}
 }
 
