@@ -2,11 +2,85 @@ package browsersession
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func benchManager(b *testing.B, sessions int) (*Manager, []string) {
+	b.Helper()
+	mgr := NewManager(Config{
+		IdleTimeout:     365 * 24 * time.Hour,
+		MaxLifetime:     365 * 24 * time.Hour,
+		ElevationWindow: 15 * time.Minute,
+		Persist:         true,
+		PersistPath:     filepath.Join(b.TempDir(), "sessions.json"),
+	})
+	ids := make([]string, 0, sessions)
+	for i := 0; i < sessions; i++ {
+		id, err := mgr.Create("secret")
+		if err != nil {
+			b.Fatalf("Create: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	return mgr, ids
+}
+
+func BenchmarkElevateWithPersist(b *testing.B) {
+	for _, sessions := range []int{1, 50, 500} {
+		b.Run(fmt.Sprintf("sessions=%d", sessions), func(b *testing.B) {
+			mgr, ids := benchManager(b, sessions)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				mgr.Elevate(ids[i%len(ids)], "secret")
+			}
+		})
+	}
+}
+
+// BenchmarkElevateStateLockWait reports how long an unrelated state-lock
+// acquisition waits while Elevate persists — the cost this card removes.
+func BenchmarkElevateStateLockWait(b *testing.B) {
+	for _, sessions := range []int{1, 50, 500} {
+		b.Run(fmt.Sprintf("sessions=%d", sessions), func(b *testing.B) {
+			mgr, ids := benchManager(b, sessions)
+			stop := make(chan struct{})
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				for i := 0; ; i++ {
+					select {
+					case <-stop:
+						return
+					default:
+					}
+					mgr.Elevate(ids[i%len(ids)], "secret")
+				}
+			}()
+
+			var waited time.Duration
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				time.Sleep(100 * time.Microsecond)
+				start := time.Now()
+				mgr.mu.Lock()
+				sessions := len(mgr.sessions)
+				mgr.mu.Unlock()
+				waited += time.Since(start)
+				if sessions == 0 {
+					b.Fatal("sessions drained")
+				}
+			}
+			b.StopTimer()
+			close(stop)
+			<-done
+			b.ReportMetric(float64(waited.Nanoseconds())/float64(b.N), "lockwait-ns/op")
+		})
+	}
+}
 
 func TestIsElevatedPersistsExpiryDeletion(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.json")
@@ -112,6 +186,83 @@ func TestValidateDebouncesLastSeenPersistence(t *testing.T) {
 	mgr.Validate(sessionID, "secret")
 	if seen3 := readLastSeen(); !seen3.Equal(cur) {
 		t.Fatalf("validate after interval: persisted LastSeen=%v, want %v", seen3, cur)
+	}
+}
+
+func TestPersistWritesWithStateLockReleased(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	mgr := NewManager(Config{
+		IdleTimeout:     time.Hour,
+		MaxLifetime:     24 * time.Hour,
+		ElevationWindow: time.Minute,
+		Persist:         true,
+		PersistPath:     path,
+	})
+
+	writes := 0
+	available := 0
+	mgr.beforeWrite = func() {
+		writes++
+		if mgr.mu.TryLock() {
+			available++
+			mgr.mu.Unlock()
+		}
+	}
+
+	sessionID, err := mgr.Create("secret")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if !mgr.Elevate(sessionID, "secret") {
+		t.Fatal("Elevate() = false, want true")
+	}
+	mgr.Revoke(sessionID)
+
+	if writes == 0 {
+		t.Fatal("no persist write observed")
+	}
+	if available != writes {
+		t.Errorf("state lock was held during %d of %d writes, want 0", writes-available, writes)
+	}
+}
+
+func TestWriteSnapshotDiscardsSupersededWrite(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	mgr := NewManager(Config{
+		IdleTimeout: time.Hour,
+		MaxLifetime: 24 * time.Hour,
+		Persist:     true,
+		PersistPath: path,
+	})
+
+	first, err := mgr.Create("secret")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	mgr.mu.Lock()
+	older := mgr.snapshotLocked()
+	second, err := randomSessionID()
+	if err != nil {
+		t.Fatalf("randomSessionID: %v", err)
+	}
+	mgr.sessions[second] = mgr.sessions[first]
+	newer := mgr.snapshotLocked()
+	mgr.mu.Unlock()
+
+	// The newer snapshot lands first; the in-flight older one must not regress it.
+	mgr.writeSnapshot(newer)
+	mgr.writeSnapshot(older)
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read persist file: %v", err)
+	}
+	var ps persistedSessions
+	if err := json.Unmarshal(data, &ps); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(ps.Sessions) != 2 {
+		t.Fatalf("persist file has %d sessions, want 2 — the older snapshot overwrote the newer", len(ps.Sessions))
 	}
 }
 

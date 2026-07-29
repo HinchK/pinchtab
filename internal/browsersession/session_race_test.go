@@ -1,6 +1,7 @@
 package browsersession
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -31,6 +32,56 @@ func TestDurationAccessorsAreSynchronized(t *testing.T) {
 			_ = m.MaxLifetime()
 			_ = m.IdleTimeout()
 			_ = m.ElevationWindow()
+		}
+	}()
+	wg.Wait()
+}
+
+// The writer runs outside the state lock, so every config field it needs must
+// be captured in the snapshot rather than read while UpdateConfig is in flight.
+func TestPersistConfigCapturedUnderStateLock(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(Config{
+		IdleTimeout:     time.Hour,
+		MaxLifetime:     time.Hour,
+		ElevationWindow: time.Minute,
+		Persist:         true,
+		PersistPath:     filepath.Join(dir, "sessions-a.json"),
+	})
+
+	sessionID, err := mgr.Create("secret")
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			mgr.UpdateConfig(Config{
+				IdleTimeout:                   time.Hour,
+				MaxLifetime:                   time.Hour,
+				ElevationWindow:               time.Duration(i+1) * time.Second,
+				Persist:                       true,
+				PersistPath:                   filepath.Join(dir, fmt.Sprintf("sessions-%d.json", i%3)),
+				PersistElevationAcrossRestart: i%2 == 0,
+			})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			mgr.Elevate(sessionID, "secret")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			if _, err := mgr.Create("secret"); err != nil {
+				t.Errorf("Create: %v", err)
+				return
+			}
 		}
 	}()
 	wg.Wait()
