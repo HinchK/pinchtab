@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
@@ -28,7 +29,10 @@ func TestHandleFingerprintRotate_InvalidJSON(t *testing.T) {
 
 func TestGenerateFingerprint_Windows(t *testing.T) {
 	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "120.0.0.0"}}
-	fp := h.generateFingerprint(fingerprintRequest{OS: "windows"})
+	fp, err := h.generateFingerprint(fingerprintRequest{OS: "windows"})
+	if err != nil {
+		t.Fatalf("generateFingerprint: %v", err)
+	}
 	if fp.Platform != "Win32" {
 		t.Errorf("expected Win32, got %q", fp.Platform)
 	}
@@ -45,7 +49,10 @@ func TestGenerateFingerprint_Windows(t *testing.T) {
 
 func TestGenerateFingerprint_Mac(t *testing.T) {
 	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "120.0.0.0"}}
-	fp := h.generateFingerprint(fingerprintRequest{OS: "mac"})
+	fp, err := h.generateFingerprint(fingerprintRequest{OS: "mac"})
+	if err != nil {
+		t.Fatalf("generateFingerprint: %v", err)
+	}
 	if fp.Platform != "MacIntel" {
 		t.Errorf("expected MacIntel, got %q", fp.Platform)
 	}
@@ -53,7 +60,10 @@ func TestGenerateFingerprint_Mac(t *testing.T) {
 
 func TestGenerateFingerprint_Random(t *testing.T) {
 	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "120.0.0.0"}}
-	fp := h.generateFingerprint(fingerprintRequest{OS: "random"})
+	fp, err := h.generateFingerprint(fingerprintRequest{OS: "random"})
+	if err != nil {
+		t.Fatalf("generateFingerprint: %v", err)
+	}
 	validPlatforms := map[string]bool{"Win32": true, "MacIntel": true}
 	if !validPlatforms[fp.Platform] {
 		t.Errorf("unexpected platform %q", fp.Platform)
@@ -62,7 +72,10 @@ func TestGenerateFingerprint_Random(t *testing.T) {
 
 func TestGenerateFingerprint_WithBrowser(t *testing.T) {
 	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "120.0.0.0"}}
-	fp := h.generateFingerprint(fingerprintRequest{OS: "windows", Browser: "chrome"})
+	fp, err := h.generateFingerprint(fingerprintRequest{OS: "windows", Browser: "chrome"})
+	if err != nil {
+		t.Fatalf("generateFingerprint: %v", err)
+	}
 	if fp.UserAgent == "" {
 		t.Error("expected non-empty user agent")
 	}
@@ -72,7 +85,10 @@ func TestGenerateFingerprint_Config(t *testing.T) {
 	cfg := &config.RuntimeConfig{BrowserVersion: "120.0.0.0"}
 	h := Handlers{Config: cfg}
 
-	fp := h.generateFingerprint(fingerprintRequest{OS: "windows", Browser: "chrome"})
+	fp, err := h.generateFingerprint(fingerprintRequest{OS: "windows", Browser: "chrome"})
+	if err != nil {
+		t.Fatalf("generateFingerprint: %v", err)
+	}
 	if !strings.Contains(fp.UserAgent, "120.0.0.0") {
 		t.Errorf("expected User-Agent to contain Chrome version 120.0.0.0, got %q", fp.UserAgent)
 	}
@@ -102,7 +118,10 @@ func TestGenerateFingerprint_MatchesLaunchPinnedUAReduction(t *testing.T) {
 		{"mac", "chrome"},
 		{"windows", "edge"},
 	} {
-		fp := h.generateFingerprint(fingerprintRequest{OS: tc.os, Browser: tc.browser})
+		fp, err := h.generateFingerprint(fingerprintRequest{OS: tc.os, Browser: tc.browser})
+		if err != nil {
+			t.Fatalf("generateFingerprint: %v", err)
+		}
 		if !strings.Contains(fp.UserAgent, "144.0.0.0") {
 			t.Errorf("rotate UA for %s/%s should carry reduced Chrome/144.0.0.0, got %q", tc.os, tc.browser, fp.UserAgent)
 		}
@@ -245,7 +264,10 @@ func TestGenerateFingerprintUsesTheSharedChromeTemplate(t *testing.T) {
 		{os: "windows", browser: "edge", wantPlatform: "Win32", wantUA: stealth.EdgeUserAgent(stealth.ChromeUserAgent(stealth.PlatformWindows, reduced), reduced)},
 	} {
 		t.Run(tc.os+"/"+tc.browser, func(t *testing.T) {
-			fp := h.generateFingerprint(fingerprintRequest{OS: tc.os, Browser: tc.browser})
+			fp, err := h.generateFingerprint(fingerprintRequest{OS: tc.os, Browser: tc.browser})
+			if err != nil {
+				t.Fatalf("generateFingerprint: %v", err)
+			}
 
 			if fp.UserAgent != tc.wantUA {
 				t.Errorf("user agent =\n %q\nwant the shared template's\n %q", fp.UserAgent, tc.wantUA)
@@ -274,7 +296,10 @@ func TestGenerateFingerprintAgreesWithTheLaunchPersonaOnThisHost(t *testing.T) {
 		stealth.PlatformLinux:   "linux",
 	}[stealth.HostPlatform()]
 
-	fp := h.generateFingerprint(fingerprintRequest{OS: hostOS, Browser: "chrome"})
+	fp, err := h.generateFingerprint(fingerprintRequest{OS: hostOS, Browser: "chrome"})
+	if err != nil {
+		t.Fatalf("generateFingerprint: %v", err)
+	}
 	persona := stealth.BuildPersona("", version)
 
 	if fp.UserAgent != persona.UserAgent {
@@ -292,12 +317,224 @@ func TestGenerateFingerprintRandomStaysWindowsOrMac(t *testing.T) {
 	linuxUA := stealth.ChromeUserAgent(stealth.PlatformLinux, stealth.ReducedBrowserVersion("144.0.7559.133"))
 
 	for i := 0; i < 200; i++ {
-		fp := h.generateFingerprint(fingerprintRequest{OS: "random"})
+		fp, err := h.generateFingerprint(fingerprintRequest{OS: "random"})
+		if err != nil {
+			t.Fatalf("generateFingerprint: %v", err)
+		}
 		if fp.UserAgent == linuxUA {
 			t.Fatalf("os: random returned the Linux UA; adding linux to the weighted pick changes what a default request returns")
 		}
 		if fp.Platform != "Win32" && fp.Platform != "MacIntel" {
 			t.Fatalf("os: random returned platform %q, want Win32 or MacIntel", fp.Platform)
 		}
+	}
+}
+
+// An unlisted pair used to answer 200 with an empty userAgent. For an endpoint
+// whose purpose is to hand back an identity to apply, an empty identity delivered
+// as a success is worse than a refusal: the caller cannot tell it received nothing.
+// linux+edge and mac+edge are real combinations, which is what makes the silence
+// reachable by a reasonable request.
+func TestGenerateFingerprintRefusesAnUnlistedPair(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+
+	for _, tc := range []struct{ os, browser string }{
+		{os: "linux", browser: "edge"},
+		{os: "mac", browser: "edge"},
+		{os: "windows", browser: "safari"},
+		{os: "bogus", browser: "chrome"},
+		{os: "linux", browser: "safari"},
+	} {
+		t.Run(tc.os+"/"+tc.browser, func(t *testing.T) {
+			fp, err := h.generateFingerprint(fingerprintRequest{OS: tc.os, Browser: tc.browser})
+			if err == nil {
+				t.Fatalf("pair was accepted and returned userAgent %q", fp.UserAgent)
+			}
+			if fp.UserAgent != "" || fp.Platform != "" || fp.Vendor != "" {
+				t.Errorf("refused request still carries an identity: %+v", fp)
+			}
+			for _, want := range []string{tc.os, tc.browser} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not name the requested %q", err, want)
+				}
+			}
+			// The pairs that do exist, so the caller can correct itself in one step.
+			for _, want := range availableFingerprintPairs(h.fingerprintMatrix()) {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q omits the available pair %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// A 400 must carry no partial identity: a randomised screen size and core count
+// beside a refusal would imply the request was honoured.
+func TestARefusedFingerprintPopulatesNoOtherField(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+
+	fp, err := h.generateFingerprint(fingerprintRequest{OS: "linux", Browser: "edge", Screen: "random", Language: "fr-FR", Timezone: -60})
+	if err == nil {
+		t.Fatal("precondition: linux/edge must be refused")
+	}
+	if fp != (fingerprint{}) {
+		t.Errorf("refused request returned a populated fingerprint: %+v", fp)
+	}
+}
+
+// The list of valid pairs is derived from the matrix, not restated beside it: a pair
+// added to the map appears in the message with no second list to edit.
+func TestTheRefusalMessageIsDerivedFromTheMatrix(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+
+	matrix := h.fingerprintMatrix()
+	if got := availableFingerprintPairs(matrix); len(got) == 0 {
+		t.Fatal("the matrix is empty — this test would pass vacuously")
+	}
+
+	matrix["linux"]["edge"] = fingerprint{UserAgent: "probe", Platform: "Linux x86_64", Vendor: "Google Inc."}
+	pairs := availableFingerprintPairs(matrix)
+
+	var found bool
+	for _, pair := range pairs {
+		if pair == "linux/edge" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a pair added to the matrix does not appear in the derived list: %v", pairs)
+	}
+	if !sort.StringsAreSorted(pairs) {
+		t.Errorf("derived pairs are not sorted, so the message varies between runs: %v", pairs)
+	}
+}
+
+// Every pair that works today must keep working and stay byte-identical, including
+// the empty-browser default of chrome.
+func TestEveryListedPairStillResolvesByteIdentically(t *testing.T) {
+	const version = "144.0.7559.133"
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: version}}
+	reduced := stealth.ReducedBrowserVersion(version)
+	windowsChrome := stealth.ChromeUserAgent(stealth.PlatformWindows, reduced)
+
+	for _, tc := range []struct {
+		name         string
+		os, browser  string
+		wantUA       string
+		wantPlatform string
+		wantVendor   string
+	}{
+		{name: "windows/chrome", os: "windows", browser: "chrome", wantUA: windowsChrome, wantPlatform: "Win32", wantVendor: "Google Inc."},
+		{name: "windows/edge", os: "windows", browser: "edge", wantUA: stealth.EdgeUserAgent(windowsChrome, reduced), wantPlatform: "Win32", wantVendor: "Google Inc."},
+		{name: "mac/chrome", os: "mac", browser: "chrome", wantUA: stealth.ChromeUserAgent(stealth.PlatformMacOS, reduced), wantPlatform: "MacIntel", wantVendor: "Google Inc."},
+		{name: "mac/safari", os: "mac", browser: "safari", wantUA: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15", wantPlatform: "MacIntel", wantVendor: "Apple Computer, Inc."},
+		{name: "linux/chrome", os: "linux", browser: "chrome", wantUA: stealth.ChromeUserAgent(stealth.PlatformLinux, reduced), wantPlatform: "Linux x86_64", wantVendor: "Google Inc."},
+		{name: "empty browser defaults to chrome", os: "linux", browser: "", wantUA: stealth.ChromeUserAgent(stealth.PlatformLinux, reduced), wantPlatform: "Linux x86_64", wantVendor: "Google Inc."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fp, err := h.generateFingerprint(fingerprintRequest{OS: tc.os, Browser: tc.browser})
+			if err != nil {
+				t.Fatalf("generateFingerprint: %v", err)
+			}
+			if fp.UserAgent != tc.wantUA {
+				t.Errorf("userAgent =\n  %q\nwant\n  %q", fp.UserAgent, tc.wantUA)
+			}
+			if fp.Platform != tc.wantPlatform {
+				t.Errorf("platform = %q, want %q", fp.Platform, tc.wantPlatform)
+			}
+			if fp.Vendor != tc.wantVendor {
+				t.Errorf("vendor = %q, want %q", fp.Vendor, tc.wantVendor)
+			}
+		})
+	}
+}
+
+// os: "random" resolves to windows or mac, both of which have a chrome entry, so it
+// cannot reach the refusal path. Run enough times to see both arms of the weighting.
+func TestRandomOSNeverReachesTheRefusalPath(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+
+	seen := map[string]bool{}
+	for i := 0; i < 200; i++ {
+		fp, err := h.generateFingerprint(fingerprintRequest{OS: "random"})
+		if err != nil {
+			t.Fatalf("os=random was refused: %v", err)
+		}
+		if fp.UserAgent == "" {
+			t.Fatal("os=random produced an empty userAgent")
+		}
+		seen[fp.Platform] = true
+	}
+	for _, want := range []string{"Win32", "MacIntel"} {
+		if !seen[want] {
+			t.Errorf("os=random never resolved to %s in 200 draws; the weighting or the matrix changed", want)
+		}
+	}
+}
+
+// The endpoint contract, not just the helper: an unlisted pair must be a 400 with a
+// machine-readable code, and must never be a 200 carrying an empty userAgent. The
+// refusal also has to happen before the browser is touched — a rejected request must
+// not leave a half-applied identity on the tab.
+func TestHandleFingerprintRotateRefusesAnUnlistedPair(t *testing.T) {
+	for _, body := range []string{
+		`{"os":"linux","browser":"edge"}`,
+		`{"os":"mac","browser":"edge"}`,
+		`{"os":"windows","browser":"safari"}`,
+		`{"os":"bogus"}`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			mb := &mockBridge{}
+			h := New(mb, &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}, nil, nil, nil)
+			req := httptest.NewRequest("POST", "/fingerprint/rotate", bytes.NewReader([]byte(body)))
+			w := httptest.NewRecorder()
+
+			h.HandleFingerprintRotate(w, req)
+
+			if w.Code != 400 {
+				t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+			}
+			var resp map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("parse body: %v", err)
+			}
+			if resp["code"] != "unsupported_fingerprint" {
+				t.Errorf("code = %v, want unsupported_fingerprint", resp["code"])
+			}
+			message, _ := resp["error"].(string)
+			for _, want := range availableFingerprintPairs(h.fingerprintMatrix()) {
+				if !strings.Contains(message, want) {
+					t.Errorf("error %q omits the available pair %q", message, want)
+				}
+			}
+			if _, ok := resp["fingerprint"]; ok {
+				t.Errorf("a refusal returned a fingerprint payload: %s", w.Body.String())
+			}
+		})
+	}
+}
+
+// A listed pair still rotates, so the refusal did not shadow the success path.
+func TestHandleFingerprintRotateStillAcceptsAListedPair(t *testing.T) {
+	mb := &mockBridge{}
+	h := New(mb, &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}, nil, nil, nil)
+	req := httptest.NewRequest("POST", "/fingerprint/rotate", bytes.NewReader([]byte(`{"os":"linux","browser":"chrome"}`)))
+	w := httptest.NewRecorder()
+
+	h.HandleFingerprintRotate(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("parse body: %v", err)
+	}
+	fp, ok := resp["fingerprint"].(map[string]any)
+	if !ok {
+		t.Fatalf("no fingerprint in response: %s", w.Body.String())
+	}
+	if ua, _ := fp["userAgent"].(string); ua == "" {
+		t.Error("a rotated fingerprint carries an empty userAgent")
 	}
 }

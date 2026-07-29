@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
@@ -43,7 +45,11 @@ func (h *Handlers) HandleFingerprintRotate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	fp := h.generateFingerprint(req)
+	fp, err := h.generateFingerprint(req)
+	if err != nil {
+		httpx.ErrorCode(w, 400, "unsupported_fingerprint", err.Error(), false, nil)
+		return
+	}
 
 	tCtx, tCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer tCancel()
@@ -117,9 +123,13 @@ type fingerprint struct {
 	Memory         int    `json:"memory"`
 }
 
-func (h *Handlers) generateFingerprint(req fingerprintRequest) fingerprint {
-	fp := fingerprint{}
-
+// fingerprintMatrix is the set of identities this endpoint will hand out. The
+// matrix is irregular — windows has chrome and edge, mac has chrome and safari,
+// linux has chrome only — so the pairs that do not exist are not obvious from
+// outside, which is why a miss is refused rather than answered with a blank
+// identity. It is a function so the refusal message can be derived from it and a
+// test can add a pair without a second list to edit.
+func (h *Handlers) fingerprintMatrix() map[string]map[string]fingerprint {
 	// Match the launch-pinned UA: real Chrome (UA reduction, v100+) freezes
 	// navigator.userAgent to <major>.0.0.0. Using h.Config.BrowserVersion
 	// verbatim here would emit Chrome/144.0.7559.133 while the launch path
@@ -171,6 +181,32 @@ func (h *Handlers) generateFingerprint(req fingerprintRequest) fingerprint {
 		},
 	}
 
+	return osConfigs
+}
+
+// availableFingerprintPairs lists the matrix as os/browser strings, sorted so the
+// refusal message reads the same every run.
+func availableFingerprintPairs(matrix map[string]map[string]fingerprint) []string {
+	pairs := make([]string, 0, len(matrix)*2)
+	for osName, browsers := range matrix {
+		for browserName := range browsers {
+			pairs = append(pairs, osName+"/"+browserName)
+		}
+	}
+	sort.Strings(pairs)
+	return pairs
+}
+
+// generateFingerprint refuses an os/browser pair the matrix does not hold instead
+// of returning the zero identity. An empty userAgent delivered as a success is
+// worse than a refusal: the endpoint exists to hand back an identity to apply, and
+// the caller cannot tell it received nothing. Falling back to the os's chrome entry
+// would be the same defect one layer along — a plausible identity that is not the
+// one requested is harder to notice than a blank one.
+func (h *Handlers) generateFingerprint(req fingerprintRequest) (fingerprint, error) {
+	fp := fingerprint{}
+	osConfigs := h.fingerprintMatrix()
+
 	os := req.OS
 	if os == "random" {
 		if rand.Float64() < 0.7 {
@@ -185,13 +221,17 @@ func (h *Handlers) generateFingerprint(req fingerprintRequest) fingerprint {
 		browser = "chrome"
 	}
 
-	if osConfig, ok := osConfigs[os]; ok {
-		if browserConfig, ok := osConfig[browser]; ok {
-			fp.UserAgent = browserConfig.UserAgent
-			fp.Platform = browserConfig.Platform
-			fp.Vendor = browserConfig.Vendor
-		}
+	// Before anything else is set, so a refused request carries no partial identity:
+	// a randomised screen size and core count alongside a 400 would imply the
+	// request was honoured.
+	browserConfig, ok := osConfigs[os][browser]
+	if !ok {
+		return fingerprint{}, fmt.Errorf("no fingerprint for os %q with browser %q; available pairs: %s",
+			os, browser, strings.Join(availableFingerprintPairs(osConfigs), ", "))
 	}
+	fp.UserAgent = browserConfig.UserAgent
+	fp.Platform = browserConfig.Platform
+	fp.Vendor = browserConfig.Vendor
 
 	screens := [][]int{
 		{1920, 1080}, {1366, 768}, {1536, 864}, {1440, 900},
@@ -223,7 +263,7 @@ func (h *Handlers) generateFingerprint(req fingerprintRequest) fingerprint {
 	fp.CPUCores = 4 + rand.Intn(4)*2
 	fp.Memory = 4 + rand.Intn(4)*2
 
-	return fp
+	return fp, nil
 }
 
 func timezoneIDFromOffset(offset int) string {
