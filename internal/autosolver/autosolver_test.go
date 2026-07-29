@@ -1237,6 +1237,37 @@ func TestOrderSolversWarnsOncePerUnregisteredKeyGatedSolver(t *testing.T) {
 	}
 }
 
+// The dedup above is deliberately per-AutoSolver, and buildAutoSolver makes a
+// fresh one per /solve request and per auto-solve trigger — so a real
+// misconfiguration is stated once per request rather than once per attempt.
+// Moving the guard to package scope would silence it after the first request in
+// the process, which also means an operator who sets the key mid-process would
+// never see the warning stop being true. This pins the choice so it cannot be
+// "simplified" into that.
+func TestUnregisteredKeyGatedWarningRepeatsForAFreshAutoSolver(t *testing.T) {
+	recorder := captureLogs(t)
+
+	gated := KeyGatedSolvers()[0]
+	matching := []Solver{&mockSolver{name: "cloudflare", priority: 10}}
+	const requests = 3
+	for i := 0; i < requests; i++ {
+		as := New(Config{Solvers: []string{"cloudflare", gated.Name}}, nil, nil)
+		as.orderSolvers(matching)
+		as.orderSolvers(matching)
+	}
+
+	warnings := 0
+	for _, rec := range recorder.records {
+		if rec.Level >= slog.LevelWarn && strings.Contains(rec.Message, gated.Name) {
+			warnings++
+		}
+	}
+	if warnings != requests {
+		t.Errorf("%d fresh AutoSolvers produced %d warnings for %s, want %d — one per request, deduped within each",
+			requests, warnings, gated.Name, requests)
+	}
+}
+
 func captureLogs(t *testing.T) *levelRecorder {
 	t.Helper()
 	recorder := &levelRecorder{}
