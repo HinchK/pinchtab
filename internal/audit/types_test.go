@@ -183,11 +183,15 @@ func TestReportJSONHasNoVisibleKeyForInteractiveElements(t *testing.T) {
 	}
 }
 
-// The SDK mirrors this struct by hand so the public surface never imports
+// The SDK mirrors these structs by hand so the public surface never imports
 // internal packages, which means nothing but this guard keeps a field removed
-// from one side from surviving on the other.
-func TestInteractiveElementMatchesTheSDKMirror(t *testing.T) {
-	shape := func(rt reflect.Type) []string {
+// from one side from surviving on the other. Every payload struct whose fields
+// are primitives is listed; the containers that hold them differ by package
+// qualification, and AuditInput deliberately differs, so they cannot be compared
+// this way.
+func TestAuditPayloadTypesMatchTheirSDKMirrors(t *testing.T) {
+	shape := func(v any) []string {
+		rt := reflect.TypeOf(v)
 		var out []string
 		for i := 0; i < rt.NumField(); i++ {
 			f := rt.Field(i)
@@ -196,12 +200,25 @@ func TestInteractiveElementMatchesTheSDKMirror(t *testing.T) {
 		return out
 	}
 
-	got := shape(reflect.TypeOf(InteractiveElement{}))
-	want := shape(reflect.TypeOf(pinchtabaudit.InteractiveElement{}))
-	if len(got) == 0 {
-		t.Fatal("InteractiveElement has no fields; the guard would pass vacuously")
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("InteractiveElement diverges from the SDK mirror\n internal: %v\n      sdk: %v", got, want)
+	for name, pair := range map[string][2]any{
+		"InteractiveElement": {InteractiveElement{}, pinchtabaudit.InteractiveElement{}},
+		"ConsoleLogEntry":    {ConsoleLogEntry{}, pinchtabaudit.ConsoleLogEntry{}},
+		"NetworkRequest":     {NetworkRequest{}, pinchtabaudit.NetworkRequest{}},
+		"BrokenAsset":        {BrokenAsset{}, pinchtabaudit.BrokenAsset{}},
+		"SecurityFinding":    {SecurityFinding{}, pinchtabaudit.SecurityFinding{}},
+		"A11yFinding":        {A11yFinding{}, pinchtabaudit.A11yFinding{}},
+		"VisualDiffResult":   {VisualDiffResult{}, pinchtabaudit.VisualDiffResult{}},
+		"TimingMetrics":      {BrowserTimingMetrics{}, pinchtabaudit.TimingMetrics{}},
+		"AuditOptions":       {AuditOptions{}, pinchtabaudit.AuditOptions{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, want := shape(pair[0]), shape(pair[1])
+			if len(got) == 0 {
+				t.Fatalf("%s has no fields; the guard would pass vacuously", name)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s diverges from the SDK mirror\n internal: %v\n      sdk: %v", name, got, want)
+			}
+		})
 	}
 }
