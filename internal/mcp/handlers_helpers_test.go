@@ -1,6 +1,10 @@
 package mcp
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
+)
 
 // looksLikeStructuredSelector decides whether an MCP client's free-form `query`
 // is passed through as a selector or wrapped as semantic `find:` text. Anything
@@ -23,13 +27,15 @@ func TestLooksLikeStructuredSelector(t *testing.T) {
 		{"parenthesised xpath", "(//a)[1]", true},
 		{"descendant combinator", "div > p", true},
 		{"tag dot class", "button.primary", true},
+		{"pseudo class colon has no surrounding space", "a:hover", true},
+		{"attribute equals has no surrounding space", "input[type=text]", true},
+		{"attribute selector with sibling combinator", "input[name=q] + label", true},
 
-		// Current behaviour: the punctuation test on line 92 has no
-		// whitespace guard, unlike the dot-notation branch below it, so
-		// prose containing these characters is routed to CSS.
-		{"prose with colon", "Sign up: it's free", true},
-		{"prose with equals", "name = value", true},
-		{"prose with plus", "Add + remove", true},
+		{"prose colon is space separated", "Sign up: it's free", false},
+		{"prose equals is space separated", "name = value", false},
+		{"colon with a space only before it", "ready :go", false},
+		{"equals with a space only after it", "name= value", false},
+		{"prose plus stays CSS because combinators are space separated in CSS too", "Add + remove", true},
 	}
 
 	for _, tt := range tests {
@@ -51,5 +57,31 @@ func TestHasKnownSelectorPrefixIsCaseInsensitive(t *testing.T) {
 		if hasKnownSelectorPrefix(in) {
 			t.Errorf("hasKnownSelectorPrefix(%q) = true, want false", in)
 		}
+	}
+}
+
+func TestActionSelectorArgRoutesSpaceSeparatedProseToFind(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"prose colon is space separated", "Sign up: it's free", "find:Sign up: it's free"},
+		{"prose equals is space separated", "name = value", "find:name = value"},
+		{"pseudo class colon has no surrounding space", "a:hover", "a:hover"},
+		{"attribute equals has no surrounding space", "input[type=text]", "input[type=text]"},
+		{"attribute selector with sibling combinator", "input[name=q] + label", "input[name=q] + label"},
+		{"descendant combinator", "div > p", "div > p"},
+		{"prose plus stays CSS because combinators are space separated in CSS too", "Add + remove", "Add + remove"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := mcp.CallToolRequest{}
+			req.Params.Arguments = map[string]any{"query": tt.query}
+			if got := actionSelectorArg(req); got != tt.want {
+				t.Errorf("actionSelectorArg(%q) = %q, want %q", tt.query, got, tt.want)
+			}
+		})
 	}
 }

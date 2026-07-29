@@ -89,7 +89,7 @@ func looksLikeStructuredSelector(v string) bool {
 	if strings.HasPrefix(v, "//") || strings.HasPrefix(v, "(//") {
 		return true
 	}
-	if strings.ContainsAny(v, "[]#:>+~") || strings.Contains(v, "=") {
+	if strings.ContainsAny(v, "[]#>+~") || containsSpacelessAny(v, ":=") {
 		return true
 	}
 	// Treat dot notation as CSS only when it looks like tag/class syntax,
@@ -98,6 +98,26 @@ func looksLikeStructuredSelector(v string) bool {
 		return true
 	}
 	return false
+}
+
+func containsSpacelessAny(v, chars string) bool {
+	for i := 0; i < len(v); i++ {
+		if !strings.ContainsRune(chars, rune(v[i])) {
+			continue
+		}
+		if i > 0 && isASCIISpace(v[i-1]) {
+			continue
+		}
+		if i+1 < len(v) && isASCIISpace(v[i+1]) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func isASCIISpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\r' || c == '\n'
 }
 
 func hasASCIIAlpha(v string) bool {
