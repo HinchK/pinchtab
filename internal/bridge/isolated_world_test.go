@@ -179,7 +179,7 @@ var mainWorldResolvers = map[string]string{
 	"internal/bridge/cdpops/element_ops.go": "element ops act on an already-chosen node",
 	"internal/bridge/cdpops/frame_dom.go":   "callFunctionOn helper for an already-chosen node",
 	"internal/bridge/cdpops/pointer.go":     "pointer actions act on an already-chosen node",
-	"internal/bridge/cdpops/geometry.go":    "click-point geometry for an already-chosen node",
+	"internal/bridge/cdpops/geometry.go":    "dead pending deletion: GetElementCenter has no callers at all and GetElementCenterJS only a test-reached facade wrapper; the live click-point path is PointerPointForNode, which is isolated",
 }
 
 func TestIsolatedWorldBoundaryCensus(t *testing.T) {
