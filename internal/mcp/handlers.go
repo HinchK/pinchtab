@@ -24,6 +24,9 @@ func handlerMap(c *Client) map[string]func(context.Context, mcp.CallToolRequest)
 func rawHandlerMap(c *Client) map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"pinchtab_navigate":   handleNavigate(c),
+		"pinchtab_back":       handleHistoryNav(c, "back"),
+		"pinchtab_forward":    handleHistoryNav(c, "forward"),
+		"pinchtab_reload":     handleHistoryNav(c, "reload"),
 		"pinchtab_snapshot":   handleSnapshot(c),
 		"pinchtab_frame":      handleFrame(c),
 		"pinchtab_screenshot": handleScreenshot(c),

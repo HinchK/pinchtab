@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -647,5 +648,190 @@ func TestBooleanArgumentsAcceptStringForm(t *testing.T) {
 				t.Errorf("%s: %q missing from the outbound request: %s", tc.label, tc.want, text)
 			}
 		})
+	}
+}
+
+// historyRecorder captures what actually went on the wire, because the two things
+// these tools must get right are both invisible in a response: /back, /forward and
+// /reload never parse a request body, so a body is not merely redundant but a sign
+// the handler was copied from pinchtab_navigate, and browser has to travel in the
+// query or the router cannot see it.
+// Distinct from routing_test.go's recordingPinchTab, which keeps only the last
+// request and only its parsed JSON body: snap makes two calls, and "was any body
+// sent at all" is the assertion these tools need, so the raw bytes and the
+// Content-Type both have to survive.
+type historyRequest struct {
+	method      string
+	path        string
+	query       url.Values
+	body        string
+	contentType string
+}
+
+func historyRecorder(t *testing.T) (*httptest.Server, *[]historyRequest) {
+	t.Helper()
+	seen := &[]historyRequest{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		*seen = append(*seen, historyRequest{
+			method:      r.Method,
+			path:        r.URL.Path,
+			query:       r.URL.Query(),
+			body:        string(raw),
+			contentType: r.Header.Get("Content-Type"),
+		})
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/snapshot" {
+			_, _ = w.Write([]byte(`{"nodes":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"tabId":"ABC123","url":"https://example.com/landed"}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, seen
+}
+
+func TestHistoryToolsPostToTheirRouteWithNoBody(t *testing.T) {
+	for tool, verb := range map[string]string{
+		"pinchtab_back":    "back",
+		"pinchtab_forward": "forward",
+		"pinchtab_reload":  "reload",
+	} {
+		t.Run(tool, func(t *testing.T) {
+			srv, seen := historyRecorder(t)
+
+			result := callTool(t, tool, map[string]any{}, srv)
+			if result.IsError {
+				t.Fatalf("%s failed: %s", tool, resultText(t, result))
+			}
+			if len(*seen) != 1 {
+				t.Fatalf("requests = %d, want exactly one", len(*seen))
+			}
+			got := (*seen)[0]
+
+			if got.method != http.MethodPost {
+				t.Errorf("method = %s, want POST", got.method)
+			}
+			if got.path != "/"+verb {
+				t.Errorf("path = %q, want /%s", got.path, verb)
+			}
+			if got.body != "" {
+				t.Errorf("a body was sent to /%s, which never parses one: %q", verb, got.body)
+			}
+			if got.contentType != "" {
+				t.Errorf("Content-Type = %q on a bodyless request", got.contentType)
+			}
+
+			// The landed URL and the tab ID both come back from the response.
+			text := resultText(t, result)
+			for _, want := range []string{"ABC123", "https://example.com/landed"} {
+				if !strings.Contains(text, want) {
+					t.Errorf("result %q does not carry %q", text, want)
+				}
+			}
+		})
+	}
+}
+
+func TestHistoryToolsScopeToTheTabPathWhenGivenATabID(t *testing.T) {
+	for tool, verb := range map[string]string{
+		"pinchtab_back":    "back",
+		"pinchtab_forward": "forward",
+		"pinchtab_reload":  "reload",
+	} {
+		t.Run(tool, func(t *testing.T) {
+			srv, seen := historyRecorder(t)
+
+			callTool(t, tool, map[string]any{"tabId": "t1"}, srv)
+			if len(*seen) != 1 {
+				t.Fatalf("requests = %d, want exactly one", len(*seen))
+			}
+			got := (*seen)[0]
+			if want := "/tabs/t1/" + verb; got.path != want {
+				t.Errorf("path = %q, want %q", got.path, want)
+			}
+			if got.body != "" {
+				t.Errorf("a body was sent alongside the tab-scoped path: %q", got.body)
+			}
+		})
+	}
+}
+
+// browser decides WHICH instance serves the call and that router reads the query
+// only, so a body value — the form pinchtab_navigate uses — would be invisible here.
+func TestHistoryToolsForwardBrowserInTheQuery(t *testing.T) {
+	for _, tool := range []string{"pinchtab_back", "pinchtab_forward", "pinchtab_reload"} {
+		t.Run(tool, func(t *testing.T) {
+			srv, seen := historyRecorder(t)
+
+			callTool(t, tool, map[string]any{"browser": "cloak"}, srv)
+			got := (*seen)[0]
+
+			if got.query.Get("browser") != "cloak" {
+				t.Errorf("query browser = %q, want cloak — the router reads the query only", got.query.Get("browser"))
+			}
+			if got.body != "" {
+				t.Errorf("browser was also put in a body the endpoint never parses: %q", got.body)
+			}
+		})
+	}
+}
+
+// snap must behave as it does for pinchtab_navigate, including for a call that named
+// no tab: the snapshot is scoped to the tab the navigation reported.
+func TestHistoryToolsSnapAppendsTheSnapshot(t *testing.T) {
+	for _, tool := range []string{"pinchtab_back", "pinchtab_forward", "pinchtab_reload"} {
+		t.Run(tool, func(t *testing.T) {
+			srv, seen := historyRecorder(t)
+
+			result := callTool(t, tool, map[string]any{"snap": true}, srv)
+			if len(*seen) != 2 {
+				t.Fatalf("requests = %d, want the navigation and the snapshot", len(*seen))
+			}
+			snapshot := (*seen)[1]
+			if snapshot.path != "/snapshot" {
+				t.Fatalf("second request path = %q, want /snapshot", snapshot.path)
+			}
+			if got := snapshot.query.Get("tabId"); got != "ABC123" {
+				t.Errorf("snapshot tabId = %q, want the tab the navigation reported", got)
+			}
+			if got := snapshot.query.Get("filter"); got != "interactive" {
+				t.Errorf("snapshot filter = %q, want interactive", got)
+			}
+			if text := resultText(t, result); !strings.Contains(text, `"nodes"`) {
+				t.Errorf("snap did not append the snapshot: %q", text)
+			}
+		})
+	}
+}
+
+// Without snap there must be exactly one request, so the snapshot is opt-in rather
+// than a second round-trip every client pays for.
+func TestHistoryToolsMakeNoSnapshotRequestWithoutSnap(t *testing.T) {
+	srv, seen := historyRecorder(t)
+
+	callTool(t, "pinchtab_back", map[string]any{}, srv)
+
+	if len(*seen) != 1 {
+		t.Fatalf("requests = %d, want only the navigation: %+v", len(*seen), *seen)
+	}
+}
+
+// The three tools must be registered, or tools/list does not advertise them and no
+// client can call them however well the handler works.
+func TestHistoryToolsAreRegistered(t *testing.T) {
+	declared := map[string]bool{}
+	for _, tool := range allTools() {
+		declared[tool.Name] = true
+	}
+	handlers := rawHandlerMap(NewClient("http://example.invalid", ""))
+
+	for _, name := range []string{"pinchtab_back", "pinchtab_forward", "pinchtab_reload"} {
+		if !declared[name] {
+			t.Errorf("%s is not in allTools(), so tools/list does not advertise it", name)
+		}
+		if _, ok := handlers[name]; !ok {
+			t.Errorf("%s has no handler, so NewServer panics on it", name)
+		}
 	}
 }

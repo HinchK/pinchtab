@@ -35,22 +35,59 @@ func handleNavigate(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 			return resultFromBytes(body, code)
 		}
 
-		if snap, ok := optBool(r, "snap"); ok && snap {
-			q := url.Values{}
-			q.Set("filter", "interactive")
-			q.Set("format", "compact")
-			if tabID != "" {
-				q.Set("tabId", tabID)
-			} else if returnedTabID := responseStringField(body, "tabId"); returnedTabID != "" {
-				q.Set("tabId", returnedTabID)
-			}
-			snapBody, _, snapErr := c.Get(ctx, "/snapshot", q)
-			if snapErr == nil {
-				return mcp.NewToolResultText(string(body) + "\n" + string(snapBody)), nil
-			}
-		}
+		return withOptionalSnapshot(ctx, c, r, tabID, body, code)
+	}
+}
 
+// withOptionalSnapshot appends the post-navigation snapshot when snap is set, so a
+// client can act and see the result in one round-trip. The tab is taken from the
+// request when given and otherwise from the tab the response reports, which is what
+// makes snap work for a call that did not name a tab. A snapshot failure is not
+// fatal: the navigation already happened and its result is the answer.
+func withOptionalSnapshot(ctx context.Context, c *Client, r mcp.CallToolRequest, tabID string, body []byte, code int) (*mcp.CallToolResult, error) {
+	snap, ok := optBool(r, "snap")
+	if !ok || !snap {
 		return resultFromBytes(body, code)
+	}
+	q := url.Values{}
+	q.Set("filter", "interactive")
+	q.Set("format", "compact")
+	if tabID != "" {
+		q.Set("tabId", tabID)
+	} else if returnedTabID := responseStringField(body, "tabId"); returnedTabID != "" {
+		q.Set("tabId", returnedTabID)
+	}
+	snapBody, _, snapErr := c.Get(ctx, "/snapshot", routedQuery(r, q))
+	if snapErr != nil {
+		return resultFromBytes(body, code)
+	}
+	return mcp.NewToolResultText(string(body) + "\n" + string(snapBody)), nil
+}
+
+// handleHistoryNav serves pinchtab_back, pinchtab_forward and pinchtab_reload. The
+// verb is data: the three differ only in the route they post to, so one handler
+// takes it as a parameter rather than three near-identical copies drifting apart.
+//
+// Two things differ from handleNavigate, both forced by the endpoint. /back,
+// /forward and /reload never parse a request body — handleHistoryNav reads tabId
+// from the query and the tab-scoped route from the path — so no body is sent at
+// all, and browser travels in the query via routedPath. Putting browser in a body
+// the endpoint does not read would be silently dropped.
+func handleHistoryNav(c *Client, verb string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		tabID := optString(r, "tabId")
+		path := "/" + verb
+		if tabID != "" {
+			path = "/tabs/" + url.PathEscape(tabID) + "/" + verb
+		}
+		body, code, err := c.Post(ctx, routedPath(r, path), nil)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if code >= 400 {
+			return resultFromBytes(body, code)
+		}
+		return withOptionalSnapshot(ctx, c, r, tabID, body, code)
 	}
 }
 

@@ -15,6 +15,9 @@ import (
 // which is what stops the next tool from picking the body form.
 var browserToolArgs = map[string]map[string]any{
 	"pinchtab_navigate":            {"url": "https://example.com"},
+	"pinchtab_back":                {},
+	"pinchtab_forward":             {},
+	"pinchtab_reload":              {},
 	"pinchtab_snapshot":            {},
 	"pinchtab_frame":               {"target": "#payment"},
 	"pinchtab_screenshot":          {},

@@ -81,12 +81,13 @@ pinchtab --server http://remote:9867 mcp
 
 ## Available Tools
 
-PinchTab currently exposes 39 tools:
+PinchTab currently exposes 46 tools:
 
-- Navigation: 5
+- Navigation: 9
 - Interaction: 9
 - Keyboard: 4
 - Content: 3
+- Recording: 3
 - Site: 1
 - Tab management: 5
 - Wait utilities: 6
@@ -96,9 +97,13 @@ PinchTab currently exposes 39 tools:
 ### Navigation
 
 - `pinchtab_navigate`
+- `pinchtab_back` — go back one history entry; returns the tab ID and the URL landed on
+- `pinchtab_forward` — go forward one history entry; returns the tab ID and the URL landed on
+- `pinchtab_reload` — reload the current page; returns the tab ID and the URL landed on
 - `pinchtab_snapshot`
 - `pinchtab_frame`
 - `pinchtab_screenshot`
+- `pinchtab_capture` — paired screenshot + snapshot from one DOM epoch
 - `pinchtab_get_text`
 
 ### Interaction
@@ -125,6 +130,12 @@ PinchTab currently exposes 39 tools:
 - `pinchtab_eval`
 - `pinchtab_pdf`
 - `pinchtab_find`
+
+### Recording
+
+- `pinchtab_record_start`
+- `pinchtab_record_stop`
+- `pinchtab_record_status`
 
 ### Site
 
@@ -179,6 +190,11 @@ The normal MCP browser loop is:
 2. Call `pinchtab_snapshot` to inspect page structure and collect refs
 3. Call `pinchtab_click`, `pinchtab_type`, or other action tools with structured arguments
 4. Call `pinchtab_wait_*` or `pinchtab_network` when needed
+5. Call `pinchtab_back` to leave a dead end, or `pinchtab_reload` to retry the page
+
+`pinchtab_back`, `pinchtab_forward` and `pinchtab_reload` take an optional `tabId`
+and `snap`, so `snap: true` returns the page after the navigation in one
+round-trip.
 
 `pinchtab_snapshot` supports MCP-safe output controls:
 
