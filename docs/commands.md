@@ -22,14 +22,15 @@ pinchtab completion <shell>             # Generate shell completions
 
 Logging is a level, not an on/off switch. Every run — foreground or `--background`
 — records the per-request access log (with its `requestId`), instance lifecycle
-transitions, warnings and errors. `-v` adds debug detail and the full startup
-banner; `--log-level debug|info|warn|error` sets the threshold explicitly and is
-the only thing that can drop request lines or warnings.
+transitions, warnings and errors. The threshold comes from the first of these that
+is set: `--log-level debug|info|warn|error`, then `server.logLevel` in the config
+file, then `-v`, then the default `info`. `-v` always adds the full startup banner,
+and it raises the level to debug only when neither of the other two is set.
 
-A daemon-installed server and the server a bare `pinchtab nav` auto-starts both
-run `pinchtab server` with no flags, so they take their threshold from
-`server.logLevel` in the config file (`pinchtab config set server.logLevel warn`).
-`--log-level` overrides it for a hand-started run; `-v` does not.
+A daemon-installed server and the server a bare `pinchtab nav` auto-starts both run
+`pinchtab server` with no flags, so `server.logLevel` is the only way to set their
+threshold (`pinchtab config set server.logLevel warn`). `pinchtab bridge` takes the
+same key and the same `--log-level` flag.
 
 ## Navigation
 

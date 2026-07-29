@@ -567,7 +567,11 @@ pinchtab config get server.logLevel
 
 Accepted values are `debug`, `info` (the default), `warn` and `error`; an
 unparseable value fails when the config loads, naming the accepted values.
-`--log-level` still wins over the configured value, and `-v` wins over neither.
+`--log-level` still wins over the configured value. `-v` keeps its startup banner
+either way, but it only raises the level when neither `--log-level` nor
+`server.logLevel` is set — so a persisted `warn` survives `pinchtab server -v`, and
+`--log-level debug` is how you override it for one run. `pinchtab bridge` reads the
+same key and accepts the same flag.
 
 ### Network Bind With Token
 

@@ -217,3 +217,41 @@ func TestServerCommandAssignsTheLogLevelOnlyInsideResolveLogLevel(t *testing.T) 
 		t.Error("the server command no longer calls resolveLogLevel with the flag and the verbose flag")
 	}
 }
+
+// The bridge is where a browser-level fault is diagnosed, and server.logLevel now
+// travels into every child bridge config, so a bridge that ignored the key would
+// drop the operator's debug request exactly where they asked for it.
+func TestBridgeResolvesTheConfiguredLogLevel(t *testing.T) {
+	t.Cleanup(func() { safelog.SetLevel(safelog.DefaultLevel) })
+
+	for _, tc := range []struct {
+		name        string
+		configLevel string
+		flag        string
+		want        slog.Level
+	}{
+		{name: "config alone is honoured", configLevel: "warn", want: slog.LevelWarn},
+		{name: "flag beats config", configLevel: "warn", flag: "debug", want: slog.LevelDebug},
+		{name: "neither is the default", want: safelog.DefaultLevel},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			safelog.SetLevel(slog.LevelInfo)
+			cfg := &config.RuntimeConfig{LogLevel: tc.configLevel}
+			resolveLogLevel(cfg, tc.flag, false)
+			if got := safelog.CurrentLevel(); got != tc.want {
+				t.Errorf("level = %v, want %v", got, tc.want)
+			}
+		})
+	}
+
+	if bridgeCmd.Flags().Lookup("log-level") == nil {
+		t.Error("bridge has no --log-level flag, so it cannot override the configured level the way --bind and --port do")
+	}
+	raw, err := os.ReadFile("cmd_bridge.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "resolveLogLevel(cfg, bridgeLogLevel, false)") {
+		t.Error("cmd_bridge.go no longer resolves the log level, so server.logLevel is silently ignored in the bridge")
+	}
+}

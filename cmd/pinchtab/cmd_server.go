@@ -99,12 +99,11 @@ func applyServerAddressFlags(cfg *config.RuntimeConfig, bind, port string) {
 	}
 }
 
-// resolveLogLevel settles the run's threshold from the only three inputs that
-// carry it, in precedence order: --log-level, then server.logLevel from the config
-// file, then -v, then the default. It is one function because the command must not
-// be able to apply them in a different order — assigning the flag unconditionally
-// erased server.logLevel on every flagless run, which is every daemon-installed
-// and auto-started server.
+// resolveLogLevel settles a run's threshold from the only inputs that carry it, in
+// precedence order: --log-level, then server.logLevel from the config file, then
+// -v, then the default. Every command that logs calls this rather than assigning
+// cfg.LogLevel itself — an unconditional assignment erased server.logLevel on
+// every flagless run, which is every daemon-installed and auto-started server.
 func resolveLogLevel(cfg *config.RuntimeConfig, logLevel string, verbose bool) {
 	if v := strings.TrimSpace(logLevel); v != "" {
 		cfg.LogLevel = v
