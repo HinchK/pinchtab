@@ -151,6 +151,11 @@ func quarantineCorruptedProfile(profileDir string) (string, error) {
 	if err := os.Rename(profileDir, quarantinePath); err != nil {
 		return "", fmt.Errorf("rename profile dir: %w", err)
 	}
+	// The rename carries profile.json along, where it now names a profile this
+	// directory no longer is. Drop it so nothing on disk makes that claim.
+	if err := os.Remove(filepath.Join(quarantinePath, "profile.json")); err != nil && !os.IsNotExist(err) {
+		slog.Warn("stale profile metadata left in quarantined profile", "profile", quarantinePath, "err", err)
+	}
 	if err := os.MkdirAll(profileDir, 0700); err != nil {
 		return quarantinePath, fmt.Errorf("recreate profile dir: %w", err)
 	}

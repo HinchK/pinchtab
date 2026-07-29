@@ -73,8 +73,7 @@ func (pm *ProfileManager) findProfileDirByName(name string) (string, error) {
 		if entry.Name() == profileID(name) {
 			return dir, nil
 		}
-		meta := readProfileMeta(dir)
-		if meta.Name == name {
+		if trustedProfileMeta(pm.baseDir, entry.Name()).Name == name {
 			return dir, nil
 		}
 	}
@@ -151,6 +150,21 @@ func (pm *ProfileManager) List() ([]bridge.ProfileInfo, error) {
 	return profiles, nil
 }
 
+// trustedProfileMeta reads dirName's profile.json and keeps it only for a
+// directory the metadata actually owns: the profile's own name, or the ID
+// derived from it, which is what create and import use. Quarantine renames a
+// directory and carries profile.json along, so the file then names the profile
+// the directory used to be; trusting it would give both directories one name,
+// and ProfileID hashes the name, so one ID. Falling back to the directory name
+// keeps them distinct, since directory names are unique within baseDir.
+func trustedProfileMeta(baseDir, dirName string) ProfileMeta {
+	meta := readProfileMeta(filepath.Join(baseDir, dirName))
+	if meta.Name == "" || dirName == meta.Name || dirName == profileID(meta.Name) {
+		return meta
+	}
+	return ProfileMeta{}
+}
+
 func (pm *ProfileManager) profileInfo(dirName string) (ProfileDetailedInfo, error) {
 	if err := ValidateProfileName(dirName); err != nil {
 		return ProfileDetailedInfo{}, err
@@ -168,7 +182,7 @@ func (pm *ProfileManager) profileInfo(dirName string) (ProfileDetailedInfo, erro
 	}
 
 	chromeProfileName, accountEmail, accountName, hasAccount := readChromeProfileIdentity(dir)
-	meta := readProfileMeta(dir)
+	meta := trustedProfileMeta(pm.baseDir, dirName)
 	profileName := meta.Name
 	if profileName == "" {
 		profileName = dirName
@@ -212,8 +226,7 @@ func (pm *ProfileManager) FindByID(id string) (string, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		dir := filepath.Join(pm.baseDir, entry.Name())
-		meta := readProfileMeta(dir)
+		meta := trustedProfileMeta(pm.baseDir, entry.Name())
 		if meta.ID == id {
 			if meta.Name != "" {
 				return meta.Name, nil

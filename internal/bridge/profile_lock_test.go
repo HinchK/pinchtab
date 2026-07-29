@@ -390,3 +390,54 @@ func TestQuarantineCorruptedProfile_ProceedsAfterWaitTimeout(t *testing.T) {
 		t.Fatal("expected a quarantine path despite the timed-out wait")
 	}
 }
+
+// A quarantined directory that keeps profile.json still claims to be the
+// profile it was moved away from; the listing then shows two directories under
+// one name and one ID.
+func TestQuarantineDropsTheStaleProfileMetadata(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	profileDir := filepath.Join(tmp, "default")
+	if err := os.MkdirAll(filepath.Join(profileDir, "Default"), 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	meta := []byte(`{"id":"prof_37a8eec1","name":"default"}`)
+	if err := os.WriteFile(filepath.Join(profileDir, "profile.json"), meta, 0644); err != nil {
+		t.Fatalf("setup metadata: %v", err)
+	}
+
+	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	if err != nil {
+		t.Fatalf("quarantineCorruptedProfile: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(quarantinePath, "profile.json")); !os.IsNotExist(err) {
+		data, _ := os.ReadFile(filepath.Join(quarantinePath, "profile.json"))
+		t.Fatalf("quarantined directory still claims a profile identity: %s", data)
+	}
+	if _, err := os.Stat(filepath.Join(quarantinePath, "Default")); err != nil {
+		t.Fatalf("quarantine must preserve the rest of the profile: %v", err)
+	}
+	if _, err := os.Stat(profileDir); err != nil {
+		t.Fatalf("live profile directory not recreated: %v", err)
+	}
+}
+
+func TestQuarantineWithoutMetadataStillSucceeds(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	profileDir := filepath.Join(tmp, "default")
+	if err := os.MkdirAll(filepath.Join(profileDir, "Default"), 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	if err != nil {
+		t.Fatalf("quarantineCorruptedProfile: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(quarantinePath, "Default")); err != nil {
+		t.Fatalf("quarantined directory incomplete: %v", err)
+	}
+}

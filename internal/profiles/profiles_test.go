@@ -1060,3 +1060,193 @@ func TestProfileRenameRejectsDuplicate(t *testing.T) {
 		t.Errorf("expected 'already exists' error, got: %v", err)
 	}
 }
+
+// seedProfileDir writes a profile directory with metadata naming metaName,
+// which is how a directory copied or renamed out from under its profile.json
+// looks on disk.
+func seedProfileDir(t *testing.T, baseDir, dirName, metaName string) {
+	t.Helper()
+	dir := filepath.Join(baseDir, dirName)
+	if err := os.MkdirAll(filepath.Join(dir, "Default"), 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if metaName == "" {
+		return
+	}
+	if err := writeProfileMeta(dir, ProfileMeta{ID: profileID(metaName), Name: metaName}); err != nil {
+		t.Fatalf("writeProfileMeta: %v", err)
+	}
+}
+
+func listedByPath(t *testing.T, pm *ProfileManager, dirName string) bridge.ProfileInfo {
+	t.Helper()
+	profiles, err := pm.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, p := range profiles {
+		if filepath.Base(p.Path) == dirName {
+			return p
+		}
+	}
+	t.Fatalf("directory %q missing from the listing: %+v", dirName, profiles)
+	return bridge.ProfileInfo{}
+}
+
+func TestListMetadataNamingAnotherProfileFallsBackToTheDirectoryName(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.Create("live"); err != nil {
+		t.Fatal(err)
+	}
+	seedProfileDir(t, base, "live.quarantine-1785345247", "live")
+
+	live := listedByPath(t, pm, profileID("live"))
+	stale := listedByPath(t, pm, "live.quarantine-1785345247")
+
+	if stale.Name != "live.quarantine-1785345247" {
+		t.Fatalf("quarantined entry name = %q, want its directory name", stale.Name)
+	}
+	if stale.ID == live.ID {
+		t.Fatalf("quarantined entry shares the live profile's ID %q", stale.ID)
+	}
+	if stale.ID != profileID("live.quarantine-1785345247") {
+		t.Fatalf("quarantined ID = %q, want the ID derived from its directory name", stale.ID)
+	}
+}
+
+func TestListNeverReturnsTwoProfilesWithOneID(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.Create("live"); err != nil {
+		t.Fatal(err)
+	}
+	for _, dirName := range []string{"live.quarantine-1", "live.quarantine-2", "copy-of-live"} {
+		seedProfileDir(t, base, dirName, "live")
+	}
+
+	profiles, err := pm.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 4 {
+		t.Fatalf("expected all 4 directories listed, got %d", len(profiles))
+	}
+	seen := map[string]string{}
+	for _, p := range profiles {
+		if prev, dup := seen[p.ID]; dup {
+			t.Fatalf("duplicate id %q shared by %q and %q", p.ID, prev, p.Path)
+		}
+		seen[p.ID] = p.Path
+	}
+}
+
+func TestListKeepsMetadataWhenItNamesItsOwnDirectory(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.CreateWithMeta("owned", ProfileMeta{UseWhen: "reading the metadata still works"}); err != nil {
+		t.Fatal(err)
+	}
+	// A name-named directory is the other legitimate layout; both must keep
+	// reading their metadata. UseWhen only survives when the metadata is kept,
+	// so it distinguishes "trusted" from "fell back to the directory name".
+	seedProfileDir(t, base, "by-name", "by-name")
+	if err := writeProfileMeta(filepath.Join(base, "by-name"), ProfileMeta{
+		ID:      profileID("by-name"),
+		Name:    "by-name",
+		UseWhen: "a name-named directory keeps its metadata too",
+	}); err != nil {
+		t.Fatalf("writeProfileMeta: %v", err)
+	}
+
+	idNamed := listedByPath(t, pm, profileID("owned"))
+	if idNamed.Name != "owned" || idNamed.UseWhen != "reading the metadata still works" {
+		t.Fatalf("id-named directory lost its metadata: name=%q useWhen=%q", idNamed.Name, idNamed.UseWhen)
+	}
+	nameNamed := listedByPath(t, pm, "by-name")
+	if nameNamed.Name != "by-name" || nameNamed.ID != profileID("by-name") {
+		t.Fatalf("name-named directory: name=%q id=%q", nameNamed.Name, nameNamed.ID)
+	}
+	if nameNamed.UseWhen != "a name-named directory keeps its metadata too" {
+		t.Fatalf("name-named directory lost its metadata: useWhen=%q", nameNamed.UseWhen)
+	}
+}
+
+func TestListWithoutMetadataStillDerivesTheNameFromTheDirectory(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	seedProfileDir(t, base, "bare-dir", "")
+
+	got := listedByPath(t, pm, "bare-dir")
+	if got.Name != "bare-dir" || got.ID != profileID("bare-dir") {
+		t.Fatalf("no-metadata fallback changed: name=%q id=%q", got.Name, got.ID)
+	}
+}
+
+func TestResolutionByNameAndIDIgnoresADirectoryClaimingAnotherProfile(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.Create("live"); err != nil {
+		t.Fatal(err)
+	}
+	seedProfileDir(t, base, "live.quarantine-1785345247", "live")
+	liveDir := filepath.Join(base, profileID("live"))
+
+	path, err := pm.ProfilePath("live")
+	if err != nil {
+		t.Fatalf("resolve by name: %v", err)
+	}
+	if path != liveDir {
+		t.Fatalf("--profile live resolved to %q, want the live directory %q", path, liveDir)
+	}
+
+	name, err := pm.FindByID(profileID("live"))
+	if err != nil {
+		t.Fatalf("resolve by id: %v", err)
+	}
+	if name != "live" {
+		t.Fatalf("FindByID returned %q, want live", name)
+	}
+	quarantined, err := pm.FindByID(profileID("live.quarantine-1785345247"))
+	if err != nil {
+		t.Fatalf("resolve quarantined id: %v", err)
+	}
+	if quarantined != "live.quarantine-1785345247" {
+		t.Fatalf("quarantined ID resolved to %q, want its own directory name", quarantined)
+	}
+}
+
+// Rename writes the new name into metadata before renaming the directory. If
+// the rename fails it must put the old name back, or the directory is left
+// claiming a profile it is not — which is the state this fix stops trusting.
+func TestProfileRenameRollsBackMetadataWhenTheDirectoryRenameFails(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.Create("old-name"); err != nil {
+		t.Fatal(err)
+	}
+	oldDir := filepath.Join(base, profileID("old-name"))
+
+	// The destination must look free to the preflight and still be unwritable
+	// at rename time, or Rename returns before it ever touches the metadata.
+	if err := os.Chmod(base, 0500); err != nil {
+		t.Fatalf("chmod base: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(base, 0755) })
+
+	if err := pm.Rename("old-name", "new-name"); err == nil {
+		t.Fatal("expected the rename to fail while the destination is occupied")
+	}
+
+	meta := readProfileMeta(oldDir)
+	if meta.Name != "old-name" || meta.ID != profileID("old-name") {
+		t.Fatalf("metadata not rolled back: name=%q id=%q", meta.Name, meta.ID)
+	}
+	if !pm.Exists("old-name") {
+		t.Fatal("the profile must still resolve under its old name")
+	}
+	got := listedByPath(t, pm, profileID("old-name"))
+	if got.Name != "old-name" || got.ID != profileID("old-name") {
+		t.Fatalf("listing after a failed rename: name=%q id=%q", got.Name, got.ID)
+	}
+}
