@@ -86,9 +86,31 @@ func TestWindowsPlatformVersionIsNotDerivedFromTheHostBecauseChromeSendsAnAPICon
 			"Chrome derives Sec-CH-UA-Platform-Version on Windows from the UniversalApiContract version, not the OS version, "+
 			"so any host-derived value there is one real Chrome never sends. Leave Windows on the frozen default.", body)
 	}
-	for _, hostArm := range []string{`"macOS" && goruntime.GOOS == "darwin"`, `"Linux" && goruntime.GOOS == "linux"`} {
-		if !strings.Contains(body, hostArm) {
-			t.Errorf("hostPlatformVersion no longer reads the host for %s; this test would then be pinning an empty switch rather than the Windows exception", hostArm)
+	// Each arm must also read the RIGHT host value, and that has to be checked here
+	// rather than behaviourally, for the same reason the Windows arm does. The
+	// behavioural oracle switches on GOOS, so it exercises the macOS arm only on a
+	// macOS machine — and the Go suite runs on ubuntu alone, so swapping the darwin
+	// arm to the kernel release is green in CI and reds only on a developer's laptop.
+	// Measured: with hostKernelVersion() there, macOS reports 25.5.0 against a host
+	// product version of 26.5.1, while a Linux container runs the whole package green.
+	// Which value each platform reads is the substance of this feature: Chrome sends
+	// the product version on macOS and the kernel release on Linux, and the two are
+	// easy to swap because both are "the host version".
+	for _, arm := range []struct{ condition, reads, why string }{
+		{`"macOS" && goruntime.GOOS == "darwin"`, "hostProductVersion()", "Chrome reports the macOS product version (sw_vers -productVersion) through UA-CH, not the Darwin kernel release"},
+		{`"Linux" && goruntime.GOOS == "linux"`, "hostKernelVersion()", "Chrome derives the Linux platformVersion from the kernel release (uname -r), not from a distro product version"},
+	} {
+		i := strings.Index(body, arm.condition)
+		if i < 0 {
+			t.Errorf("hostPlatformVersion no longer reads the host for %s; this test would then be pinning an empty switch rather than the Windows exception", arm.condition)
+			continue
+		}
+		rest := body[i:]
+		if end := strings.Index(rest, "\n\tcase "); end >= 0 {
+			rest = rest[:end]
+		}
+		if !strings.Contains(rest, arm.reads) {
+			t.Errorf("the %s arm no longer reads %s:\n%s\n%s", arm.condition, arm.reads, rest, arm.why)
 		}
 	}
 }
