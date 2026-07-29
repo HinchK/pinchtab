@@ -8,11 +8,11 @@ import (
 	"os"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/bridge/observe"
 	"github.com/pinchtab/pinchtab/internal/httpx"
+	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
 
 // HandleNetworkExportStream streams network entries to a file as they arrive.
@@ -274,11 +274,16 @@ func (s *exportStreamSession) exportEntry(entry bridge.NetworkEntry) (stop bool)
 		return true
 	}
 	s.count++
-	data, _ := json.Marshal(map[string]any{"entries": s.count, "url": safetruncateURL(entry.URL)})
+	data, _ := json.Marshal(map[string]any{"entries": s.count, "url": sanitize.TruncateUTF8Bytes(entry.URL, maxProgressURLBytes)})
 	_, _ = fmt.Fprintf(s.w, "event: export\ndata: %s\n\n", data)
 	s.flusher.Flush()
 	return false
 }
+
+// maxProgressURLBytes caps the URL echoed in an export progress event. The cut
+// carries the shared truncation marker: nothing consumes this URL, so a visible
+// marker is strictly better than a prefix that reads as a complete address.
+const maxProgressURLBytes = 120
 
 // drainPending flushes any still-pending entries best-effort on graceful shutdown,
 // preferring the latest buffered copy. It returns true if encoding stopped the loop.
@@ -328,18 +333,4 @@ func (s *exportStreamSession) sendDone() {
 // HandleTabNetworkExportStream handles GET /tabs/{id}/network/export/stream.
 func (h *Handlers) HandleTabNetworkExportStream(w http.ResponseWriter, r *http.Request) {
 	h.withPathTabID(w, r, h.HandleNetworkExportStream)
-}
-
-// safetruncateURL truncates at a valid UTF-8 boundary (#21).
-func safetruncateURL(u string) string {
-	const maxLen = 120
-	if len(u) <= maxLen {
-		return u
-	}
-	for i := maxLen; i > 0; i-- {
-		if utf8.RuneStart(u[i]) {
-			return u[:i]
-		}
-	}
-	return u[:maxLen]
 }

@@ -3,6 +3,8 @@ package bridge
 import (
 	"sync"
 	"time"
+
+	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
 
 const (
@@ -15,7 +17,6 @@ const (
 	maxErrorTypeBytes         = 128
 	maxErrorURLBytes          = 2 * 1024
 	maxErrorStackBytes        = 8 * 1024
-	truncationSuffix          = "..."
 )
 
 // LogEntry represents a single console log entry.
@@ -182,41 +183,16 @@ func (s *ConsoleLogStore) RemoveTab(tabID string) {
 }
 
 func normalizeConsoleLogEntry(entry LogEntry) LogEntry {
-	entry.Level = truncateUTF8Bytes(entry.Level, maxConsoleLevelBytes)
-	entry.Message = truncateUTF8Bytes(entry.Message, maxConsoleMessageBytes)
-	entry.Source = truncateUTF8Bytes(entry.Source, maxConsoleSourceBytes)
+	entry.Level = sanitize.TruncateUTF8Bytes(entry.Level, maxConsoleLevelBytes)
+	entry.Message = sanitize.TruncateUTF8Bytes(entry.Message, maxConsoleMessageBytes)
+	entry.Source = sanitize.TruncateUTF8Bytes(entry.Source, maxConsoleSourceBytes)
 	return entry
 }
 
 func normalizeErrorLogEntry(entry ErrorEntry) ErrorEntry {
-	entry.Message = truncateUTF8Bytes(entry.Message, maxErrorMessageBytes)
-	entry.Type = truncateUTF8Bytes(entry.Type, maxErrorTypeBytes)
-	entry.URL = truncateUTF8Bytes(entry.URL, maxErrorURLBytes)
-	entry.Stack = truncateUTF8Bytes(entry.Stack, maxErrorStackBytes)
+	entry.Message = sanitize.TruncateUTF8Bytes(entry.Message, maxErrorMessageBytes)
+	entry.Type = sanitize.TruncateUTF8Bytes(entry.Type, maxErrorTypeBytes)
+	entry.URL = sanitize.TruncateUTF8Bytes(entry.URL, maxErrorURLBytes)
+	entry.Stack = sanitize.TruncateUTF8Bytes(entry.Stack, maxErrorStackBytes)
 	return entry
-}
-
-func truncateUTF8Bytes(s string, maxBytes int) string {
-	if maxBytes <= 0 {
-		return ""
-	}
-	if len(s) <= maxBytes {
-		return s
-	}
-	if maxBytes <= len(truncationSuffix) {
-		return truncationSuffix[:maxBytes]
-	}
-
-	limit := maxBytes - len(truncationSuffix)
-	cut := 0
-	for i := range s {
-		if i > limit {
-			break
-		}
-		cut = i
-	}
-	if cut == 0 && limit > 0 {
-		return truncationSuffix
-	}
-	return s[:cut] + truncationSuffix
 }

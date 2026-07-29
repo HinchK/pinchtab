@@ -1,6 +1,13 @@
 package urls
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+	"unicode/utf8"
+
+	"github.com/pinchtab/pinchtab/internal/sanitize"
+)
 
 func TestNormalize(t *testing.T) {
 	tests := []struct {
@@ -141,6 +148,78 @@ func TestRedactForLog(t *testing.T) {
 		t.Run(tt.input, func(t *testing.T) {
 			if got := RedactForLog(tt.input); got != tt.expected {
 				t.Fatalf("RedactForLog(%q) = %q, want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+// The byte cap on a redacted log URL moved from a package-private copy to
+// sanitize.TruncateUTF8Bytes. These are the four cases where a byte-budget
+// truncator can change behaviour, pinned at a converted call site.
+func TestRedactForLogTruncationBoundaries(t *testing.T) {
+	host := "https://example.com/"
+	fill := maxLogURLBytes - len(host)
+
+	tests := []struct {
+		name string
+		raw  string
+		want func(got string) error
+	}{
+		{
+			name: "empty input stays empty",
+			raw:  "",
+			want: func(got string) error {
+				if got != "" {
+					return fmt.Errorf("got %q, want empty", got)
+				}
+				return nil
+			},
+		},
+		{
+			name: "under the limit is returned verbatim",
+			raw:  host + strings.Repeat("a", 10),
+			want: func(got string) error {
+				if got != host+strings.Repeat("a", 10) {
+					return fmt.Errorf("got %q, want the input unchanged", got)
+				}
+				return nil
+			},
+		},
+		{
+			name: "exactly at the limit is returned verbatim",
+			raw:  host + strings.Repeat("a", fill),
+			want: func(got string) error {
+				if len(got) != maxLogURLBytes {
+					return fmt.Errorf("len = %d, want %d", len(got), maxLogURLBytes)
+				}
+				if strings.HasSuffix(got, sanitize.TruncationSuffix) {
+					return fmt.Errorf("a URL exactly at the limit must not be marked truncated: %q", got)
+				}
+				return nil
+			},
+		},
+		{
+			name: "a cut landing inside a multi-byte rune keeps valid UTF-8",
+			raw:  host + strings.Repeat("a", fill-1) + "€€€",
+			want: func(got string) error {
+				if !utf8.ValidString(got) {
+					return fmt.Errorf("truncated URL is not valid UTF-8: %q", got)
+				}
+				if len(got) > maxLogURLBytes {
+					return fmt.Errorf("len = %d, want <= %d", len(got), maxLogURLBytes)
+				}
+				if !strings.HasSuffix(got, sanitize.TruncationSuffix) {
+					return fmt.Errorf("a cut URL must carry the truncation marker: %q", got)
+				}
+				return nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.want(RedactForLog(tt.raw)); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

@@ -4,12 +4,11 @@ import (
 	"net"
 	"net/url"
 	"strings"
+
+	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
 
-const (
-	maxLogURLBytes    = 512
-	logTruncateSuffix = "..."
-)
+const maxLogURLBytes = 512
 
 // RedactForLog normalizes a URL for logs and strips sensitive components.
 // It removes userinfo, query, and fragment and caps the final string length.
@@ -48,30 +47,5 @@ func RedactForLog(raw string) string {
 		}
 	}
 
-	return truncateForLog(parsed.String(), maxLogURLBytes)
-}
-
-func truncateForLog(s string, maxBytes int) string {
-	if maxBytes <= 0 {
-		return ""
-	}
-	if len(s) <= maxBytes {
-		return s
-	}
-	if maxBytes <= len(logTruncateSuffix) {
-		return logTruncateSuffix[:maxBytes]
-	}
-
-	limit := maxBytes - len(logTruncateSuffix)
-	cut := 0
-	for i := range s {
-		if i > limit {
-			break
-		}
-		cut = i
-	}
-	if cut == 0 && limit > 0 {
-		return logTruncateSuffix
-	}
-	return s[:cut] + logTruncateSuffix
+	return sanitize.TruncateUTF8Bytes(parsed.String(), maxLogURLBytes)
 }
