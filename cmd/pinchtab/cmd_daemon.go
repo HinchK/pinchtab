@@ -32,20 +32,33 @@ func init() {
 	rootCmd.AddCommand(daemonCmd)
 }
 
+var daemonCurrentManager = daemon.CurrentManager
+
 func handleDaemonCommand(subcommand string, jsonOut bool) {
-	if subcommand == "" || subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
+	if code := dispatchDaemonCommand(subcommand, jsonOut); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func dispatchDaemonCommand(subcommand string, jsonOut bool) int {
+	if isDaemonStatusSubcommand(subcommand) {
 		if jsonOut {
 			printDaemonStatusJSON()
-			return
+			return 0
 		}
 		printDaemonOverview()
-		return
+		return 0
 	}
 
-	manager, err := daemon.CurrentManager()
+	if err := requireDaemonInstalled(subcommand); err != nil {
+		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, err.Error()))
+		return 1
+	}
+
+	manager, err := daemonCurrentManager()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, err.Error()))
-		os.Exit(1)
+		return 1
 	}
 
 	switch subcommand {
@@ -61,9 +74,32 @@ func handleDaemonCommand(subcommand string, jsonOut bool) {
 		handleDaemonUninstall(manager)
 	default:
 		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("unknown daemon command: %s", subcommand)))
-		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.MutedStyle, "Usage: pinchtab daemon <install|start|restart|stop|uninstall>"))
-		os.Exit(2)
+		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.MutedStyle, "Usage: pinchtab daemon <status|install|start|restart|stop|uninstall>"))
+		return 2
 	}
+	return 0
+}
+
+func isDaemonStatusSubcommand(subcommand string) bool {
+	switch subcommand {
+	case "", "status", "help", "--help", "-h":
+		return true
+	}
+	return false
+}
+
+func requireDaemonInstalled(subcommand string) error {
+	if subcommand != "start" && subcommand != "restart" {
+		return nil
+	}
+	installed, err := daemonInstallationStatus()
+	if err != nil {
+		return fmt.Errorf("cannot determine whether the background service is installed; refusing to %s: %w", subcommand, err)
+	}
+	if installed {
+		return nil
+	}
+	return fmt.Errorf("background service is not installed; install it first with: pinchtab daemon install")
 }
 
 func handleDaemonInstall(manager daemon.Manager) {
