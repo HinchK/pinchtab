@@ -204,10 +204,27 @@ func TestServerCommandAssignsTheLogLevelOnlyInsideResolveLogLevel(t *testing.T) 
 	}
 	src := string(raw)
 
-	const assignment = "cfg.LogLevel = "
-	if got := strings.Count(src, assignment); got != 1 {
-		t.Fatalf("cmd_server.go assigns cfg.LogLevel %d times, want exactly 1 (inside resolveLogLevel)", got)
+	const assignment = ".LogLevel = "
+	assignments := 0
+	scanned := 0
+	for _, path := range commandSourceFiles(t) {
+		body, err := os.ReadFile(path) // #nosec G304 -- files listed from this package's own directory.
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned++
+		if n := strings.Count(string(body), assignment); n > 0 && filepath.Base(path) != "cmd_server.go" {
+			t.Errorf("%s assigns %s%d time(s); the level is settled only inside resolveLogLevel, so a command that spawns or becomes a server must pass its flag there instead", filepath.Base(path), assignment, n)
+		}
+		assignments += strings.Count(string(body), assignment)
 	}
+	if scanned < 2 {
+		t.Fatalf("scanned %d command files; the census matched almost nothing and would pass vacuously", scanned)
+	}
+	if assignments != 1 {
+		t.Fatalf("the command package assigns %s%d times, want exactly 1 (inside resolveLogLevel)", assignment, assignments)
+	}
+
 	helper := src[strings.Index(src, "func resolveLogLevel("):]
 	if end := strings.Index(helper, "\nfunc "); end >= 0 {
 		helper = helper[:end]
@@ -218,6 +235,27 @@ func TestServerCommandAssignsTheLogLevelOnlyInsideResolveLogLevel(t *testing.T) 
 	if !strings.Contains(src, "resolveLogLevel(cfg, logLevel, verbose)") {
 		t.Error("the server command no longer calls resolveLogLevel with the flag and the verbose flag")
 	}
+}
+
+// The one-owner rule covers the whole command package, not just the file the
+// resolver lives in: cmd_server_ensure.go and cmd_server_background.go hold a
+// RuntimeConfig too, so a level assigned there would bypass the precedence
+// unseen.
+func commandSourceFiles(t *testing.T) []string {
+	t.Helper()
+
+	paths, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
 }
 
 // captureRunLog installs the handler a real run installs, at the level a real run
