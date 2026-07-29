@@ -142,3 +142,142 @@ func TestAnnotationRectForNodeResistsMainWorldSubstitution(t *testing.T) {
 		t.Errorf("rect %+v is not the element's viewport position (40,60)", rect)
 	}
 }
+
+// The iframe sits at (400,300) and #inner at (10,20) inside it, so a clip that
+// carries the frame offset lands at (410,320) and a frame-local one at (10,20).
+const framedFixtureHTML = `<body style="margin:0">
+<iframe id="f" style="position:absolute;left:400px;top:300px;border:0" width="300" height="200"
+	srcdoc="<body style='margin:0'><div id='inner' style='position:absolute;left:10px;top:20px;width:80px;height:40px;background:#00c'></div></body>"></iframe>
+</body>`
+
+func newFramedFixture(t *testing.T) context.Context {
+	t.Helper()
+	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
+		chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(testbrowser.Path(t)),
+		chromedp.UserDataDir(t.TempDir()),
+		chromedp.Flag("headless", true),
+		chromedp.Flag("no-sandbox", true),
+	)...)
+	ctx, cancelBrowser := chromedp.NewContext(alloc)
+	ctx, cancelTimeout := context.WithTimeout(ctx, 30*time.Second)
+	t.Cleanup(func() {
+		cancelTimeout()
+		cancelBrowser()
+		cancelAlloc()
+	})
+
+	dataURL := "data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(framedFixtureHTML))
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate(dataURL),
+		chromedp.WaitVisible("#f", chromedp.ByID),
+	); err != nil {
+		t.Fatal(err)
+	}
+	return ctx
+}
+
+func innerFrameNodeID(t *testing.T, ctx context.Context) int64 {
+	t.Helper()
+	var nodeID int64
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		exec := chromedp.FromContext(ctx).Target
+		var doc struct {
+			Root struct {
+				NodeID int64 `json:"nodeId"`
+			} `json:"root"`
+		}
+		if err := exec.Execute(ctx, "DOM.getDocument", map[string]any{"depth": -1, "pierce": true}, &doc); err != nil {
+			return err
+		}
+		var frame struct {
+			NodeID int64 `json:"nodeId"`
+		}
+		if err := exec.Execute(ctx, "DOM.querySelector", map[string]any{
+			"nodeId": doc.Root.NodeID, "selector": "#f",
+		}, &frame); err != nil {
+			return err
+		}
+		var described struct {
+			Node struct {
+				ContentDocument struct {
+					NodeID int64 `json:"nodeId"`
+				} `json:"contentDocument"`
+			} `json:"node"`
+		}
+		if err := exec.Execute(ctx, "DOM.describeNode", map[string]any{
+			"nodeId": frame.NodeID, "pierce": true, "depth": -1,
+		}, &described); err != nil {
+			return err
+		}
+		var inner struct {
+			NodeID int64 `json:"nodeId"`
+		}
+		if err := exec.Execute(ctx, "DOM.querySelector", map[string]any{
+			"nodeId": described.Node.ContentDocument.NodeID, "selector": "#inner",
+		}, &inner); err != nil {
+			return err
+		}
+		var innerDesc struct {
+			Node struct {
+				BackendNodeID int64 `json:"backendNodeId"`
+			} `json:"node"`
+		}
+		if err := exec.Execute(ctx, "DOM.describeNode", map[string]any{"nodeId": inner.NodeID}, &innerDesc); err != nil {
+			return err
+		}
+		nodeID = innerDesc.Node.BackendNodeID
+		return nil
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if nodeID == 0 {
+		t.Fatal("fixture element #inner has no backend node id")
+	}
+	return nodeID
+}
+
+// An isolated-world handle runs in the TOP frame's world, where a bare `window`
+// has an empty frameElement chain — so the frame walk must start from the node's
+// own view or every frame offset is silently dropped.
+func TestClipForNodeAppliesFrameOffset(t *testing.T) {
+	ctx := newFramedFixture(t)
+
+	clip, err := cdptk.ClipForNode(ctx, innerFrameNodeID(t, ctx), true)
+	if err != nil {
+		t.Fatalf("clip for in-frame element: %v", err)
+	}
+
+	const wantX, wantY, wantW, wantH = 410, 320, 80, 40
+	if clip.X != wantX || clip.Y != wantY {
+		t.Errorf("in-frame clip origin = (%.0f,%.0f), want (%d,%d) — frame offset not applied (frame-local origin is (10,20))",
+			clip.X, clip.Y, wantX, wantY)
+	}
+	if clip.Width != wantW || clip.Height != wantH {
+		t.Errorf("in-frame clip size = %.0fx%.0f, want %dx%d", clip.Width, clip.Height, wantW, wantH)
+	}
+}
+
+// The same isolated-world frame-walk trap as the clip builder, on the path that
+// actually has production callers: the annotate handler places the overlay boxes
+// a vision model is told to read, so a frame-local rect misplaces every one.
+func TestAnnotationRectForNodeAppliesFrameOffset(t *testing.T) {
+	ctx := newFramedFixture(t)
+
+	rect, err := cdptk.AnnotationRectForNode(ctx, innerFrameNodeID(t, ctx))
+	if err != nil {
+		t.Fatalf("AnnotationRectForNode for in-frame element: %v", err)
+	}
+	if rect == nil {
+		t.Fatal("AnnotationRectForNode returned no rect for an in-frame element")
+	}
+
+	const wantX, wantY, wantW, wantH = 410, 320, 80, 40
+	if rect.X != wantX || rect.Y != wantY {
+		t.Errorf("in-frame rect origin = (%.0f,%.0f), want (%d,%d) — frame offset not applied (frame-local origin is (10,20))",
+			rect.X, rect.Y, wantX, wantY)
+	}
+	if rect.W != wantW || rect.H != wantH {
+		t.Errorf("in-frame rect size = %.0fx%.0f, want %dx%d", rect.W, rect.H, wantW, wantH)
+	}
+}
