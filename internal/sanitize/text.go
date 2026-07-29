@@ -68,10 +68,46 @@ func RedactAbsolutePaths(s string) string {
 	return s
 }
 
+// StripTextSpoofingRunes removes the Unicode format characters that let text
+// render as something other than its contents: bidirectional overrides and
+// isolates (the Trojan Source class, where a right-to-left override makes
+// "gnp.exe" display as "exe.png"), and zero-width blanks that hide word
+// boundaries.
+//
+// StripControlChars cannot catch these — unicode.IsControl only covers category
+// Cc, and these are Cf. The list is deliberate rather than "every Cf rune":
+// zero-width joiner and non-joiner are required to render emoji sequences and
+// Indic/Arabic script, so removing them would corrupt legitimate text.
+func StripTextSpoofingRunes(s string) string {
+	if !strings.ContainsFunc(s, isTextSpoofingRune) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if isTextSpoofingRune(r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func isTextSpoofingRune(r rune) bool {
+	switch r {
+	case '\u200B', '\uFEFF', // zero-width space, byte order mark
+		'\u200E', '\u200F', // left-to-right / right-to-left mark
+		'\u202A', '\u202B', '\u202C', '\u202D', '\u202E', // embeddings and overrides
+		'\u2066', '\u2067', '\u2068', '\u2069': // isolates
+		return true
+	}
+	return false
+}
+
 func CleanForLog(s string, maxBytes int) string {
-	return TruncateUTF8Bytes(StripControlChars(StripANSI(s)), maxBytes)
+	return TruncateUTF8Bytes(StripTextSpoofingRunes(StripControlChars(StripANSI(s))), maxBytes)
 }
 
 func CleanError(s string, maxBytes int) string {
-	return TruncateUTF8Bytes(RedactAbsolutePaths(StripControlChars(StripANSI(s))), maxBytes)
+	return TruncateUTF8Bytes(RedactAbsolutePaths(StripTextSpoofingRunes(StripControlChars(StripANSI(s)))), maxBytes)
 }
