@@ -24,6 +24,29 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("198.18.0.0/15"),
 }
 
+var nat64WellKnownPrefix = netip.MustParsePrefix("64:ff9b::/96")
+
+// embeddedIPv4 extracts the IPv4 address carried inside an IPv6 transition
+// address (6to4 2002::/16, NAT64 64:ff9b::/96). These wrappers are globally
+// scoped, so IsPrivate/IsLoopback/IsLinkLocalUnicast all report false while the
+// traffic still reaches the embedded IPv4 — 64:ff9b::a9fe:a9fe is the cloud
+// metadata service. The embedded address is decoded rather than the prefixes
+// being banned outright so transition addresses wrapping a public IPv4 keep
+// working.
+func embeddedIPv4(addr netip.Addr) (netip.Addr, bool) {
+	if !addr.Is6() {
+		return netip.Addr{}, false
+	}
+	b := addr.As16()
+	if b[0] == 0x20 && b[1] == 0x02 {
+		return netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]}), true
+	}
+	if nat64WellKnownPrefix.Contains(addr) {
+		return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]}), true
+	}
+	return netip.Addr{}, false
+}
+
 func NormalizeHost(host string) string {
 	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 }
@@ -70,6 +93,9 @@ func ValidatePublicIP(ip net.IP) error {
 		if prefix.Contains(addr) {
 			return ErrPrivateInternalIP
 		}
+	}
+	if v4, ok := embeddedIPv4(addr); ok {
+		return ValidatePublicIP(net.IP(v4.AsSlice()))
 	}
 	return nil
 }
