@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -190,6 +191,82 @@ func TestDialogScopedWrapperFormsStayInsideTheScope(t *testing.T) {
 			}
 			if gotID != tc.wantID {
 				t.Errorf("%s resolved %q, want %q — the wrapper form escaped the dialog scope", tc.selector, gotID, tc.wantID)
+			}
+		})
+	}
+}
+
+// The two guards below are browser-backed, so they skip where the machine has no
+// browser or the lightweight opt-out is set — the same condition under which the
+// pre-existing dialog containment test skips, since both go through
+// testbrowser.Path. Neither adds a skip guard of its own. In a skipping
+// environment nothing else pins WHICH scope each entry point hands the wrapper
+// recursion: the stub table is blind to it by construction. This is the backstop
+// for that environment — it needs no browser and it names the one-token swap.
+func TestWrapperArmsAreWiredToTheirOwnScope(t *testing.T) {
+	raw, err := os.ReadFile("action_resolve.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+
+	for _, tc := range []struct {
+		entry string
+		want  string
+		other string
+	}{
+		{
+			entry: "func ResolveUnifiedSelectorInFrame(",
+			want:  "resolveWrapper(ctx, frameScope{frameID}, sel, refCache)",
+			other: "nodeScope{",
+		},
+		{
+			entry: "func ResolveUnifiedSelectorWithinNode(",
+			want:  "resolveWrapper(ctx, nodeScope{scopeBackendNodeID}, sel, refCache)",
+			other: "frameScope{",
+		},
+	} {
+		body := src[strings.Index(src, tc.entry):]
+		if end := strings.Index(body, "\nfunc "); end >= 0 {
+			body = body[:end]
+		}
+		if !strings.Contains(body, tc.want) {
+			t.Errorf("%s no longer hands its wrapper arm %s — a dialog-scoped first:/last:/nth: would search the wrong root", tc.entry, tc.want)
+		}
+		if strings.Contains(body, "resolveWrapper(ctx, "+tc.other) {
+			t.Errorf("%s hands its wrapper arm a %s: the scopes are swapped", tc.entry, tc.other)
+		}
+	}
+}
+
+// The counter-direction, on the same fixture and the same selectors: a frame-scoped
+// wrapper must still see the whole frame, so it lands on the background twins that
+// bracket the dialog. Without this the dialog assertions above could be satisfied by
+// making EVERY scope behave like a dialog, which would break every frame-rooted
+// action instead of fixing anything.
+func TestFrameScopedWrapperFormsSeeTheWholeFrame(t *testing.T) {
+	ctx := newScopedWrapperFixture(t)
+
+	for _, tc := range []struct {
+		selector string
+		wantID   string
+	}{
+		{selector: "first:text:Save", wantID: "background-first"},
+		{selector: "last:text:Save", wantID: "background-last"},
+		{selector: "first:css:button", wantID: "background-first"},
+		{selector: "last:css:button", wantID: "background-last"},
+	} {
+		t.Run(tc.selector, func(t *testing.T) {
+			nodeID, err := ResolveUnifiedSelectorInFrame(ctx, selector.Parse(tc.selector), nil, "")
+			if err != nil {
+				t.Fatalf("resolve %s in the frame: %v", tc.selector, err)
+			}
+			var gotID string
+			if err := callFunctionOnNodeForTest(ctx, nodeID, `function() { return this.id; }`, &gotID); err != nil {
+				t.Fatal(err)
+			}
+			if gotID != tc.wantID {
+				t.Errorf("%s resolved %q, want %q — a frame-scoped wrapper must reach outside the dialog", tc.selector, gotID, tc.wantID)
 			}
 		})
 	}
