@@ -483,3 +483,28 @@ func TestParse_PrefixPriority(t *testing.T) {
 		t.Errorf("Parse(\"xpath:e5\").Kind = %q, want xpath", s.Kind)
 	}
 }
+
+// The nth grammar is owned here; the bridge resolver and SemanticQuery both
+// depend on this split agreeing.
+func TestParseNth(t *testing.T) {
+	index, raw, err := ParseNth("2:role:button Save")
+	if err != nil {
+		t.Fatalf("ParseNth returned error: %v", err)
+	}
+	if index != 2 || raw != "role:button Save" {
+		t.Fatalf("got index=%d raw=%q, want 2 and a role selector", index, raw)
+	}
+
+	if _, _, err := ParseNth("0:button"); err != nil {
+		t.Errorf("zero index should be valid, got %v", err)
+	}
+	if _, _, err := ParseNth("-1:button"); err == nil {
+		t.Error("expected negative index to fail")
+	}
+	if _, _, err := ParseNth("button"); err == nil {
+		t.Error("expected missing nested selector to fail")
+	}
+	if _, _, err := ParseNth("2:   "); err == nil {
+		t.Error("expected blank nested selector to fail")
+	}
+}

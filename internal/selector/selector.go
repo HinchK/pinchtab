@@ -272,8 +272,8 @@ func (s Selector) SemanticQuery() (string, bool) {
 			return s.String(), true
 		}
 	case KindNth:
-		_, raw, ok := splitNthSelectorValue(s.Value)
-		if ok && rawSelectorCanUseSemantic(raw) {
+		_, raw, err := ParseNth(s.Value)
+		if err == nil && rawSelectorCanUseSemantic(raw) {
 			return s.String(), true
 		}
 	}
@@ -290,20 +290,24 @@ func rawSelectorCanUseSemantic(raw string) bool {
 	}
 }
 
-func splitNthSelectorValue(value string) (int, string, bool) {
+// ParseNth splits the value of an "nth:" selector into its zero-based index and
+// the nested selector. This package owns the selector grammar, so resolvers must
+// use this rather than re-deriving the split: the eligibility checks here and
+// the resolution path must agree on what a valid nth selector is.
+func ParseNth(value string) (index int, nested string, err error) {
 	rawIndex, rawSelector, ok := strings.Cut(value, ":")
 	if !ok {
-		return 0, "", false
+		return 0, "", fmt.Errorf("nth selector requires nth:<index>:<selector>")
 	}
 	rawSelector = strings.TrimSpace(rawSelector)
 	if rawSelector == "" {
-		return 0, "", false
+		return 0, "", fmt.Errorf("nth selector requires a nested selector")
 	}
-	index, err := strconv.Atoi(strings.TrimSpace(rawIndex))
-	if err != nil || index < 0 {
-		return 0, "", false
+	index, convErr := strconv.Atoi(strings.TrimSpace(rawIndex))
+	if convErr != nil || index < 0 {
+		return 0, "", fmt.Errorf("nth selector index must be a zero-based non-negative integer")
 	}
-	return index, rawSelector, true
+	return index, rawSelector, nil
 }
 
 func cutPrefix(s, prefix string) (string, bool) {

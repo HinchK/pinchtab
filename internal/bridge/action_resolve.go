@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
@@ -782,23 +781,6 @@ func resolveSelectorAtWithinNode(ctx context.Context, scopeBackendNodeID int64, 
 	return nid, nil
 }
 
-func parseNthSelectorValue(value string) (int, string, error) {
-	rawIndex, rawSelector, ok := strings.Cut(value, ":")
-	if !ok {
-		return 0, "", fmt.Errorf("nth selector requires nth:<index>:<selector>")
-	}
-	rawIndex = strings.TrimSpace(rawIndex)
-	rawSelector = strings.TrimSpace(rawSelector)
-	if rawSelector == "" {
-		return 0, "", fmt.Errorf("nth selector requires a nested selector")
-	}
-	index, err := strconv.Atoi(rawIndex)
-	if err != nil || index < 0 {
-		return 0, "", fmt.Errorf("nth selector index must be a zero-based non-negative integer")
-	}
-	return index, rawSelector, nil
-}
-
 func resolveNestedSelectorAtInFrame(ctx context.Context, frameID string, raw string, refCache *RefCache, index int, fromEnd bool) (int64, error) {
 	inner := selector.Parse(raw)
 	switch inner.Kind {
@@ -807,7 +789,7 @@ func resolveNestedSelectorAtInFrame(ctx context.Context, frameID string, raw str
 	case selector.KindLast:
 		return resolveNestedSelectorAtInFrame(ctx, frameID, inner.Value, refCache, 0, true)
 	case selector.KindNth:
-		nth, nestedRaw, err := parseNthSelectorValue(inner.Value)
+		nth, nestedRaw, err := selector.ParseNth(inner.Value)
 		if err != nil {
 			return 0, err
 		}
@@ -832,7 +814,7 @@ func resolveNestedSelectorWithinNode(ctx context.Context, scopeBackendNodeID int
 	case selector.KindLast:
 		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, inner.Value, refCache, 0, true)
 	case selector.KindNth:
-		nth, nestedRaw, err := parseNthSelectorValue(inner.Value)
+		nth, nestedRaw, err := selector.ParseNth(inner.Value)
 		if err != nil {
 			return 0, err
 		}
@@ -952,7 +934,7 @@ func ResolveUnifiedSelectorInFrame(ctx context.Context, sel selector.Selector, r
 		return resolveNestedSelectorAtInFrame(ctx, frameID, sel.Value, refCache, 0, true)
 
 	case selector.KindNth:
-		index, rawSelector, err := parseNthSelectorValue(sel.Value)
+		index, rawSelector, err := selector.ParseNth(sel.Value)
 		if err != nil {
 			return 0, err
 		}
@@ -1007,7 +989,7 @@ func ResolveUnifiedSelectorWithinNode(ctx context.Context, sel selector.Selector
 		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, sel.Value, refCache, 0, true)
 
 	case selector.KindNth:
-		index, rawSelector, err := parseNthSelectorValue(sel.Value)
+		index, rawSelector, err := selector.ParseNth(sel.Value)
 		if err != nil {
 			return 0, err
 		}
