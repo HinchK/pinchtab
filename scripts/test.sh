@@ -275,7 +275,11 @@ run_go_test_json() {
           fi
           ;;
         output)
-          if [ -n "$output_text" ] && [[ "$output_text" =~ ^panic:|^---[[:space:]]FAIL ]]; then
+          # The built-in formatter (used only when gotestsum is absent) matched the
+          # "--- FAIL" header and nothing else, so the name survived and the assertion
+          # under it was dropped. Indented subtest headers and "file.go:line:" lines are
+          # where the expected-vs-actual actually lives.
+          if [ -n "$output_text" ] && [[ "$output_text" =~ ^panic:|^[[:space:]]*---[[:space:]]FAIL|^[[:space:]]+[^[:space:]]+\.go:[0-9]+:|^[[:space:]]+[[:space:]]*(got|want|expected) ]]; then
             if ! $interactive; then
               output_text=${output_text%$'\n'}
               printf "      %s\n" "$output_text"
@@ -363,7 +367,12 @@ if [ "$SCOPE" = "all" ] || [ "$SCOPE" = "unit" ]; then
   fi
 
   if [ -n "$GOTESTSUM_BIN" ]; then
-    if ! "$GOTESTSUM_BIN" --format=pkgname --hide-summary=output,skipped --jsonfile "$UNIT_JSON" -- -p 1 -count=1 ./...; then
+    # Hide the skipped section (print_skipped_tests renders it below) but NOT the
+    # output section: hiding output reduces a failure to "=== FAIL: pkg Test (0.9s)"
+    # with no expected-vs-actual, which is unreadable in CI where the log is the only
+    # artifact — and it is why two intermittent screenshot failures were repeatedly
+    # attributed instead of diagnosed.
+    if ! "$GOTESTSUM_BIN" --format=pkgname --hide-summary=skipped --jsonfile "$UNIT_JSON" -- -p 1 -count=1 ./...; then
       fail "test:🔬:go unit"
       print_skipped_tests "$UNIT_JSON"
       exit 1
