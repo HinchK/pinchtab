@@ -129,14 +129,28 @@ func displayConfigValue(path, value string) string {
 	return value
 }
 
-// isSensitiveConfigPath reports whether a config path points at a secret
-// (token/password/credential) so its value is masked before being printed.
+// isSensitiveConfigPath reports whether a config path points at secret material
+// so its value is masked before being printed.
+//
+// The leaf is matched by suffix rather than exact name: the schema's secrets are
+// stateEncryptionKey, capsolverKey and twoCaptchaKey alongside token/password,
+// and an exact-match list silently missed every one of the *Key fields. Suffix
+// matching is confined to the leaf because intermediate segments are
+// user-chosen names (a browser target called "monkey" must not mask the whole
+// subtree). The credentials subtree is secret at every depth, so it matches
+// wherever it appears.
 func isSensitiveConfigPath(path string) bool {
 	segments := strings.Split(strings.ToLower(strings.TrimSpace(path)), ".")
+	for _, segment := range segments {
+		if segment == "credentials" {
+			return true
+		}
+	}
 	last := segments[len(segments)-1]
-	switch last {
-	case "token", "password", "secret", "apikey", "apisecret":
-		return true
+	for _, suffix := range []string{"token", "password", "secret", "key", "passphrase"} {
+		if strings.HasSuffix(last, suffix) {
+			return true
+		}
 	}
 	return false
 }
