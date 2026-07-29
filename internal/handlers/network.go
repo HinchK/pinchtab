@@ -225,7 +225,7 @@ func (h *Handlers) HandleNetwork(w http.ResponseWriter, r *http.Request) {
 
 	nm := h.Bridge.NetworkMonitor()
 	if nm == nil {
-		httpx.JSON(w, 200, map[string]any{"entries": []any{}, "items": []any{}, "count": 0})
+		httpx.JSON(w, 200, map[string]any{"entries": []any{}, "count": 0})
 		return
 	}
 
@@ -264,7 +264,6 @@ func (h *Handlers) HandleNetwork(w http.ResponseWriter, r *http.Request) {
 
 	httpx.JSON(w, 200, map[string]any{
 		"entries": entries,
-		"items":   entries,
 		"count":   len(entries),
 		"tabId":   resolvedTabID,
 	})

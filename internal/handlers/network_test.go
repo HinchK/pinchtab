@@ -13,6 +13,7 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"sort"
 )
 
 type noFlusherResponseWriter struct {
@@ -934,4 +935,83 @@ func TestHandleTabNetworkStream_MissingTabID(t *testing.T) {
 	if w.Code != 400 {
 		t.Fatalf("expected 400, got %d", w.Code)
 	}
+}
+
+// networkEnvelopeKeys decodes the response into a raw map so the assertion is
+// about which keys the payload carries, not about its size.
+func networkEnvelopeKeys(t *testing.T, body []byte) map[string]any {
+	t.Helper()
+	var envelope map[string]any
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		t.Fatalf("decode: %v (body=%s)", err, body)
+	}
+	return envelope
+}
+
+// entries was duplicated under items, so every response carried the whole
+// network log twice; items had no reader anywhere.
+func TestHandleNetwork_EnvelopeCarriesEntriesOnce(t *testing.T) {
+	nm := bridge.NewNetworkMonitor(100)
+	seedBuffer(nm, "tab1")
+	h := newNetworkTestHandler(nm)
+
+	req := httptest.NewRequest("GET", "/network", nil)
+	w := httptest.NewRecorder()
+	h.HandleNetwork(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	envelope := networkEnvelopeKeys(t, w.Body.Bytes())
+
+	if _, dup := envelope["items"]; dup {
+		t.Fatalf("response still carries the duplicate items key: %v", keysOf(envelope))
+	}
+	entries, ok := envelope["entries"].([]any)
+	if !ok {
+		t.Fatalf("entries missing or not an array: %v", keysOf(envelope))
+	}
+	if len(entries) != 3 {
+		t.Fatalf("entries has %d records, want the 3 seeded", len(entries))
+	}
+	if count, _ := envelope["count"].(float64); int(count) != len(entries) {
+		t.Fatalf("count = %v, want %d", envelope["count"], len(entries))
+	}
+	first, _ := entries[0].(map[string]any)
+	if url, _ := first["url"].(string); url == "" {
+		t.Fatalf("entries were emptied rather than deduplicated: %v", entries[0])
+	}
+}
+
+func TestHandleNetwork_EmptyEnvelopeCarriesEntriesOnce(t *testing.T) {
+	h := newNetworkTestHandler(nil)
+
+	req := httptest.NewRequest("GET", "/network", nil)
+	w := httptest.NewRecorder()
+	h.HandleNetwork(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	envelope := networkEnvelopeKeys(t, w.Body.Bytes())
+
+	if _, dup := envelope["items"]; dup {
+		t.Fatalf("empty response still carries the duplicate items key: %v", keysOf(envelope))
+	}
+	entries, ok := envelope["entries"].([]any)
+	if !ok || len(entries) != 0 {
+		t.Fatalf("empty envelope must still carry an empty entries array: %v", envelope["entries"])
+	}
+	if count, _ := envelope["count"].(float64); int(count) != 0 {
+		t.Fatalf("count = %v, want 0", envelope["count"])
+	}
+}
+
+func keysOf(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
