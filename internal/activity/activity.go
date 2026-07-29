@@ -703,6 +703,14 @@ func activityLogDay(name string) (string, bool) {
 	return day, true
 }
 
+// EventIdentity exposes the composite identity for consumers that need to
+// recognise the same event across ingests. Callers must not key on RequestID
+// alone: it is absent unless the client sent X-Request-Id, and a single request
+// can emit more than one event.
+func EventIdentity(evt Event) string {
+	return eventDedupKey(evt)
+}
+
 // eventDedupKey builds a cheap composite key that collapses the byte-identical
 // primary + per-source dual-write copies of an event, without json.Marshal-ing the
 // whole struct. A false collision would require two genuinely-distinct events
