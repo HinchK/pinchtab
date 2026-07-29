@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
 	"github.com/pinchtab/pinchtab/internal/cli/output"
 	"github.com/spf13/cobra"
@@ -24,7 +25,7 @@ func init() {
 			sessionToken := os.Getenv("PINCHTAB_SESSION")
 			if sessionToken == "" {
 				fmt.Fprintln(os.Stderr, "Error: no session set")
-				output.Hint("create one: export PINCHTAB_SESSION=$(pinchtab session create --agent-id <id>)")
+				output.Hint(cli.NoSessionHint)
 				os.Exit(1)
 			}
 			runCLI(func(rt cliRuntime) {

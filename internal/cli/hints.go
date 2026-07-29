@@ -32,10 +32,21 @@ func WriteCommandHints(out io.Writer, heading string, hints []CommandHint, width
 	}
 }
 
+// SessionCreateCommand is the one spelling of the create-a-session command, so
+// every place that recommends it stays in lockstep.
+const SessionCreateCommand = "export PINCHTAB_SESSION=$(pinchtab session create --agent-id <id>)"
+
+// NoSessionHint is the single wording for "this caller has no agent session".
+// It names the server-side prerequisite before the command, because the command
+// exits 1 with "agent sessions are not enabled on this server" on default
+// config — so a user following the hint top to bottom cannot dead-end.
+const NoSessionHint = "this tab is shared — no agent session is set. Agent sessions must be enabled on the server " +
+	"(sessions.agent.enabled = true in config.json, then restart); once they are, create one with: " + SessionCreateCommand
+
 // NextStepsRunningHints is the "Next steps" group shown when the server is up;
 // shared by the root banner and `pinchtab health` so the two stay in lockstep.
 var NextStepsRunningHints = []CommandHint{
-	{"export PINCHTAB_SESSION=$(pinchtab session create --agent-id <id>)", "# start a dedicated session"},
+	{SessionCreateCommand, "# start a dedicated session"},
 	{"pinchtab nav <url>", "# navigate the current tab (headless by default)"},
 	{"pinchtab snap", "# inspect interactive elements"},
 }

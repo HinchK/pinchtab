@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -238,5 +239,56 @@ func TestNavigatePrintTabID(t *testing.T) {
 	got := strings.TrimSpace(out)
 	if got != "ABC123" {
 		t.Errorf("expected stdout to be exactly 'ABC123', got %q", got)
+	}
+}
+
+func TestNavigateNoSessionHintNamesPrerequisiteAndCommand(t *testing.T) {
+	t.Setenv("PINCHTAB_SESSION", "")
+	t.Setenv("PINCHTAB_AGENT_ID", "")
+
+	m := newMockServer()
+	m.response = `{"tabId":"ABC123","status":"ok"}`
+	defer m.close()
+
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://pinchtab.com", newNavigateCmd())
+		})
+	})
+
+	if !strings.Contains(stderr, cli.NoSessionHint) {
+		t.Fatalf("hint = %q, want the shared cli.NoSessionHint", stderr)
+	}
+	// Following the hint top to bottom must not dead-end in "agent sessions are
+	// not enabled on this server", so it has to carry the server-side
+	// prerequisite as well as the command.
+	if !strings.Contains(cli.NoSessionHint, "sessions.agent.enabled = true") {
+		t.Errorf("hint does not name the server-side prerequisite: %q", cli.NoSessionHint)
+	}
+	if !strings.Contains(cli.NoSessionHint, cli.SessionCreateCommand) {
+		t.Errorf("hint does not carry the create command: %q", cli.NoSessionHint)
+	}
+
+	// The hint decision reads nothing from the server: navigate stays one request.
+	if len(m.requests) != 1 || m.requests[0].Path != "/navigate" {
+		t.Fatalf("requests = %+v, want exactly the navigate call", m.requests)
+	}
+}
+
+func TestNavigateIdentifiedCallerPrintsNoSessionHint(t *testing.T) {
+	t.Setenv("PINCHTAB_SESSION", "ses_something")
+
+	m := newMockServer()
+	m.response = `{"tabId":"ABC123","status":"ok"}`
+	defer m.close()
+
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://pinchtab.com", newNavigateCmd())
+		})
+	})
+
+	if strings.Contains(stderr, cli.SessionCreateCommand) {
+		t.Fatalf("stderr = %q, want no session hint for an identified caller", stderr)
 	}
 }
