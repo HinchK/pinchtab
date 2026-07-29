@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,6 +37,39 @@ func ProbeHealth(url string, timeout time.Duration, headers map[string]string) (
 	return resp.StatusCode, b, true
 }
 
+// HealthProbe is one /health probe outcome with the three states kept apart —
+// unreachable, reachable but unhealthy, and healthy — plus the body, so a caller
+// can quote the reason the server gave instead of guessing at it. Which status
+// codes count as healthy is the caller's rule, not this type's.
+type HealthProbe struct {
+	Reachable  bool
+	StatusCode int
+	Body       []byte
+}
+
+// Reason returns the server-supplied reason from a health body, or "" when the
+// body is absent or is not the expected JSON shape (a non-PinchTab listener).
+func (p HealthProbe) Reason() string {
+	var payload struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(p.Body, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Reason)
+}
+
+// ProbeHealthWithToken is ProbeHealth with the token turned into an
+// Authorization header and the three states kept in one value.
+func ProbeHealthWithToken(url string, timeout time.Duration, token string) HealthProbe {
+	headers := map[string]string{}
+	if auth := AuthorizationHeaderValue(token); auth != "" {
+		headers["Authorization"] = auth
+	}
+	status, body, reachable := ProbeHealth(url, timeout, headers)
+	return HealthProbe{Reachable: reachable, StatusCode: status, Body: body}
+}
+
 func AuthorizationHeaderValue(token string) string {
 	token = strings.TrimSpace(token)
 	if token == "" {
@@ -48,12 +82,8 @@ func AuthorizationHeaderValue(token string) string {
 }
 
 func CheckPinchTabRunning(port, token string) bool {
-	headers := map[string]string{}
-	if auth := AuthorizationHeaderValue(token); auth != "" {
-		headers["Authorization"] = auth
-	}
-	status, _, reachable := ProbeHealth(fmt.Sprintf("http://localhost:%s/health", port), 500*time.Millisecond, headers)
-	return reachable && status == 200
+	probe := ProbeHealthWithToken(fmt.Sprintf("http://localhost:%s/health", port), 500*time.Millisecond, token)
+	return probe.Reachable && probe.StatusCode == 200
 }
 
 // DefaultProxyShorthands is the curated subset of bridge shorthand routes the
