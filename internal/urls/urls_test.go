@@ -154,8 +154,14 @@ func TestRedactForLog(t *testing.T) {
 }
 
 // The byte cap on a redacted log URL moved from a package-private copy to
-// sanitize.TruncateUTF8Bytes. These are the four cases where a byte-budget
-// truncator can change behaviour, pinned at a converted call site.
+// sanitize.TruncateUTF8Bytes. These pin the empty, under-limit, at-limit and
+// over-limit cases at a converted call site.
+//
+// Rune-boundary splitting is deliberately NOT pinned here and cannot be:
+// RedactForLog normalizes through net/url first, which percent-encodes every
+// non-ASCII byte, so the string reaching the truncator is always pure ASCII and
+// no input can make the cut land inside a multi-byte rune. That case is pinned
+// at the console-log call site, which caps raw text.
 func TestRedactForLogTruncationBoundaries(t *testing.T) {
 	host := "https://example.com/"
 	fill := maxLogURLBytes - len(host)
@@ -199,8 +205,8 @@ func TestRedactForLogTruncationBoundaries(t *testing.T) {
 			},
 		},
 		{
-			name: "a cut landing inside a multi-byte rune keeps valid UTF-8",
-			raw:  host + strings.Repeat("a", fill-1) + "€€€",
+			name: "over the limit is cut to the cap and marked",
+			raw:  host + strings.Repeat("a", fill) + "€€€",
 			want: func(got string) error {
 				if !utf8.ValidString(got) {
 					return fmt.Errorf("truncated URL is not valid UTF-8: %q", got)
