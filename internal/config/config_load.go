@@ -172,31 +172,32 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 		UploadMaxTotalBytes:       DefaultUploadMaxTotalBytes,
 		MaxRedirects:              -1, // Unlimited by default; set to N to limit redirect hops
 
-		Headless:           true,
-		NoRestore:          false,
-		ProfileDir:         "",
-		ProfilesBaseDir:    "",
-		DefaultProfile:     "default",
-		BrowserVersion:     "144.0.7559.133",
-		Timezone:           "",
-		BlockImages:        false,
-		BlockMedia:         false,
-		BlockAds:           false,
-		MaxTabs:            20,
-		MaxParallelTabs:    0,
-		DefaultBrowser:     DefaultBrowserForSystem(),
-		BrowserBinary:      "", // Set via config.json only
-		BrowserExtraFlags:  "",
-		Cloak:              CloakBrowserRuntimeConfig{DisableDefaultStealthArgs: true},
-		ExtensionPaths:     []string{defaultExtensionsDir(userConfigDir())},
-		UserAgent:          "",
-		NoAnimations:       false,
-		Humanize:           false,
-		StealthLevel:       "light",
-		TabEvictionPolicy:  "close_lru",
-		TabLifecyclePolicy: "keep",
-		TabCloseDelay:      5 * time.Minute,
-		TabRestore:         false,
+		Headless:               true,
+		NoRestore:              false,
+		ProfileDir:             "",
+		ProfilesBaseDir:        "",
+		DefaultProfile:         "default",
+		BrowserVersion:         "144.0.7559.133",
+		Timezone:               "",
+		BlockImages:            false,
+		BlockMedia:             false,
+		BlockAds:               false,
+		MaxTabs:                20,
+		MaxParallelTabs:        0,
+		DefaultBrowser:         DefaultBrowserForSystem(),
+		BrowserBinary:          "", // Set via config.json only
+		BrowserExtraFlags:      "",
+		Cloak:                  CloakBrowserRuntimeConfig{DisableDefaultStealthArgs: true},
+		ExtensionPaths:         []string{defaultExtensionsDir(userConfigDir())},
+		UserAgent:              "",
+		NoAnimations:           false,
+		CaptureAllowActivation: true,
+		Humanize:               false,
+		StealthLevel:           "light",
+		TabEvictionPolicy:      "close_lru",
+		TabLifecyclePolicy:     "keep",
+		TabCloseDelay:          5 * time.Minute,
+		TabRestore:             false,
 
 		ActionTimeout:   30 * time.Second,
 		NavigateTimeout: 60 * time.Second,
@@ -620,6 +621,9 @@ func applyFileConfig(cfg *RuntimeConfig, fc *FileConfig) {
 	}
 	if fc.InstanceDefaults.NoAnimations != nil {
 		cfg.NoAnimations = *fc.InstanceDefaults.NoAnimations
+	}
+	if fc.InstanceDefaults.CaptureAllowActivation != nil {
+		cfg.CaptureAllowActivation = *fc.InstanceDefaults.CaptureAllowActivation
 	}
 	if fc.InstanceDefaults.Humanize != nil {
 		cfg.Humanize = *fc.InstanceDefaults.Humanize

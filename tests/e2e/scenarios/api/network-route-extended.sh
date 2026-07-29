@@ -196,5 +196,13 @@ assert_not_ok "second unroute on cleared tab returns error"
 
 end_test
 
+# ─────────────────────────────────────────────────────────────────
+start_test "POST /network/clear works when capability on (full-permissive)"
+
+pt_post /network/clear "{\"tabId\":\"${TAB_ID}\"}"
+assert_ok "clear network data"
+
+end_test
+
 netroute_restore_server
 trap - EXIT

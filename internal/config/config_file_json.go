@@ -56,20 +56,21 @@ type cloakBrowserConfigJSON struct {
 }
 
 type instanceDefaultsConfigJSON struct {
-	Mode              string             `json:"mode"`
-	NoRestore         *bool              `json:"noRestore"`
-	Timezone          string             `json:"timezone"`
-	BlockImages       *bool              `json:"blockImages"`
-	BlockMedia        *bool              `json:"blockMedia"`
-	BlockAds          *bool              `json:"blockAds"`
-	MaxTabs           *int               `json:"maxTabs"`
-	MaxParallelTabs   *int               `json:"maxParallelTabs"`
-	UserAgent         string             `json:"userAgent"`
-	NoAnimations      *bool              `json:"noAnimations"`
-	Humanize          *bool              `json:"humanize"`
-	StealthLevel      string             `json:"stealthLevel"`
-	TabEvictionPolicy string             `json:"tabEvictionPolicy"`
-	TabPolicy         *TabPolicyDefaults `json:"tabPolicy,omitempty"`
+	Mode                   string             `json:"mode"`
+	NoRestore              *bool              `json:"noRestore"`
+	Timezone               string             `json:"timezone"`
+	BlockImages            *bool              `json:"blockImages"`
+	BlockMedia             *bool              `json:"blockMedia"`
+	BlockAds               *bool              `json:"blockAds"`
+	MaxTabs                *int               `json:"maxTabs"`
+	MaxParallelTabs        *int               `json:"maxParallelTabs"`
+	UserAgent              string             `json:"userAgent"`
+	NoAnimations           *bool              `json:"noAnimations"`
+	CaptureAllowActivation *bool              `json:"captureAllowActivation"`
+	Humanize               *bool              `json:"humanize"`
+	StealthLevel           string             `json:"stealthLevel"`
+	TabEvictionPolicy      string             `json:"tabEvictionPolicy"`
+	TabPolicy              *TabPolicyDefaults `json:"tabPolicy,omitempty"`
 }
 
 type profilesConfigJSON struct {

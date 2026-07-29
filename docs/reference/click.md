@@ -25,6 +25,7 @@ OK
 | `--dialog-text` | Prompt response text (with `--dialog-action accept`) |
 | `--x`, `--y` | Click at specific coordinates |
 | `--humanize` | Use humanized bezier+jitter input path (overrides instance config) |
+| `--submit` | Use the once-only submit-click path and include bounded post-submit state in the response |
 | `--mode dom\|dispatch` | Broad low-level escape hatch for click delivery. Omit `--mode` for the normal click path, use `dom` for `element.click()`, or `dispatch` for synthetic click events on the target |
 | `--json` | Full JSON response |
 | `--tab` | Target specific tab |
@@ -38,6 +39,7 @@ pinchtab click "text:Submit"            # Click by text
 pinchtab click e5 --snap                # Click and show new snapshot
 pinchtab click e5 --wait-nav            # Click and wait for navigation
 pinchtab click e5 --dialog-action accept  # Auto-accept alert/confirm
+pinchtab click "#sign-in" --submit        # Submit once and report the observed outcome
 pinchtab click e5 --mode dom             # Activate target directly despite occlusion
 pinchtab click e5 --mode dispatch        # Dispatch click events on target despite occlusion
 pinchtab click --x 100 --y 200           # Click at coordinates
@@ -55,6 +57,7 @@ pinchtab click --x 100 --y 200           # Click at coordinates
 - Treat `mode` as a broad, low-level escape hatch for click delivery. Occlusion bypass is the common case, but it can also help with pages that need a non-default click path.
 - `mode` and `humanize:true` are mutually exclusive.
 - To opt a click into the slower humanized path for a page that needs it, pass `humanize:true` in the action JSON or set `instanceDefaults.humanize:true`.
+- `submit:true` is for terminal form actions where retrying could submit twice. For clicks it sends exactly one DOM click, disables recovery/retry delivery, and reports a bounded `postState` result (`succeeded` when the URL changes or an open modal closes; otherwise `pending`). It requires an element target and cannot be combined with coordinates, `waitNav`, `mode`, or `humanize:true`. It is accepted only on a single `/action` request, not a batch or macro.
 
 ## Related Pages
 

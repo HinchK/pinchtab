@@ -117,6 +117,7 @@ func DefaultFileConfig() FileConfig {
 	restartMaxBackoffSec := 60
 	restartStableAfterSec := 300
 	maxTabs := 20
+	captureAllowActivation := true
 	allowEvaluate := false
 	allowMacro := false
 	allowScreencast := false
@@ -177,10 +178,11 @@ func DefaultFileConfig() FileConfig {
 			Default: DefaultBrowserForSystem(),
 		},
 		InstanceDefaults: InstanceDefaultsConfig{
-			Mode:              "headless",
-			MaxTabs:           &maxTabs,
-			StealthLevel:      "light",
-			TabEvictionPolicy: "close_lru",
+			Mode:                   "headless",
+			MaxTabs:                &maxTabs,
+			CaptureAllowActivation: &captureAllowActivation,
+			StealthLevel:           "light",
+			TabEvictionPolicy:      "close_lru",
 		},
 		Security: SecurityConfig{
 			AllowEvaluate:          &allowEvaluate,

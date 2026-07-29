@@ -84,12 +84,20 @@ type RuntimeConfig struct {
 	ExtensionPaths     []string
 	UserAgent          string
 	NoAnimations       bool
-	Humanize           bool // when true, mouse moves and clicks use a humanized bezier path with per-step jitter and pre-press delays; default false (raw, fast input)
-	StealthLevel       string
-	TabEvictionPolicy  string        // "close_lru" (default), "reject", "close_oldest" — fires on MaxTabs pressure
-	TabLifecyclePolicy string        // "keep" (default), "close_idle" — fires on idle after read/action
-	TabCloseDelay      time.Duration // applies when TabLifecyclePolicy == "close_idle" (default 5m when enabled)
-	TabRestore         bool          // restore previously open tabs from sessions.json on startup (default false)
+	// CaptureAllowActivation controls whether GET /capture and GET/POST /screenshot
+	// may call Page.bringToFront to wake a backgrounded tab's compositor before
+	// capturing. Default true: capture is reliable but a background-tab capture
+	// visibly raises that tab in the operator's browser. Set false to keep
+	// background tabs from ever being activated during capture, accepting that
+	// a background tab's capture may then block until ActionTimeout — Chromium's
+	// focus emulation alone does not resume a backgrounded compositor.
+	CaptureAllowActivation bool
+	Humanize               bool // when true, mouse moves and clicks use a humanized bezier path with per-step jitter and pre-press delays; default false (raw, fast input)
+	StealthLevel           string
+	TabEvictionPolicy      string        // "close_lru" (default), "reject", "close_oldest" — fires on MaxTabs pressure
+	TabLifecyclePolicy     string        // "keep" (default), "close_idle" — fires on idle after read/action
+	TabCloseDelay          time.Duration // applies when TabLifecyclePolicy == "close_idle" (default 5m when enabled)
+	TabRestore             bool          // restore previously open tabs from sessions.json on startup (default false)
 
 	ActionTimeout   time.Duration
 	NavigateTimeout time.Duration
@@ -371,22 +379,23 @@ type BrowserItemConfig struct {
 }
 
 type InstanceDefaultsConfig struct {
-	Mode              string             `json:"mode,omitempty"`
-	Headless          *bool              `json:"headless,omitempty"`
-	NoRestore         *bool              `json:"noRestore,omitempty"`
-	Timezone          string             `json:"timezone,omitempty"`
-	BlockImages       *bool              `json:"blockImages,omitempty"`
-	BlockMedia        *bool              `json:"blockMedia,omitempty"`
-	BlockAds          *bool              `json:"blockAds,omitempty"`
-	MaxTabs           *int               `json:"maxTabs,omitempty"`
-	MaxParallelTabs   *int               `json:"maxParallelTabs,omitempty"`
-	UserAgent         string             `json:"userAgent,omitempty"`
-	NoAnimations      *bool              `json:"noAnimations,omitempty"`
-	Humanize          *bool              `json:"humanize,omitempty"`
-	StealthLevel      string             `json:"stealthLevel,omitempty"`
-	TabEvictionPolicy string             `json:"tabEvictionPolicy,omitempty"` // Deprecated: use TabPolicy.Eviction
-	TabPolicy         *TabPolicyDefaults `json:"tabPolicy,omitempty"`
-	DialogAutoAccept  *bool              `json:"dialogAutoAccept,omitempty"`
+	Mode                   string             `json:"mode,omitempty"`
+	Headless               *bool              `json:"headless,omitempty"`
+	NoRestore              *bool              `json:"noRestore,omitempty"`
+	Timezone               string             `json:"timezone,omitempty"`
+	BlockImages            *bool              `json:"blockImages,omitempty"`
+	BlockMedia             *bool              `json:"blockMedia,omitempty"`
+	BlockAds               *bool              `json:"blockAds,omitempty"`
+	MaxTabs                *int               `json:"maxTabs,omitempty"`
+	MaxParallelTabs        *int               `json:"maxParallelTabs,omitempty"`
+	UserAgent              string             `json:"userAgent,omitempty"`
+	NoAnimations           *bool              `json:"noAnimations,omitempty"`
+	CaptureAllowActivation *bool              `json:"captureAllowActivation,omitempty"`
+	Humanize               *bool              `json:"humanize,omitempty"`
+	StealthLevel           string             `json:"stealthLevel,omitempty"`
+	TabEvictionPolicy      string             `json:"tabEvictionPolicy,omitempty"` // Deprecated: use TabPolicy.Eviction
+	TabPolicy              *TabPolicyDefaults `json:"tabPolicy,omitempty"`
+	DialogAutoAccept       *bool              `json:"dialogAutoAccept,omitempty"`
 }
 
 // TabPolicyDefaults groups eviction (cap pressure) and lifecycle (idle) policies

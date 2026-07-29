@@ -399,6 +399,12 @@ func setInstanceDefaultsField(c *InstanceDefaultsConfig, field, value string) er
 			return fmt.Errorf("instanceDefaults.noAnimations: %w", err)
 		}
 		c.NoAnimations = &b
+	case "captureAllowActivation":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("instanceDefaults.captureAllowActivation: %w", err)
+		}
+		c.CaptureAllowActivation = &b
 	case "humanize":
 		b, err := parseBool(value)
 		if err != nil {

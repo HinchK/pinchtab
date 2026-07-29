@@ -96,19 +96,20 @@ func (h *Handlers) HandleScreenshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Route through the shared bridge.CaptureScreenshot engine: it carries the
-	// scale/beyondViewport clip synthesis and the provider-runtime fixes
-	// (BringToFront + WithFromSurface(false)) so capture works on chrome and
-	// cloak alike; tCtx already targets the active provider's CDP session.
+	// scale/beyondViewport clip synthesis and, when CaptureAllowActivation is
+	// enabled (the default), wakes a backgrounded tab's compositor before
+	// capturing; tCtx already targets the active provider's CDP session.
 	cdpFormat := bridge.ScreenshotFormatJpeg
 	if req.format == "png" {
 		cdpFormat = bridge.ScreenshotFormatPng
 	}
 	buf, captureErr := bridge.CaptureScreenshot(tCtx, bridge.ScreenshotOpts{
-		Format:         cdpFormat,
-		Quality:        req.quality,
-		Clip:           clip,
-		BeyondViewport: req.beyondViewport,
-		Scale:          req.scale,
+		Format:            cdpFormat,
+		Quality:           req.quality,
+		Clip:              clip,
+		BeyondViewport:    req.beyondViewport,
+		Scale:             req.scale,
+		DisableActivation: !h.Config.CaptureAllowActivation,
 	})
 	if captureErr != nil {
 		httpx.Error(w, 500, fmt.Errorf("screenshot: %w", captureErr))

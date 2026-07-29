@@ -211,6 +211,7 @@ Current nested file-config shape:
     "maxParallelTabs": 0,
     "userAgent": "",
     "noAnimations": false,
+    "captureAllowActivation": true,
     "humanize": false,
     "stealthLevel": "light",
     "tabEvictionPolicy": "close_lru",
