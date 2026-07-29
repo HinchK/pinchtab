@@ -10,6 +10,7 @@ pinchtab server --log-level warn        # Record warnings and errors only
 pinchtab server stop                    # Stop the running server (foreground or background)
 pinchtab server restart                 # Stop + restart in background (applies config changes)
 pinchtab bridge                         # Start the bridge-only runtime
+pinchtab bridge --log-level debug       # Bridge threshold (same precedence as server)
 pinchtab mcp                            # Start the MCP stdio server
 pinchtab daemon                         # Show daemon status
 pinchtab daemon install                 # Install as a background service
@@ -29,8 +30,15 @@ and it raises the level to debug only when neither of the other two is set.
 
 A daemon-installed server and the server a bare `pinchtab nav` auto-starts both run
 `pinchtab server` with no flags, so `server.logLevel` is the only way to set their
-threshold (`pinchtab config set server.logLevel warn`). `pinchtab bridge` takes the
-same key and the same `--log-level` flag.
+threshold (`pinchtab config set server.logLevel warn`).
+
+Everything in this paragraph applies to `pinchtab bridge` as well: it reads the same
+`server.logLevel`, accepts the same `--log-level`, and resolves them with the same
+precedence — which matters because the bridge holds the CDP session, so it owns the
+target-crash, instance-lifecycle and selector-resolution logging. The one difference
+is that `bridge` has no `-v`: `-v` also switches on the server's startup banner, and
+the bridge has no banner to switch on, so `--log-level debug` is how you raise a
+bridge. Orchestrator-spawned bridges inherit the level through their child config.
 
 ## Navigation
 

@@ -120,7 +120,7 @@ func init() {
 	bridgeCmd.Flags().StringVar(&bridgeBind, "bind", "", "Bind address for the bridge HTTP server (overrides config server.bind)")
 	bridgeCmd.Flags().StringVar(&bridgePort, "port", "", "Port for the bridge HTTP server (overrides config server.port)")
 	bridgeCmd.Flags().StringVar(&bridgeBrowser, "browser", "", "Browser to use: chrome, cloak, or ghost-chrome (overrides config)")
-	bridgeCmd.Flags().StringVar(&bridgeLogLevel, "log-level", "", "Minimum log level: debug, info (default), warn or error (overrides config server.logLevel)")
+	bridgeCmd.Flags().StringVar(&bridgeLogLevel, "log-level", "", "Minimum log level: debug, info (default), warn or error (overrides config server.logLevel; the bridge has no -v because it has no startup banner to show)")
 	bridgeCmd.Flags().StringVar(&bridgeRemoteBrowserName, "remote-browser-name", "", "Opaque label for the externally-managed browser; surfaces in /stealth/status")
 	rootCmd.AddCommand(bridgeCmd)
 }

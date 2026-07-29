@@ -1,11 +1,17 @@
 package main
 
 import (
+	"encoding/json"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/pinchtab/pinchtab/internal/browsers/all"
 	"github.com/pinchtab/pinchtab/internal/browsers/runtimekit"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/safelog"
 )
 
 func TestValidateBridgeCDPURL(t *testing.T) {
@@ -120,5 +126,119 @@ func TestApplyBridgeBrowserTargetClearsUnmatchedDefaultTarget(t *testing.T) {
 	}
 	if got := runtimekit.ResolveEffectiveBrowser(cfg).ID; got != config.BrowserGhostChrome {
 		t.Fatalf("resolved provider = %q, want ghost-chrome", got)
+	}
+}
+
+// The bridge holds the CDP session, so it owns the logging a debug level is
+// actually wanted for. It reads the same server.logLevel the server does, and the
+// orchestrator writes that key into every child config — so before this was wired,
+// the setting looked plumbed end to end and was dropped at the last step.
+func TestBridgeResolvesTheConfiguredLogLevel(t *testing.T) {
+	t.Cleanup(func() { safelog.SetLevel(safelog.DefaultLevel) })
+
+	for _, tc := range []struct {
+		name        string
+		configLevel string
+		flag        string
+		want        slog.Level
+	}{
+		{name: "flagless bridge takes the configured level", configLevel: "warn", want: slog.LevelWarn},
+		{name: "flag overrides the configured level", configLevel: "warn", flag: "debug", want: slog.LevelDebug},
+		{name: "blank flag leaves the configured level", configLevel: "warn", flag: "  ", want: slog.LevelWarn},
+		{name: "neither is the default", want: safelog.DefaultLevel},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			safelog.SetLevel(slog.LevelInfo)
+			cfg := &config.RuntimeConfig{LogLevel: tc.configLevel}
+			resolveLogLevel(cfg, tc.flag, false)
+			if got := safelog.CurrentLevel(); got != tc.want {
+				t.Errorf("level = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// Parity with the server is a structural property, not a coincidence of two
+// tables: both commands hand their (flag, config) pair to the same function, and
+// neither decides anything itself. Asserting the resolved levels match would pass
+// even if the bridge grew its own copy, so the source is where this is pinned —
+// exactly one precedence function in the package, no second copy in the bridge.
+func TestBridgeAndServerResolveTheLogLevelThroughOneFunction(t *testing.T) {
+	bridgeSrc, err := os.ReadFile("cmd_bridge.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverSrc, err := os.ReadFile("cmd_server.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !strings.Contains(string(bridgeSrc), "resolveLogLevel(cfg, bridgeLogLevel, false)") {
+		t.Error("cmd_bridge.go no longer resolves the log level, so server.logLevel is silently ignored in the bridge")
+	}
+	if !strings.Contains(string(serverSrc), "resolveLogLevel(cfg, logLevel, verbose)") {
+		t.Error("cmd_server.go no longer routes through resolveLogLevel")
+	}
+	for _, own := range []string{"cfg.LogLevel = ", "safelog.SetLevel("} {
+		if strings.Contains(string(bridgeSrc), own) {
+			t.Errorf("cmd_bridge.go contains %q — the bridge decides the level itself instead of sharing the server's precedence", own)
+		}
+	}
+
+	declarations := 0
+	for _, name := range []string{"cmd_bridge.go", "cmd_server.go", "cmd_server_ensure.go", "cmd_server_background.go", "root.go"} {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		declarations += strings.Count(string(raw), "func resolveLogLevel(")
+	}
+	if declarations != 1 {
+		t.Errorf("found %d resolveLogLevel declarations across the command files, want exactly 1", declarations)
+	}
+
+	if bridgeCmd.Flags().Lookup("log-level") == nil {
+		t.Error("bridge has no --log-level flag, so it cannot override the configured level the way --bind and --port do")
+	}
+	if bridgeCmd.Flags().Lookup("verbose") != nil {
+		t.Error("bridge grew a -v; if that is wanted it must mean what it means on the server, and the flag help and docs must stop saying the bridge has none")
+	}
+	if help := bridgeCmd.Flags().Lookup("log-level").Usage; !strings.Contains(help, "server.logLevel") || !strings.Contains(help, "-v") {
+		t.Errorf("--log-level help %q must name the config key it overrides and explain the missing -v", help)
+	}
+}
+
+// The path that made the setting look plumbed: the orchestrator builds each child
+// config through config.FileConfigFromRuntime and writes it under the instance
+// state dir, and the child bridge then loads that file. This drives both halves —
+// the written file and the load — so "carried but ignored" cannot come back.
+func TestBridgeResolvesTheLevelFromAWrittenChildConfig(t *testing.T) {
+	t.Cleanup(func() { safelog.SetLevel(safelog.DefaultLevel) })
+	safelog.SetLevel(slog.LevelInfo)
+
+	childConfig := config.FileConfigFromRuntime(&config.RuntimeConfig{
+		Token:    "child-token",
+		LogLevel: "warn",
+	})
+	encoded, err := json.MarshalIndent(childConfig, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"logLevel": "warn"`) {
+		t.Fatalf("child config does not carry the level, so no bridge could read it: %s", encoded)
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, encoded, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", path)
+	t.Setenv("PINCHTAB_TOKEN", "")
+
+	cfg := loadConfig()
+	resolveLogLevel(cfg, "", false)
+
+	if got := safelog.CurrentLevel(); got != slog.LevelWarn {
+		t.Fatalf("bridge started from a written child config resolved %v, want warn", got)
 	}
 }
