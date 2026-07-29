@@ -628,53 +628,107 @@ func resolveSelectorAtWithinNode(ctx context.Context, scopeBackendNodeID int64, 
 	})
 }
 
-func resolveNestedSelectorAtInFrame(ctx context.Context, frameID string, raw string, refCache *RefCache, index int, fromEnd bool) (int64, error) {
+// resolveScope is where a search is rooted. Selector grammar — unwrapping
+// first:/last:/nth: — does not depend on it, so the recursion below is written
+// once against this interface rather than once per scope kind.
+type resolveScope interface {
+	resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool) (int64, error)
+	resolveRef(ctx context.Context, sel selector.Selector, refCache *RefCache) (int64, error)
+}
+
+type frameScope struct{ frameID string }
+
+func (s frameScope) resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool) (int64, error) {
+	return resolveSelectorAtInFrame(ctx, s.frameID, sel, index, fromEnd)
+}
+
+func (s frameScope) resolveRef(_ context.Context, sel selector.Selector, refCache *RefCache) (int64, error) {
+	if refCache != nil {
+		if target, ok := refCache.Lookup(sel.Value); ok {
+			return target.BackendNodeID, nil
+		}
+	}
+	return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
+}
+
+type nodeScope struct{ backendNodeID int64 }
+
+func (s nodeScope) resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool) (int64, error) {
+	return resolveSelectorAtWithinNode(ctx, s.backendNodeID, sel, index, fromEnd)
+}
+
+// resolveRef is where the two scopes genuinely differ. A cached ref still exists
+// while the dialog owns the interaction surface, so it must be proven to lie
+// inside the scope subtree — otherwise a dialog-scoped action silently reaches
+// an element behind the dialog. The outside-scope sentinel is distinct from
+// not-found: callers must not treat it as a stale ref.
+func (s nodeScope) resolveRef(ctx context.Context, sel selector.Selector, refCache *RefCache) (int64, error) {
+	if refCache == nil {
+		return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
+	}
+	target, ok := refCache.Lookup(sel.Value)
+	if !ok || target.BackendNodeID == 0 {
+		return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
+	}
+	inside, err := BackendNodeWithinScope(ctx, s.backendNodeID, target.BackendNodeID)
+	if err != nil {
+		return 0, fmt.Errorf("validate ref %s against topmost dialog: %w", sel.Value, err)
+	}
+	if !inside {
+		return 0, fmt.Errorf("ref %s is outside the topmost dialog: %w", sel.Value, ErrSelectorOutsideScope)
+	}
+	return target.BackendNodeID, nil
+}
+
+func errSemanticAtResolver() error {
+	return fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
+}
+
+func errHandlerLayerKind(kind selector.Kind) error {
+	return fmt.Errorf("%s selectors must be resolved at the handler layer via semantic", kind)
+}
+
+func resolveNested(ctx context.Context, scope resolveScope, raw string, refCache *RefCache, index int, fromEnd bool) (int64, error) {
 	inner := selector.Parse(raw)
 	switch inner.Kind {
 	case selector.KindFirst:
-		return resolveNestedSelectorAtInFrame(ctx, frameID, inner.Value, refCache, 0, false)
+		return resolveNested(ctx, scope, inner.Value, refCache, 0, false)
 	case selector.KindLast:
-		return resolveNestedSelectorAtInFrame(ctx, frameID, inner.Value, refCache, 0, true)
+		return resolveNested(ctx, scope, inner.Value, refCache, 0, true)
 	case selector.KindNth:
 		nth, nestedRaw, err := selector.ParseNth(inner.Value)
 		if err != nil {
 			return 0, err
 		}
-		return resolveNestedSelectorAtInFrame(ctx, frameID, nestedRaw, refCache, nth, false)
+		return resolveNested(ctx, scope, nestedRaw, refCache, nth, false)
 	case selector.KindRef:
 		if fromEnd || index != 0 {
 			return 0, fmt.Errorf("ref selector cannot be used with last/nth")
 		}
-		return ResolveUnifiedSelectorInFrame(ctx, inner, refCache, frameID)
+		return scope.resolveRef(ctx, inner, refCache)
 	case selector.KindSemantic:
-		return 0, fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
+		return 0, errSemanticAtResolver()
 	default:
-		return resolveSelectorAtInFrame(ctx, frameID, inner, index, fromEnd)
+		return scope.resolveAt(ctx, inner, index, fromEnd)
 	}
 }
 
-func resolveNestedSelectorWithinNode(ctx context.Context, scopeBackendNodeID int64, raw string, refCache *RefCache, index int, fromEnd bool) (int64, error) {
-	inner := selector.Parse(raw)
-	switch inner.Kind {
+// resolveWrapper turns a first:/last:/nth: wrapper into the index the shared
+// recursion carries. Both entry points dispatch their wrapper kinds here.
+func resolveWrapper(ctx context.Context, scope resolveScope, sel selector.Selector, refCache *RefCache) (int64, error) {
+	switch sel.Kind {
 	case selector.KindFirst:
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, inner.Value, refCache, 0, false)
+		return resolveNested(ctx, scope, sel.Value, refCache, 0, false)
 	case selector.KindLast:
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, inner.Value, refCache, 0, true)
+		return resolveNested(ctx, scope, sel.Value, refCache, 0, true)
 	case selector.KindNth:
-		nth, nestedRaw, err := selector.ParseNth(inner.Value)
+		index, rawSelector, err := selector.ParseNth(sel.Value)
 		if err != nil {
 			return 0, err
 		}
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, nestedRaw, refCache, nth, false)
-	case selector.KindRef:
-		if fromEnd || index != 0 {
-			return 0, fmt.Errorf("ref selector cannot be used with last/nth")
-		}
-		return ResolveUnifiedSelectorWithinNode(ctx, inner, refCache, scopeBackendNodeID)
-	case selector.KindSemantic:
-		return 0, fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
+		return resolveNested(ctx, scope, rawSelector, refCache, index, false)
 	default:
-		return resolveSelectorAtWithinNode(ctx, scopeBackendNodeID, inner, index, fromEnd)
+		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)
 	}
 }
 
@@ -743,12 +797,7 @@ func ResolveFrameElementMetaInFrame(ctx context.Context, sel selector.Selector, 
 func ResolveUnifiedSelectorInFrame(ctx context.Context, sel selector.Selector, refCache *RefCache, frameID string) (int64, error) {
 	switch sel.Kind {
 	case selector.KindRef:
-		if refCache != nil {
-			if target, ok := refCache.Lookup(sel.Value); ok {
-				return target.BackendNodeID, nil
-			}
-		}
-		return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
+		return frameScope{frameID}.resolveRef(ctx, sel, refCache)
 
 	case selector.KindCSS:
 		return ResolveCSSToNodeIDInFrame(ctx, frameID, sel.Value)
@@ -760,24 +809,14 @@ func ResolveUnifiedSelectorInFrame(ctx context.Context, sel selector.Selector, r
 		return ResolveTextToNodeIDInFrame(ctx, frameID, sel.Value)
 
 	case selector.KindSemantic:
-		return 0, fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
+		return 0, errSemanticAtResolver()
 
 	case selector.KindRole, selector.KindLabel, selector.KindPlaceholder,
 		selector.KindAlt, selector.KindTitle, selector.KindTestID:
-		return 0, fmt.Errorf("%s selectors must be resolved at the handler layer via semantic", sel.Kind)
+		return 0, errHandlerLayerKind(sel.Kind)
 
-	case selector.KindFirst:
-		return resolveNestedSelectorAtInFrame(ctx, frameID, sel.Value, refCache, 0, false)
-
-	case selector.KindLast:
-		return resolveNestedSelectorAtInFrame(ctx, frameID, sel.Value, refCache, 0, true)
-
-	case selector.KindNth:
-		index, rawSelector, err := selector.ParseNth(sel.Value)
-		if err != nil {
-			return 0, err
-		}
-		return resolveNestedSelectorAtInFrame(ctx, frameID, rawSelector, refCache, index, false)
+	case selector.KindFirst, selector.KindLast, selector.KindNth:
+		return resolveWrapper(ctx, frameScope{frameID}, sel, refCache)
 
 	default:
 		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)
@@ -795,44 +834,20 @@ func ResolveUnifiedSelectorWithinNode(ctx context.Context, sel selector.Selector
 
 	switch sel.Kind {
 	case selector.KindRef:
-		if refCache == nil {
-			return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
-		}
-		target, ok := refCache.Lookup(sel.Value)
-		if !ok || target.BackendNodeID == 0 {
-			return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
-		}
-		inside, err := BackendNodeWithinScope(ctx, scopeBackendNodeID, target.BackendNodeID)
-		if err != nil {
-			return 0, fmt.Errorf("validate ref %s against topmost dialog: %w", sel.Value, err)
-		}
-		if !inside {
-			return 0, fmt.Errorf("ref %s is outside the topmost dialog: %w", sel.Value, ErrSelectorOutsideScope)
-		}
-		return target.BackendNodeID, nil
+		return nodeScope{scopeBackendNodeID}.resolveRef(ctx, sel, refCache)
 
 	case selector.KindCSS, selector.KindXPath, selector.KindText:
-		return resolveSelectorAtWithinNode(ctx, scopeBackendNodeID, sel, 0, false)
+		return nodeScope{scopeBackendNodeID}.resolveAt(ctx, sel, 0, false)
 
 	case selector.KindSemantic:
-		return 0, fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
+		return 0, errSemanticAtResolver()
 
 	case selector.KindRole, selector.KindLabel, selector.KindPlaceholder,
 		selector.KindAlt, selector.KindTitle, selector.KindTestID:
-		return 0, fmt.Errorf("%s selectors must be resolved at the handler layer via semantic", sel.Kind)
+		return 0, errHandlerLayerKind(sel.Kind)
 
-	case selector.KindFirst:
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, sel.Value, refCache, 0, false)
-
-	case selector.KindLast:
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, sel.Value, refCache, 0, true)
-
-	case selector.KindNth:
-		index, rawSelector, err := selector.ParseNth(sel.Value)
-		if err != nil {
-			return 0, err
-		}
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, rawSelector, refCache, index, false)
+	case selector.KindFirst, selector.KindLast, selector.KindNth:
+		return resolveWrapper(ctx, nodeScope{scopeBackendNodeID}, sel, refCache)
 
 	default:
 		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)
