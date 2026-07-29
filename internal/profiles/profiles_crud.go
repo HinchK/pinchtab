@@ -62,17 +62,26 @@ func (pm *ProfileManager) Import(name, sourcePath string) error {
 	}
 
 	slog.Info("importing profile", "name", name, "source", resolvedSourcePath)
+	// Import is all-or-nothing. preflight already established that dest did not
+	// exist, so anything under it now is ours to remove — and leaving a partial
+	// copy would make every retry fail with "already exists" instead of the real
+	// cause (a live Chrome user data dir has Singleton* symlinks copyDir rejects).
 	if err := copyDir(resolvedSourcePath, dest); err != nil {
+		_ = os.RemoveAll(dest)
 		return fmt.Errorf("copy failed: %w", err)
 	}
 
 	if err := os.WriteFile(filepath.Join(dest, ".pinchtab-imported"), []byte(resolvedSourcePath), 0600); err != nil {
 		slog.Warn("failed to write import marker", "err", err)
 	}
-	return writeProfileMeta(dest, ProfileMeta{
+	if err := writeProfileMeta(dest, ProfileMeta{
 		ID:   profileID(name),
 		Name: name,
-	})
+	}); err != nil {
+		_ = os.RemoveAll(dest)
+		return err
+	}
+	return nil
 }
 
 func (pm *ProfileManager) ImportWithMeta(name, sourcePath string, meta ProfileMeta) error {
