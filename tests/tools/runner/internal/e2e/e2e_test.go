@@ -2,12 +2,15 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestDryRunBasicSuitePlan(t *testing.T) {
@@ -1070,37 +1073,114 @@ func TestEmptyLogSuffixMarksZeroByteArtifacts(t *testing.T) {
 func TestComposeServerServicesNameTheirLogLevel(t *testing.T) {
 	const wantFlags = "pinchtab server --log-level debug --verbose"
 
-	for _, file := range []string{"docker-compose.yml", "docker-compose-multi.yml"} {
-		path := filepath.Join("..", "..", "..", "..", "e2e", file)
-		content, err := os.ReadFile(path) // #nosec G304 -- fixed test fixture path.
-		if err != nil {
-			t.Fatalf("read %s: %v", file, err)
-		}
-		body := string(content)
+	for _, tc := range []struct {
+		file    string
+		servers int
+		bridges int
+	}{
+		{file: "docker-compose.yml", servers: 1, bridges: 0},
+		{file: "docker-compose-multi.yml", servers: 6, bridges: 2},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			servers, bridges := 0, 0
 
-		servers := 0
-		for _, line := range strings.Split(body, "\n") {
-			if !strings.Contains(line, "command:") || !strings.Contains(line, "pinchtab server") {
-				continue
-			}
-			servers++
-			if !strings.Contains(line, wantFlags) {
-				t.Errorf("%s: a server service does not run %q, so its level is inherited rather than named: %s", file, wantFlags, strings.TrimSpace(line))
-			}
-		}
-		if servers == 0 {
-			t.Fatalf("%s: found no pinchtab server services to check", file)
-		}
-
-		for _, line := range strings.Split(body, "\n") {
-			if !strings.Contains(line, "command:") || !strings.Contains(line, "pinchtab bridge") {
-				continue
-			}
-			for _, flag := range []string{"--verbose", "--log-level"} {
-				if strings.Contains(line, flag) {
-					t.Errorf("%s: bridge service gained %s; bridge mode never had the discard behaviour these flags worked around: %s", file, flag, strings.TrimSpace(line))
+			for _, svc := range pinchtabComposeServices(t, tc.file) {
+				switch {
+				case strings.Contains(svc.command, "pinchtab server"):
+					servers++
+					if !strings.Contains(svc.command, wantFlags) {
+						t.Errorf("service %s does not run %q, so its level is inherited rather than named: %s", svc.name, wantFlags, svc.command)
+					}
+				case strings.Contains(svc.command, "pinchtab bridge"):
+					bridges++
+					for _, flag := range []string{"--verbose", "--log-level"} {
+						if strings.Contains(svc.command, flag) {
+							t.Errorf("bridge service %s gained %s; bridge mode never had the discard behaviour these flags worked around: %s", svc.name, flag, svc.command)
+						}
+					}
+				default:
+					t.Errorf("service %s uses the pinchtab image but runs neither server nor bridge, so no flag rule covers it: %s", svc.name, svc.command)
 				}
 			}
-		}
+
+			if servers != tc.servers {
+				t.Errorf("%d server services, want %d — a new or removed variant changes which services this guard checks", servers, tc.servers)
+			}
+			if bridges != tc.bridges {
+				t.Errorf("%d bridge services, want %d — a new or removed variant changes which services this guard checks", bridges, tc.bridges)
+			}
+		})
 	}
+}
+
+type composeService struct {
+	name    string
+	command string
+}
+
+// A pinchtab service with no `command:` inherits the image's own CMD, which runs
+// `pinchtab server` with no flags — invisible to a census that reads command lines.
+// Every such service is surfaced here with the inherited command so the flag rules
+// above still apply to it.
+func pinchtabComposeServices(t *testing.T, file string) []composeService {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "..", "..", "e2e", file)
+	content, err := os.ReadFile(path) // #nosec G304 -- fixed test fixture path.
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+
+	var doc struct {
+		Services map[string]struct {
+			Image string `yaml:"image"`
+			Build struct {
+				Dockerfile string `yaml:"dockerfile"`
+			} `yaml:"build"`
+			Command []string `yaml:"command"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(content, &doc); err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+
+	inherited := dockerfileDefaultCommand(t)
+
+	services := make([]composeService, 0, len(doc.Services))
+	for name, svc := range doc.Services {
+		if svc.Image != "e2e-pinchtab:latest" && svc.Build.Dockerfile != "Dockerfile" {
+			continue
+		}
+		command := strings.Join(svc.Command, " ")
+		if len(svc.Command) == 0 {
+			command = inherited
+		}
+		services = append(services, composeService{name: name, command: command})
+	}
+	if len(services) == 0 {
+		t.Fatalf("%s: found no pinchtab services to check", file)
+	}
+	return services
+}
+
+func dockerfileDefaultCommand(t *testing.T) string {
+	t.Helper()
+
+	content, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		after, found := strings.CutPrefix(line, "CMD ")
+		if !found {
+			continue
+		}
+		var argv []string
+		if err := json.Unmarshal([]byte(after), &argv); err != nil {
+			return after
+		}
+		return strings.Join(argv, " ")
+	}
+	t.Fatal("Dockerfile declares no CMD, so a service without `command:` cannot be classified")
+	return ""
 }
