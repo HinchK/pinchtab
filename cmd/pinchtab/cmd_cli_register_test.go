@@ -79,7 +79,7 @@ func TestCaptureCommandRegistersTabFlag(t *testing.T) {
 
 // TestPostActionFlagsBundle pins the exact usage strings the shared
 // addPostActionFlags helper interpolates per verb, so a future verb edit cannot
-// silently drift the --help text, and verifies the no-text commands omit --text.
+// silently drift the --help text, and verifies the one no-text command omits it.
 func TestPostActionFlagsBundle(t *testing.T) {
 	wantUsage := func(cmd *cobra.Command, flag, want string) {
 		f := cmd.Flags().Lookup(flag)
@@ -103,11 +103,12 @@ func TestPostActionFlagsBundle(t *testing.T) {
 
 	wantUsage(navCmd, "snap", "Output interactive snapshot after navigation")
 	wantUsage(navCmd, "snap-diff", "Output snapshot diff after navigation (changes only)")
+	// nav has --text because landing on a page is exactly when reading it is
+	// useful, and reload — which lands on a page the same way — always had it.
+	wantUsage(navCmd, "text", "Output page text after navigation (for verification)")
 
-	// nav and scroll have no post-action --text flag.
-	if navCmd.Flags().Lookup("text") != nil {
-		t.Error("navCmd should not register a post-action --text flag")
-	}
+	// scroll stays excluded: scrolling does not change which document is loaded,
+	// so post-scroll text answers nothing --snap-diff does not answer better.
 	if scrollCmd.Flags().Lookup("text") != nil {
 		t.Error("scrollCmd should not register a post-action --text flag")
 	}

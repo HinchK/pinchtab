@@ -193,7 +193,7 @@ func configureBrowserFlags() {
 	navCmd.Flags().Bool("new-tab", false, "Open in new tab")
 	navCmd.Flags().Bool("block-images", false, "Block image loading")
 	navCmd.Flags().Bool("block-ads", false, "Block ads")
-	addPostActionFlags(navCmd, "navigation", false)
+	addPostActionFlags(navCmd, "navigation", true)
 	navCmd.Flags().Bool("dismiss-banners", false, "After landing, click any visible cookie/consent dismissal button or remove obvious overlay containers")
 
 	addPostActionFlags(backCmd, "navigation", true)

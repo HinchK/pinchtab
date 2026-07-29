@@ -26,11 +26,19 @@ pinchtab nav <url> --new-tab            # Explicitly force a new tab
 pinchtab nav <url> --block-images       # Block images for this navigation
 pinchtab nav <url> --block-ads          # Block ads for this navigation
 pinchtab nav <url> --snap               # Navigate and output interactive snapshot
+pinchtab nav <url> --text               # Navigate and output page text
+pinchtab nav <url> --print-tab-id       # Print only the tab ID, whatever stdout is
 pinchtab back                           # Go back in the active tab
 pinchtab back --tab <id>                # Go back in a specific tab
 pinchtab forward                        # Go forward in the active tab
 pinchtab reload                         # Reload the active tab
 ```
+
+`nav`, `back`, `forward` and `reload` report the URL the page actually landed on,
+so a redirect, a login wall or an error page is visible without `--snap`. `nav`
+prints the tab ID first and the landed URL after it, and prints the tab ID alone
+when stdout is not a terminal or when `--print-tab-id` is passed — so
+`TAB=$(pinchtab nav <url>)` still captures a usable tab ID.
 
 ## Tabs
 

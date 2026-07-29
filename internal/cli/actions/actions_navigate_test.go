@@ -292,3 +292,222 @@ func TestNavigateIdentifiedCallerPrintsNoSessionHint(t *testing.T) {
 		t.Fatalf("stderr = %q, want no session hint for an identified caller", stderr)
 	}
 }
+
+// atTerminal makes the stdout check answer true for the duration of a test, so
+// the interactive branch is reachable — under `go test` stdout is a pipe.
+func atTerminal(t *testing.T) {
+	t.Helper()
+	old := stdoutIsTerminal
+	stdoutIsTerminal = func() bool { return true }
+	t.Cleanup(func() { stdoutIsTerminal = old })
+}
+
+// The landed URL is the cheap signal that a redirect, login wall or error page
+// intervened. The server already returns it; nav used to print only the tab ID.
+func TestNavigateReportsTheLandedURLAtATerminal(t *testing.T) {
+	atTerminal(t)
+	m := newMockServer()
+	m.response = `{"tabId":"ABC123","title":"Example Domain","url":"https://example.com/"}`
+	defer m.close()
+
+	out := captureStdout(t, func() {
+		Navigate(m.server.Client(), m.base(), "", "https://httpbin.org/redirect-to?url=https://example.com/", newNavigateCmd())
+	})
+
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("stdout = %q, want the tab ID and the landed URL", out)
+	}
+	if lines[0] != "ABC123" {
+		t.Errorf("first line = %q, want the tab ID", lines[0])
+	}
+	if lines[1] != "https://example.com/" {
+		t.Errorf("second line = %q, want the landed URL, not the requested one", lines[1])
+	}
+}
+
+// TAB=$(pinchtab nav URL) captures every line, so a second line would break it.
+// Both the explicit flag and a non-terminal stdout must stay single-line.
+func TestNavigatePrintsOnlyTheTabIDWhenCaptured(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal bool
+		flag     bool
+	}{
+		{name: "stdout is not a character device", terminal: false},
+		{name: "print-tab-id at a terminal", terminal: true, flag: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			old := stdoutIsTerminal
+			stdoutIsTerminal = func() bool { return tc.terminal }
+			t.Cleanup(func() { stdoutIsTerminal = old })
+
+			m := newMockServer()
+			m.response = `{"tabId":"ABC123","url":"https://example.com/"}`
+			defer m.close()
+
+			cmd := newNavigateCmd()
+			if tc.flag {
+				_ = cmd.Flags().Set("print-tab-id", "true")
+			}
+			out := captureStdout(t, func() {
+				Navigate(m.server.Client(), m.base(), "", "https://example.com", cmd)
+			})
+
+			if got := strings.TrimSpace(out); got != "ABC123" {
+				t.Errorf("stdout = %q, want exactly the tab ID so $(pinchtab nav URL) stays usable", got)
+			}
+		})
+	}
+}
+
+// back, forward and reload all come from one server handler that returns
+// {"tabId","url"}; reload used to discard it and print a bare OK.
+func TestHistoryNavigationPrintsTheLandedURL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*http.Client, string, string, *cobra.Command)
+		path string
+	}{
+		{name: "back", run: Back, path: "/back"},
+		{name: "forward", run: Forward, path: "/forward"},
+		{name: "reload", run: Reload, path: "/reload"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMockServer()
+			m.response = `{"tabId":"ABC123","url":"https://example.com/landed"}`
+			defer m.close()
+
+			out := captureStdout(t, func() {
+				tc.run(m.server.Client(), m.base(), "", newHistoryCmd())
+			})
+
+			if m.lastPath != tc.path {
+				t.Fatalf("path = %q, want %q", m.lastPath, tc.path)
+			}
+			if got := strings.TrimSpace(out); got != "https://example.com/landed" {
+				t.Errorf("stdout = %q, want the landed URL", got)
+			}
+		})
+	}
+}
+
+// A response without a url must stay terse rather than print a blank line: OK
+// for the history commands, the bare tab ID for nav.
+func TestLandingReportDegradesWithoutAURL(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		run  func(*http.Client, string, string, *cobra.Command)
+	}{
+		{name: "back", run: Back},
+		{name: "forward", run: Forward},
+		{name: "reload", run: Reload},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMockServer()
+			m.response = `{"tabId":"ABC123"}`
+			defer m.close()
+
+			out := captureStdout(t, func() {
+				tc.run(m.server.Client(), m.base(), "", newHistoryCmd())
+			})
+			if got := strings.TrimSpace(out); got != "OK" {
+				t.Errorf("stdout = %q, want the terse OK", got)
+			}
+			if strings.Contains(out, "\n\n") {
+				t.Errorf("stdout = %q, want no blank line", out)
+			}
+		})
+	}
+
+	t.Run("navigate", func(t *testing.T) {
+		atTerminal(t)
+		m := newMockServer()
+		m.response = `{"tabId":"ABC123"}`
+		defer m.close()
+
+		out := captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://example.com", newNavigateCmd())
+		})
+		if got := strings.TrimSpace(out); got != "ABC123" {
+			t.Errorf("stdout = %q, want just the tab ID", got)
+		}
+		if strings.Contains(out, "\n\n") {
+			t.Errorf("stdout = %q, want no blank line", out)
+		}
+	})
+}
+
+// --json is the machine contract and predates this change: it must stay the raw
+// response body for all four commands, with no landed-URL line added.
+func TestJSONOutputIsTheRawResponseForAllFour(t *testing.T) {
+	const response = `{"tabId":"ABC123","url":"https://example.com/landed"}`
+	// DoPost pretty-prints the decoded body; that is the pre-existing contract and
+	// must not gain a landed-URL line.
+	const want = "{\n  \"tabId\": \"ABC123\",\n  \"url\": \"https://example.com/landed\"\n}"
+
+	t.Run("navigate", func(t *testing.T) {
+		atTerminal(t)
+		m := newMockServer()
+		m.response = response
+		defer m.close()
+
+		cmd := newNavigateCmd()
+		cmd.Flags().Bool("json", false, "")
+		_ = cmd.Flags().Set("json", "true")
+		out := captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://example.com", cmd)
+		})
+		if got := strings.TrimSpace(out); got != want {
+			t.Errorf("stdout = %q, want the response body alone %q", got, want)
+		}
+	})
+
+	for _, tc := range []struct {
+		name string
+		run  func(*http.Client, string, string, *cobra.Command)
+	}{
+		{name: "back", run: Back},
+		{name: "forward", run: Forward},
+		{name: "reload", run: Reload},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			atTerminal(t)
+			m := newMockServer()
+			m.response = response
+			defer m.close()
+
+			cmd := newHistoryCmd()
+			_ = cmd.Flags().Set("json", "true")
+			out := captureStdout(t, func() {
+				tc.run(m.server.Client(), m.base(), "", cmd)
+			})
+			if got := strings.TrimSpace(out); got != want {
+				t.Errorf("stdout = %q, want the response body alone %q", got, want)
+			}
+		})
+	}
+}
+
+// nav gained --text; the shared tail must actually run it.
+func TestNavigateTextFetchesPageText(t *testing.T) {
+	atTerminal(t)
+	m := newMockServer()
+	m.response = `{"tabId":"ABC123","url":"https://example.com/"}`
+	m.responses["GET /tabs/ABC123/text"] = mockResponse{statusCode: 200, body: `{"text":"PAGE TEXT"}`}
+	defer m.close()
+
+	cmd := newNavigateCmd()
+	cmd.Flags().Bool("snap", false, "")
+	cmd.Flags().Bool("snap-diff", false, "")
+	cmd.Flags().Bool("text", false, "")
+	_ = cmd.Flags().Set("text", "true")
+
+	out := captureStdout(t, func() {
+		Navigate(m.server.Client(), m.base(), "", "https://example.com", cmd)
+	})
+
+	if !strings.Contains(out, "PAGE TEXT") {
+		t.Errorf("stdout = %q, want the page text after navigation", out)
+	}
+}
