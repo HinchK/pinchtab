@@ -46,7 +46,82 @@ import (
 // handle or obtains one. Naming the producers rather than a directory is what
 // keeps the census module-wide — pinchtab spreads CDP work over internal/bridge,
 // internal/bridge/cdpops and internal/cdptk.
+// The list is hand-maintained, which makes it the census's one unguarded input: a
+// third producer under a new name puts nothing in scope, so the guard narrows in
+// silence — the scope counters below stay identical and the canonical cross-check
+// does not fire, because the new file has no canonical line to miss.
+// TestIsolatedHandleProducersAreAllInScope closes that by deriving the producer set
+// from the CDP call that creates an isolated handle instead of from these names.
 var isolatedHandleTokens = []string{"IsolatedNodeObjectID", "FrameExecutionContextID"}
+
+// isolatedResolveWindow is how far after a DOM.resolveNode the executionContextId
+// has to appear to belong to it. The resolution census uses the same span for the
+// same reason: the two are one call written across a few lines.
+const isolatedResolveWindow = 200
+
+// A file that resolves a node with an executionContextId produces a top-frame
+// isolated handle, which is precisely what makes the ambient globals the wrong
+// frame's. Every such file must therefore be in scope. Deriving the producers from
+// the CDP call rather than trusting isolatedHandleTokens is what stops the list
+// going stale: a new producer under any name fails here, naming itself, instead of
+// quietly removing its own callers from the census.
+func TestIsolatedHandleProducersAreAllInScope(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	producers := 0
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		name := filepath.ToSlash(rel)
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		src := string(raw)
+
+		isolating := false
+		for _, block := range strings.Split(src, `"DOM.resolveNode"`)[1:] {
+			head := block
+			if len(head) > isolatedResolveWindow {
+				head = head[:isolatedResolveWindow]
+			}
+			if strings.Contains(head, "executionContextId") {
+				isolating = true
+				break
+			}
+		}
+		if !isolating {
+			return nil
+		}
+		producers++
+
+		for _, token := range isolatedHandleTokens {
+			if strings.Contains(src, token) {
+				return nil
+			}
+		}
+		t.Errorf("%s resolves a node with an executionContextId, so its handles are top-frame isolated, but it matches no entry in isolatedHandleTokens — the ambient-globals census cannot see it or its callers. Add the producer's exported name to isolatedHandleTokens.", name)
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatal(walkErr)
+	}
+	if producers == 0 {
+		t.Fatal("no file resolves a node with an executionContextId — this check is verifying nothing")
+	}
+	t.Logf("isolated-handle producers derived from the CDP call: %d, all in census scope", producers)
+}
 
 // shadowForm is one accepted way to derive a global from the node. requires is
 // extra text that must also be present for the form to be node-derived at all:
