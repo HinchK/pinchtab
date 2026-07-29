@@ -218,79 +218,58 @@ func RemoveAnnotationOverlay(ctx context.Context) error {
 
 // ViewportRect reports the current CSS-pixel viewport size. Used to filter
 // out annotations that fall entirely outside the visible window.
-func ViewportRect(ctx context.Context) (AnnotationRect, error) {
-	const fn = `(() => ({ x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }))()`
+// evaluateValue runs expression in the page with returnByValue and decodes the
+// result into T. A JS exception is reported as an error rather than decoding to
+// a zero value, which would otherwise read as a legitimate measurement.
+func evaluateValue[T any](ctx context.Context, expression string) (T, error) {
+	var zero T
 	var raw json.RawMessage
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.evaluate", map[string]any{
-			"expression":    fn,
+			"expression":    expression,
 			"returnByValue": true,
 		}, &raw)
 	})); err != nil {
-		return AnnotationRect{}, err
+		return zero, err
 	}
 	var resp struct {
 		Result struct {
-			Value AnnotationRect `json:"value"`
+			Value T `json:"value"`
 		} `json:"result"`
+		ExceptionDetails *struct {
+			Text string `json:"text"`
+		} `json:"exceptionDetails,omitempty"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
-		return AnnotationRect{}, err
+		return zero, err
+	}
+	if resp.ExceptionDetails != nil {
+		return zero, fmt.Errorf("evaluate: %s", resp.ExceptionDetails.Text)
 	}
 	return resp.Result.Value, nil
+}
+
+type scrollOffsets struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+type documentDimensions struct {
+	W float64 `json:"w"`
+	H float64 `json:"h"`
+}
+
+func ViewportRect(ctx context.Context) (AnnotationRect, error) {
+	return evaluateValue[AnnotationRect](ctx, `(() => ({ x: 0, y: 0, w: window.innerWidth, h: window.innerHeight }))()`)
 }
 
 // PageScroll returns the document's current scroll offsets in CSS pixels.
 func PageScroll(ctx context.Context) (float64, float64, error) {
-	const fn = `(() => ({ x: window.scrollX || window.pageXOffset || 0, y: window.scrollY || window.pageYOffset || 0 }))()`
-	var raw json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.evaluate", map[string]any{
-			"expression":    fn,
-			"returnByValue": true,
-		}, &raw)
-	})); err != nil {
+	v, err := evaluateValue[scrollOffsets](ctx, `(() => ({ x: window.scrollX || window.pageXOffset || 0, y: window.scrollY || window.pageYOffset || 0 }))()`)
+	if err != nil {
 		return 0, 0, err
 	}
-	var resp struct {
-		Result struct {
-			Value struct {
-				X float64 `json:"x"`
-				Y float64 `json:"y"`
-			} `json:"value"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return 0, 0, err
-	}
-	return resp.Result.Value.X, resp.Result.Value.Y, nil
-}
-
-// DevicePixelRatio kept as a small helper in case callers want
-// to scale to image pixels. Annotation boxes themselves stay in CSS pixels.
-func DevicePixelRatio(ctx context.Context) (float64, error) {
-	const fn = `(() => window.devicePixelRatio || 1)()`
-	var raw json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.evaluate", map[string]any{
-			"expression":    fn,
-			"returnByValue": true,
-		}, &raw)
-	})); err != nil {
-		return 1, err
-	}
-	var resp struct {
-		Result struct {
-			Value float64 `json:"value"`
-		} `json:"result"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return 1, err
-	}
-	if resp.Result.Value <= 0 {
-		return 1, nil
-	}
-	return resp.Result.Value, nil
+	return v.X, v.Y, nil
 }
 
 // DocumentSize returns the CSS-pixel scrollable size of the document. Used to
@@ -298,7 +277,7 @@ func DevicePixelRatio(ctx context.Context) (float64, error) {
 // Puppeteer/Playwright measure for fullPage screenshots — max of
 // documentElement and body across scrollWidth/scrollHeight.
 func DocumentSize(ctx context.Context) (float64, float64, error) {
-	const fn = `(() => {
+	v, err := evaluateValue[documentDimensions](ctx, `(() => {
 		const d = document;
 		const de = d.documentElement;
 		const b = d.body || de;
@@ -306,29 +285,12 @@ func DocumentSize(ctx context.Context) (float64, float64, error) {
 			w: Math.max(de.scrollWidth, b.scrollWidth, de.clientWidth, de.offsetWidth),
 			h: Math.max(de.scrollHeight, b.scrollHeight, de.clientHeight, de.offsetHeight)
 		};
-	})()`
-	var raw json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.evaluate", map[string]any{
-			"expression":    fn,
-			"returnByValue": true,
-		}, &raw)
-	})); err != nil {
+	})()`)
+	if err != nil {
 		return 0, 0, err
 	}
-	var resp struct {
-		Result struct {
-			Value struct {
-				W float64 `json:"w"`
-				H float64 `json:"h"`
-			} `json:"value"`
-		} `json:"result"`
+	if v.W <= 0 || v.H <= 0 {
+		return 0, 0, fmt.Errorf("invalid document size (%.0fx%.0f)", v.W, v.H)
 	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return 0, 0, err
-	}
-	if resp.Result.Value.W <= 0 || resp.Result.Value.H <= 0 {
-		return 0, 0, fmt.Errorf("invalid document size (%.0fx%.0f)", resp.Result.Value.W, resp.Result.Value.H)
-	}
-	return resp.Result.Value.W, resp.Result.Value.H, nil
+	return v.W, v.H, nil
 }

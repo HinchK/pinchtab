@@ -71,36 +71,11 @@ func fetchViewportSize(ctx context.Context) (float64, float64) {
 // Used when beyond-viewport capture also needs clip.scale; the synthesized clip
 // must cover the document, not just the current viewport.
 func fetchDocumentSize(ctx context.Context) (float64, float64) {
-	const expression = `JSON.stringify((() => {
-		const d = document;
-		const de = d.documentElement;
-		const b = d.body || de;
-		return {
-			w: Math.max(de.scrollWidth, b.scrollWidth, de.clientWidth, de.offsetWidth),
-			h: Math.max(de.scrollHeight, b.scrollHeight, de.clientHeight, de.offsetHeight)
-		};
-	})())`
-	var result struct {
-		Result struct {
-			Value string `json:"value"`
-		} `json:"result"`
-	}
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.evaluate", map[string]any{
-			"expression":    expression,
-			"returnByValue": true,
-		}, &result)
-	})); err != nil {
+	w, h, err := cdptk.DocumentSize(ctx)
+	if err != nil {
 		return 0, 0
 	}
-	var dims struct {
-		W float64 `json:"w"`
-		H float64 `json:"h"`
-	}
-	if err := json.Unmarshal([]byte(result.Result.Value), &dims); err != nil {
-		return 0, 0
-	}
-	return dims.W, dims.H
+	return w, h
 }
 
 // ScreenshotOpts mirrors the subset of page.CaptureScreenshot parameters the
