@@ -529,6 +529,8 @@ func setSecurityField(s *SecurityConfig, field, value string) error {
 		s.AllowDownload = &b
 	case "allowCookies":
 		s.AllowCookies = &b
+	case "allowStateExport":
+		s.AllowStateExport = &b
 	case "allowUpload":
 		s.AllowUpload = &b
 	case "allowNetworkIntercept":
