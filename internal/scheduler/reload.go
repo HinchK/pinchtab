@@ -21,6 +21,9 @@ func (s *Scheduler) ReloadConfig(cfg Config) {
 		s.cfg.MaxInflight = cfg.MaxInflight
 		s.cfg.MaxPerAgentFlight = cfg.MaxPerAgentFlight
 		s.cfgMu.Unlock()
+		// A raised cap can make queued tasks eligible; workers parked on Ready
+		// have no poll fallback and would otherwise wait for unrelated traffic.
+		s.queue.signal()
 		slog.Info("scheduler: inflight limits reloaded",
 			"maxInflight", cfg.MaxInflight,
 			"maxPerAgentFlight", cfg.MaxPerAgentFlight,

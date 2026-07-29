@@ -31,6 +31,16 @@ func NewTaskQueue(maxTotal, maxPerAgent int) *TaskQueue {
 	}
 }
 
+// signal wakes one worker blocked on Ready. notify holds a single pending
+// wake-up, so every path that leaves work dequeueable must call this; workers
+// have no poll fallback. Callers must not hold q.mu.
+func (q *TaskQueue) signal() {
+	select {
+	case q.notify <- struct{}{}:
+	default:
+	}
+}
+
 // SetLimits updates queue capacity at runtime.
 func (q *TaskQueue) SetLimits(maxTotal, maxPerAgent int) {
 	q.mu.Lock()
@@ -69,11 +79,7 @@ func (q *TaskQueue) Enqueue(t *Task) (int, error) {
 	pos := q.totalCount
 	q.mu.Unlock()
 
-	// Wake a blocked worker.
-	select {
-	case q.notify <- struct{}{}:
-	default:
-	}
+	q.signal()
 
 	return pos, nil
 }
@@ -82,6 +88,16 @@ func (q *TaskQueue) Enqueue(t *Task) (int, error) {
 // fewest in-flight tasks gets served first. Among tasks for that agent,
 // the heap ordering (priority then creation time) decides.
 func (q *TaskQueue) Dequeue(maxPerAgentInflight, maxGlobalInflight int) *Task {
+	t, remaining := q.dequeue(maxPerAgentInflight, maxGlobalInflight)
+	if remaining {
+		q.signal()
+	}
+	return t
+}
+
+// dequeue pops the next eligible task and reports whether queued work is left
+// behind, so the caller can pass the single pending wake-up along.
+func (q *TaskQueue) dequeue(maxPerAgentInflight, maxGlobalInflight int) (*Task, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -90,7 +106,7 @@ func (q *TaskQueue) Dequeue(maxPerAgentInflight, maxGlobalInflight int) *Task {
 		globalInflight += aq.inflight
 	}
 	if globalInflight >= maxGlobalInflight {
-		return nil
+		return nil, false
 	}
 
 	var bestAgent string
@@ -110,36 +126,34 @@ func (q *TaskQueue) Dequeue(maxPerAgentInflight, maxGlobalInflight int) *Task {
 	}
 
 	if bestAgent == "" {
-		return nil
+		return nil, false
 	}
 
 	aq := q.agents[bestAgent]
 	t := heap.Pop(&aq.tasks).(*Task)
 	aq.inflight++
 	q.totalCount--
-	return t
+	return t, q.totalCount > 0
 }
 
 // Complete marks a task as no longer in-flight for its agent.
 func (q *TaskQueue) Complete(agentID string) {
 	q.mu.Lock()
-	hasQueued := false
 	if aq, ok := q.agents[agentID]; ok {
 		if aq.inflight > 0 {
 			aq.inflight--
 		}
-		hasQueued = aq.tasks.Len() > 0
-		if aq.inflight == 0 && !hasQueued {
+		if aq.inflight == 0 && aq.tasks.Len() == 0 {
 			delete(q.agents, agentID)
 		}
 	}
+	// Any queued task may now be eligible: this completion frees a global
+	// inflight slot, not just one for agentID.
+	hasQueued := q.totalCount > 0
 	q.mu.Unlock()
 
 	if hasQueued {
-		select {
-		case q.notify <- struct{}{}:
-		default:
-		}
+		q.signal()
 	}
 }
 
