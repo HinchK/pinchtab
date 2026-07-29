@@ -52,6 +52,8 @@ func getServerField(s *ServerConfig, field string) (string, error) {
 		return s.Token, nil
 	case "stateDir":
 		return s.StateDir, nil
+	case "logLevel":
+		return s.LogLevel, nil
 	case "trustProxyHeaders":
 		return formatBoolPtr(s.TrustProxyHeaders), nil
 	case "cookieSecure":

@@ -277,6 +277,7 @@ type ServerConfig struct {
 	Bind     string `json:"bind,omitempty"`
 	Token    string `json:"token,omitempty"`
 	StateDir string `json:"stateDir,omitempty"`
+	LogLevel string `json:"logLevel,omitempty"`
 	// Engine is no longer supported. Kept for JSON parsing so old configs get a
 	// validation error instead of silently ignoring the field.
 	Engine                    string `json:"engine,omitempty"`

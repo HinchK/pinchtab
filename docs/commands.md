@@ -26,6 +26,11 @@ transitions, warnings and errors. `-v` adds debug detail and the full startup
 banner; `--log-level debug|info|warn|error` sets the threshold explicitly and is
 the only thing that can drop request lines or warnings.
 
+A daemon-installed server and the server a bare `pinchtab nav` auto-starts both
+run `pinchtab server` with no flags, so they take their threshold from
+`server.logLevel` in the config file (`pinchtab config set server.logLevel warn`).
+`--log-level` overrides it for a hand-started run; `-v` does not.
+
 ## Navigation
 
 ```bash

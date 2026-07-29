@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/browsers"
+	"github.com/pinchtab/pinchtab/internal/safelog"
 )
 
 // SetConfigValue sets a dotted path in FileConfig (e.g., "server.port", "instanceDefaults.mode").
@@ -53,6 +54,11 @@ func setServerField(s *ServerConfig, field, value string) error {
 		s.Token = value
 	case "stateDir":
 		s.StateDir = value
+	case "logLevel":
+		if _, err := safelog.ParseLevel(value); err != nil {
+			return fmt.Errorf("server.logLevel: %w", err)
+		}
+		s.LogLevel = strings.ToLower(strings.TrimSpace(value))
 	case "trustProxyHeaders":
 		b, err := parseBool(value)
 		if err != nil {

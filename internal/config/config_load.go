@@ -370,6 +370,9 @@ func applyServerConfig(cfg *RuntimeConfig, s ServerConfig) {
 	if s.StateDir != "" {
 		cfg.StateDir = s.StateDir
 	}
+	if s.LogLevel != "" {
+		cfg.LogLevel = s.LogLevel
+	}
 	if s.NetworkBufferSize != nil && *s.NetworkBufferSize > 0 {
 		cfg.NetworkBufferSize = ClampNetworkBufferSize(*s.NetworkBufferSize)
 	}

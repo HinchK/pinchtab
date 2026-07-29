@@ -177,6 +177,7 @@ Current nested file-config shape:
     "bind": "127.0.0.1",
     "token": "your-secret-token",
     "stateDir": "/path/to/state",
+    "logLevel": "info",
     "networkBufferSize": 100,
     "retainNetworkBodies": false,
     "retainNetworkBodyMaxBytes": 262144,
@@ -549,6 +550,24 @@ Use `pinchtab config patch` or edit `config.json` directly for fields such as:
   }
 }
 ```
+
+### Log Level For A Daemon Or Auto-Started Server
+
+`pinchtab server --log-level` only reaches a server you start by hand. A
+daemon-installed server (`pinchtab daemon install`) and the server a bare
+`pinchtab nav` auto-starts both launch `pinchtab server` with no flags, so
+`server.logLevel` is the only way to set their threshold — and it needs no change
+to the unit file.
+
+```bash
+pinchtab config set server.logLevel warn    # Warnings and errors only
+pinchtab config set server.logLevel debug   # Full debug detail while diagnosing
+pinchtab config get server.logLevel
+```
+
+Accepted values are `debug`, `info` (the default), `warn` and `error`; an
+unparseable value fails when the config loads, naming the accepted values.
+`--log-level` still wins over the configured value, and `-v` wins over neither.
 
 ### Network Bind With Token
 

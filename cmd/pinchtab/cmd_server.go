@@ -55,8 +55,7 @@ var serverCmd = &cobra.Command{
 		verbose, _ := cmd.Flags().GetBool("verbose")
 		cfg.VerboseBanner = verbose
 		logLevel, _ := cmd.Flags().GetString("log-level")
-		cfg.LogLevel = logLevel
-		applyLogLevel(cfg, verbose)
+		resolveLogLevel(cfg, logLevel, verbose)
 
 		browserName, _ := cmd.Flags().GetString("browser")
 		if browserName != "" {
@@ -98,6 +97,19 @@ func applyServerAddressFlags(cfg *config.RuntimeConfig, bind, port string) {
 	if v := strings.TrimSpace(port); v != "" {
 		cfg.Port = v
 	}
+}
+
+// resolveLogLevel settles the run's threshold from the only three inputs that
+// carry it, in precedence order: --log-level, then server.logLevel from the config
+// file, then -v, then the default. It is one function because the command must not
+// be able to apply them in a different order — assigning the flag unconditionally
+// erased server.logLevel on every flagless run, which is every daemon-installed
+// and auto-started server.
+func resolveLogLevel(cfg *config.RuntimeConfig, logLevel string, verbose bool) {
+	if v := strings.TrimSpace(logLevel); v != "" {
+		cfg.LogLevel = v
+	}
+	applyLogLevel(cfg, verbose)
 }
 
 func applyLogLevel(cfg *config.RuntimeConfig, verbose bool) {

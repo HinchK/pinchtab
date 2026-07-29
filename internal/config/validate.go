@@ -13,6 +13,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/browsers"
 	"github.com/pinchtab/pinchtab/internal/config/geo"
+	"github.com/pinchtab/pinchtab/internal/safelog"
 )
 
 type ValidationError struct {
@@ -36,6 +37,11 @@ func ValidateFileConfig(fc *FileConfig) []error {
 	if fc.Server.Bind != "" {
 		if err := validateBind(fc.Server.Bind, "server.bind"); err != nil {
 			errs = append(errs, err)
+		}
+	}
+	if fc.Server.LogLevel != "" {
+		if _, err := safelog.ParseLevel(fc.Server.LogLevel); err != nil {
+			errs = append(errs, ValidationError{Field: "server.logLevel", Message: err.Error()})
 		}
 	}
 	if fc.Server.NetworkBufferSize != nil {

@@ -22,6 +22,7 @@ type serverConfigJSON struct {
 	Bind                      string `json:"bind"`
 	Token                     string `json:"token"`
 	StateDir                  string `json:"stateDir"`
+	LogLevel                  string `json:"logLevel,omitempty"`
 	NetworkBufferSize         *int   `json:"networkBufferSize,omitempty"`
 	RetainNetworkBodies       *bool  `json:"retainNetworkBodies,omitempty"`
 	RetainNetworkBodyMaxBytes *int   `json:"retainNetworkBodyMaxBytes,omitempty"`
