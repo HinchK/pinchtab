@@ -30,9 +30,18 @@ func (r *Repository) Launch(name, port string, headless bool) (*bridge.Instance,
 		return nil, fmt.Errorf("launch instance: %w", err)
 	}
 	r.mu.Lock()
-	r.instances[inst.ID] = inst
+	r.store(inst)
 	r.mu.Unlock()
 	return inst, nil
+}
+
+// store snapshots inst so the repository owns every struct it serves. Callers
+// keep mutating the instance they handed over — the orchestrator does so under
+// its own lock — and that would otherwise be two unrelated mutexes guarding the
+// same memory. Caller must hold r.mu.
+func (r *Repository) store(inst *bridge.Instance) {
+	snapshot := *inst
+	r.instances[inst.ID] = &snapshot
 }
 
 // Stop terminates an instance and removes it from the store.
@@ -84,8 +93,11 @@ func (r *Repository) Get(id string) (*bridge.Instance, bool) {
 
 // Add registers an existing instance (used for sync with external state).
 func (r *Repository) Add(inst *bridge.Instance) {
+	if inst == nil {
+		return
+	}
 	r.mu.Lock()
-	r.instances[inst.ID] = inst
+	r.store(inst)
 	r.mu.Unlock()
 }
 
