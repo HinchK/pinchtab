@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/htmltrim"
@@ -18,6 +19,8 @@ type AutoSolver struct {
 	semantic SemanticEngine
 	llm      LLMProvider
 	config   Config
+
+	warnedMissingKey sync.Map
 }
 
 // New creates an AutoSolver with the given configuration.
@@ -216,9 +219,10 @@ func (as *AutoSolver) orderSolvers(matching []Solver) []Solver {
 }
 
 // reportMissingSolvers splits the configured-but-unavailable names by whether the
-// operator can act on them. A key-gated solver named without its API key is a
-// misconfiguration the config deliberately accepts, so it warns and names the key
-// to set; anything else is not a config error and stays at debug.
+// operator can act on them. Only an unset API key is actionable, and the names
+// here are absent from THIS page's matching set, which a working solver is too
+// whenever it does not handle this challenge — so the registry decides, never the
+// caller's slice.
 func (as *AutoSolver) reportMissingSolvers(missing []string, running []Solver) {
 	if len(missing) == 0 {
 		return
@@ -227,8 +231,11 @@ func (as *AutoSolver) reportMissingSolvers(missing []string, running []Solver) {
 	unactionable := make([]string, 0, len(missing))
 	for _, name := range missing {
 		gated, ok := keyGatedSolverNamed(name)
-		if !ok {
+		if !ok || as.isRegistered(name) {
 			unactionable = append(unactionable, name)
+			continue
+		}
+		if _, warned := as.warnedMissingKey.LoadOrStore(name, struct{}{}); warned {
 			continue
 		}
 		slog.Warn(fmt.Sprintf("autosolver: %s is configured but its API key is not set, so it never runs", gated.Name),
@@ -243,6 +250,14 @@ func (as *AutoSolver) reportMissingSolvers(missing []string, running []Solver) {
 			"configured", as.config.Solvers,
 			"missing", unactionable)
 	}
+}
+
+func (as *AutoSolver) isRegistered(name string) bool {
+	if as.registry == nil {
+		return false
+	}
+	_, ok := as.registry.Get(name)
+	return ok
 }
 
 func solverNamesOf(solvers []Solver) []string {

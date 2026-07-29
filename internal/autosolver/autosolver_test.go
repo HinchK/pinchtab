@@ -1163,6 +1163,9 @@ func TestOrderSolversWarnsWhenAKeyGatedSolverHasNoAPIKey(t *testing.T) {
 			recorder := captureLogs(t)
 
 			as := New(Config{Solvers: []string{"cloudflare", gated.Name}}, nil, nil)
+			if _, registered := as.Registry().Get(gated.Name); registered {
+				t.Fatalf("%s is registered, so this test is not covering the unset-key case", gated.Name)
+			}
 			got := solverNamesOf(as.orderSolvers([]Solver{
 				&mockSolver{name: "cloudflare", priority: 10},
 				&mockSolver{name: "jschallenge", priority: 20},
@@ -1183,6 +1186,54 @@ func TestOrderSolversWarnsWhenAKeyGatedSolverHasNoAPIKey(t *testing.T) {
 				t.Errorf("warn line does not name the config key %q to set: %s", gated.ConfigKey, attrs)
 			}
 		})
+	}
+}
+
+// orderSolvers receives THIS page's matching set, which a registered, working
+// solver is absent from whenever it does not handle this challenge. Diagnosing
+// that as an unset API key names a config key the operator has already filled in.
+func TestOrderSolversDoesNotWarnWhenAKeyGatedSolverIsRegisteredButDoesNotHandleThePage(t *testing.T) {
+	for _, gated := range KeyGatedSolvers() {
+		t.Run(gated.Name, func(t *testing.T) {
+			recorder := captureLogs(t)
+
+			as := New(Config{Solvers: []string{"cloudflare", gated.Name}}, nil, nil)
+			as.Registry().MustRegister(&mockSolver{name: gated.Name, priority: 200})
+			if _, registered := as.Registry().Get(gated.Name); !registered {
+				t.Fatalf("precondition: %s must be registered, meaning its API key IS set", gated.Name)
+			}
+
+			as.orderSolvers([]Solver{&mockSolver{name: "cloudflare", priority: 10}})
+
+			for _, rec := range recorder.records {
+				if rec.Level >= slog.LevelWarn {
+					t.Errorf("keyed %s absent from this page's matching set logged at %s: %q", gated.Name, rec.Level, rec.Message)
+				}
+			}
+		})
+	}
+}
+
+// Solve loops up to MaxAttempts and calls orderSolvers each time, so an unset
+// key stated once per attempt would repeat one static config fact all run.
+func TestOrderSolversWarnsOncePerUnregisteredKeyGatedSolver(t *testing.T) {
+	recorder := captureLogs(t)
+
+	gated := KeyGatedSolvers()[0]
+	as := New(Config{Solvers: []string{"cloudflare", gated.Name}}, nil, nil)
+	matching := []Solver{&mockSolver{name: "cloudflare", priority: 10}}
+	for i := 0; i < 5; i++ {
+		as.orderSolvers(matching)
+	}
+
+	warnings := 0
+	for _, rec := range recorder.records {
+		if rec.Level >= slog.LevelWarn && strings.Contains(rec.Message, gated.Name) {
+			warnings++
+		}
+	}
+	if warnings != 1 {
+		t.Errorf("five orderSolvers calls produced %d warnings for %s, want 1", warnings, gated.Name)
 	}
 }
 
