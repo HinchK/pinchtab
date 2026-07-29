@@ -75,7 +75,7 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 		} else if modalOpen {
 			err = h.Bridge.CallFunctionOnNode(tCtx, modalNodeID,
 				`function() { return this.innerText || this.textContent || ''; }`, nil, &text)
-			extraction = textExtraction{Text: text, Mode: extractionRaw, RawLength: len(text), RawKnown: true}
+			extraction = textExtraction{Text: text, Mode: extractionRaw, RawLength: utf8.RuneCountInString(text), RawKnown: true}
 		} else {
 			extraction, err = h.extractDocumentText(tCtx, mode, targetFrameID)
 		}
