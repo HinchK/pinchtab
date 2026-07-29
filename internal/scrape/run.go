@@ -130,7 +130,7 @@ func URLListCrawler(urls []string, timeout time.Duration, guard CrawlGuard) Craw
 			pages = append(pages, fetchOne(ctx, u, timeout, policy))
 		}
 		return &seaportal.ScrapeResult{
-			Site:  seaportal.SiteInfo{BaseURL: originOf(clean[0]), TotalURLsInSitemap: len(clean)},
+			Site:  seaportal.SiteInfo{BaseURL: originOf(clean[0])},
 			Pages: pages,
 		}, nil
 	}
@@ -240,11 +240,11 @@ func Run(ctx context.Context, input Input, opts RunOptions, crawl Crawler, rende
 		GeneratedAt:   time.Now().UTC(),
 		Input:         input,
 		Site: SiteInfo{
-			BaseURL:         res.Site.BaseURL,
-			Title:           res.Site.Title,
-			SitemapFound:    res.Site.SitemapFound,
-			TotalDiscovered: res.Site.TotalURLsInSitemap,
-			SampledPages:    len(pages),
+			BaseURL:            res.Site.BaseURL,
+			Title:              res.Site.Title,
+			SitemapFound:       res.Site.SitemapFound,
+			TotalURLsInSitemap: res.Site.TotalURLsInSitemap,
+			SampledPages:       len(pages),
 		},
 		PageGroups: fromSeaportalGroups(res.PageGroups),
 		Pages:      pages,

@@ -362,3 +362,95 @@ func TestRunConcurrencyIsBounded(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 }
+
+// crawlWithoutSitemap is the shape every site without a usable sitemap
+// produces: pages found by crawling, no sitemap total to report.
+func crawlWithoutSitemap(pages ...seaportal.PageObject) Crawler {
+	return func(context.Context) (*seaportal.ScrapeResult, error) {
+		return &seaportal.ScrapeResult{
+			Site:  seaportal.SiteInfo{BaseURL: "https://example.com", SitemapFound: false},
+			Pages: pages,
+		}, nil
+	}
+}
+
+func TestRunWithoutSitemapNeverReportsATotalBelowTheSampledPages(t *testing.T) {
+	crawl := crawlWithoutSitemap(
+		seaportal.PageObject{URL: "https://example.com/", Status: 200, Markdown: longMarkdown},
+		seaportal.PageObject{URL: "https://example.com/docs", Status: 200, Markdown: longMarkdown},
+	)
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{Preview: true}, crawl, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if report.Site.TotalURLsInSitemap != 0 {
+		t.Fatalf("TotalURLsInSitemap = %d, want 0 without a sitemap", report.Site.TotalURLsInSitemap)
+	}
+	summary := SampledPagesSummary(len(report.Pages), report.Site.TotalURLsInSitemap)
+	if strings.Contains(summary, " of ") {
+		t.Fatalf("summary %q claims a total the crawl never had", summary)
+	}
+	if !strings.Contains(summary, fmt.Sprintf("%d page(s) sampled", len(report.Pages))) {
+		t.Fatalf("summary %q does not report the %d pages it lists", summary, len(report.Pages))
+	}
+	if md := string(RenderMarkdown(report)); !strings.Contains(md, summary) || strings.Contains(md, "of 0") {
+		t.Fatalf("markdown report disagrees with the preview line: %q", firstLines(md, 4))
+	}
+}
+
+func TestRunWithSitemapStillReportsTheSitemapTotal(t *testing.T) {
+	pages := []seaportal.PageObject{
+		{URL: "https://example.com/", Status: 200, Markdown: longMarkdown},
+		{URL: "https://example.com/docs", Status: 200, Markdown: longMarkdown},
+	}
+	crawl := func(context.Context) (*seaportal.ScrapeResult, error) {
+		return &seaportal.ScrapeResult{
+			Site:  seaportal.SiteInfo{BaseURL: "https://example.com", SitemapFound: true, TotalURLsInSitemap: 42},
+			Pages: pages,
+		}, nil
+	}
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{Preview: true}, crawl, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !report.Site.SitemapFound || report.Site.TotalURLsInSitemap != 42 {
+		t.Fatalf("sitemap info lost: found=%v total=%d", report.Site.SitemapFound, report.Site.TotalURLsInSitemap)
+	}
+	summary := SampledPagesSummary(len(report.Pages), report.Site.TotalURLsInSitemap)
+	if !strings.Contains(summary, "42 in sitemap") {
+		t.Fatalf("summary %q drops the sitemap total", summary)
+	}
+	if md := string(RenderMarkdown(report)); !strings.Contains(md, summary) {
+		t.Fatalf("markdown report disagrees with the preview line: %q", firstLines(md, 4))
+	}
+}
+
+func TestURLListCrawlerLeavesTheSitemapTotalUnset(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = fmt.Fprint(w, renderedHTML)
+	}))
+	defer srv.Close()
+	guard := CrawlGuard{ValidateURL: func(string) error { return nil }}
+	crawl := URLListCrawler([]string{srv.URL + "/a", srv.URL + "/b"}, 5*time.Second, guard)
+
+	res, err := crawl(context.Background())
+	if err != nil {
+		t.Fatalf("crawl: %v", err)
+	}
+	if res.Site.TotalURLsInSitemap != 0 {
+		t.Fatalf("TotalURLsInSitemap = %d, want 0: caller-supplied URLs never came from a sitemap", res.Site.TotalURLsInSitemap)
+	}
+}
+
+func firstLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}

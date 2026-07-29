@@ -119,7 +119,7 @@ the verdict on each page but renders nothing.
 
 ```
 schemaVersion, generatedAt, input
-site:      baseUrl, title, sitemapFound, totalDiscovered, sampledPages
+site:      baseUrl, title, sitemapFound, totalURLsInSitemap, sampledPages
 pageGroups[]:  pattern, total, sampled, urls[]        # site tree by URL pattern
 pages[]:
   url, title, statusCode, contentType
