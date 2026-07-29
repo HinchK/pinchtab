@@ -172,14 +172,27 @@ func TestIsolatedNodeObjectIDFailsClosedWithoutContext(t *testing.T) {
 // Keys are module-relative paths: pinchtab spreads CDP work over internal/bridge,
 // internal/bridge/cdpops and internal/cdptk, and a census of one directory would
 // report a clean boundary while three packages went unchecked.
+//
+// Both spellings of the call count. A raw Target.Execute of "DOM.resolveNode" and
+// cdproto's dom.ResolveNode() produce the same main-world handle, so a census that
+// knew only the string literal would read as a whole-module guard while every
+// typed call site went unchecked.
 var mainWorldResolvers = map[string]string{
 	"internal/bridge/action_form.go":        "form fill operates on an already-chosen field",
+	"internal/bridge/action_pointer.go":     "flyout-item click acts on an already-chosen node",
 	"internal/bridge/semantic_metadata.go":  "metadata enrichment reads an already-chosen node",
 	"internal/bridge/tab_auto_switch.go":    "tab switching acts on an already-chosen target",
 	"internal/bridge/cdpops/element_ops.go": "element ops act on an already-chosen node",
 	"internal/bridge/cdpops/frame_dom.go":   "callFunctionOn helper for an already-chosen node",
 	"internal/bridge/cdpops/pointer.go":     "pointer actions act on an already-chosen node",
 	"internal/bridge/cdpops/geometry.go":    "dead pending deletion: GetElementCenter has no callers at all and GetElementCenterJS only a test-reached facade wrapper; the live click-point path is PointerPointForNode, which is isolated",
+}
+
+// resolveNodeSpellings pairs each way of issuing DOM.resolveNode with the token
+// that marks that spelling as isolated.
+var resolveNodeSpellings = []struct{ call, isolated string }{
+	{`"DOM.resolveNode"`, "executionContextId"},
+	{"dom.ResolveNode()", "WithExecutionContextID"},
 }
 
 func TestIsolatedWorldBoundaryCensus(t *testing.T) {
@@ -189,7 +202,7 @@ func TestIsolatedWorldBoundaryCensus(t *testing.T) {
 	}
 
 	found := map[string]bool{}
-	checked := 0
+	checked := map[string]int{}
 	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -206,18 +219,20 @@ func TestIsolatedWorldBoundaryCensus(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		for _, block := range strings.Split(string(raw), `"DOM.resolveNode"`)[1:] {
-			checked++
-			head := block
-			if len(head) > 200 {
-				head = head[:200]
-			}
-			if strings.Contains(head, "executionContextId") {
-				continue
-			}
-			found[name] = true
-			if _, known := mainWorldResolvers[name]; !known {
-				t.Errorf("%s resolves a node without an isolated executionContextId and is not a recorded operation path:\n%s", name, head)
+		for _, spelling := range resolveNodeSpellings {
+			for _, block := range strings.Split(string(raw), spelling.call)[1:] {
+				checked[spelling.call]++
+				head := block
+				if len(head) > 200 {
+					head = head[:200]
+				}
+				if strings.Contains(head, spelling.isolated) {
+					continue
+				}
+				found[name] = true
+				if _, known := mainWorldResolvers[name]; !known {
+					t.Errorf("%s resolves a node without an isolated executionContextId and is not a recorded operation path:\n%s", name, head)
+				}
 			}
 		}
 		return nil
@@ -225,8 +240,12 @@ func TestIsolatedWorldBoundaryCensus(t *testing.T) {
 	if walkErr != nil {
 		t.Fatal(walkErr)
 	}
-	if checked == 0 {
-		t.Fatal("no DOM.resolveNode call found in the module — this census is checking nothing")
+	// Per spelling, not in total: one spelling falling to zero sites is how a
+	// whole class of call site stops being scanned while the census stays green.
+	for _, spelling := range resolveNodeSpellings {
+		if checked[spelling.call] == 0 {
+			t.Errorf("no %s call found in the module — the census is checking nothing for that spelling", spelling.call)
+		}
 	}
 	for name, why := range mainWorldResolvers {
 		if !found[name] {
