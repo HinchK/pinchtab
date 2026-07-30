@@ -57,7 +57,7 @@ func TestCleanErrorRedactsAbsolutePaths(t *testing.T) {
 // that separates these two exported helpers, and it is the reason callers pick
 // one over the other, so it is asserted where the rule is owned rather than left
 // to whichever downstream package happens to notice.
-func TestTruncateUTF8BytesCutsOnRuneBoundaryWithMarker(t *testing.T) {
+func TestTruncateUTF8BytesWithEllipsisCutsOnRuneBoundaryWithMarker(t *testing.T) {
 	const s = "héllo"
 
 	tests := []struct {
@@ -79,26 +79,26 @@ func TestTruncateUTF8BytesCutsOnRuneBoundaryWithMarker(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := TruncateUTF8Bytes(tt.input, tt.maxBytes)
+			got := TruncateUTF8BytesWithEllipsis(tt.input, tt.maxBytes)
 			if got != tt.want {
-				t.Fatalf("TruncateUTF8Bytes(%q, %d) = %q, want %q", tt.input, tt.maxBytes, got, tt.want)
+				t.Fatalf("TruncateUTF8BytesWithEllipsis(%q, %d) = %q, want %q", tt.input, tt.maxBytes, got, tt.want)
 			}
 			if !utf8.ValidString(got) {
-				t.Fatalf("TruncateUTF8Bytes(%q, %d) is not valid UTF-8", tt.input, tt.maxBytes)
+				t.Fatalf("TruncateUTF8BytesWithEllipsis(%q, %d) is not valid UTF-8", tt.input, tt.maxBytes)
 			}
 			if len(got) > tt.maxBytes && tt.maxBytes > 0 {
-				t.Fatalf("TruncateUTF8Bytes(%q, %d) = %q exceeds the byte budget", tt.input, tt.maxBytes, got)
+				t.Fatalf("TruncateUTF8BytesWithEllipsis(%q, %d) = %q exceeds the byte budget", tt.input, tt.maxBytes, got)
 			}
 			// Below the marker's own length there is no room for it, so the
 			// output is a prefix of the marker rather than content plus marker.
 			if len(tt.input) > tt.maxBytes && tt.maxBytes > len(TruncationSuffix) && !strings.Contains(got, TruncationSuffix) {
-				t.Fatalf("TruncateUTF8Bytes(%q, %d) = %q cut silently; the marker is what distinguishes it from PrefixUTF8Bytes", tt.input, tt.maxBytes, got)
+				t.Fatalf("TruncateUTF8BytesWithEllipsis(%q, %d) = %q cut silently; the marker is what distinguishes it from TruncateUTF8BytesExact", tt.input, tt.maxBytes, got)
 			}
 		})
 	}
 }
 
-func TestPrefixUTF8BytesCutsOnRuneBoundaryWithoutMarker(t *testing.T) {
+func TestTruncateUTF8BytesExactCutsOnRuneBoundaryWithoutMarker(t *testing.T) {
 	const s = "héllo"
 
 	tests := []struct {
@@ -117,15 +117,15 @@ func TestPrefixUTF8BytesCutsOnRuneBoundaryWithoutMarker(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := PrefixUTF8Bytes(s, tt.maxBytes)
+			got := TruncateUTF8BytesExact(s, tt.maxBytes)
 			if got != tt.want {
-				t.Fatalf("PrefixUTF8Bytes(%q, %d) = %q, want %q", s, tt.maxBytes, got, tt.want)
+				t.Fatalf("TruncateUTF8BytesExact(%q, %d) = %q, want %q", s, tt.maxBytes, got, tt.want)
 			}
 			if !utf8.ValidString(got) {
-				t.Fatalf("PrefixUTF8Bytes(%q, %d) is not valid UTF-8", s, tt.maxBytes)
+				t.Fatalf("TruncateUTF8BytesExact(%q, %d) is not valid UTF-8", s, tt.maxBytes)
 			}
 			if strings.Contains(got, TruncationSuffix) {
-				t.Fatalf("PrefixUTF8Bytes appended a truncation marker: %q", got)
+				t.Fatalf("TruncateUTF8BytesExact appended a truncation marker: %q", got)
 			}
 		})
 	}
@@ -137,7 +137,7 @@ func TestPrefixUTF8BytesCutsOnRuneBoundaryWithoutMarker(t *testing.T) {
 // 1 or 2 emits a broken rune from inside the helper every caller trusts. Swept across
 // every budget rather than at hand-picked ones, because the defect lives at exactly the
 // budgets nobody writes a case for.
-func TestTruncateUTF8BytesNeverEmitsABrokenRuneAtAnyBudget(t *testing.T) {
+func TestTruncateUTF8BytesWithEllipsisNeverEmitsABrokenRuneAtAnyBudget(t *testing.T) {
 	inputs := []string{
 		"",
 		"ascii only",
@@ -150,13 +150,13 @@ func TestTruncateUTF8BytesNeverEmitsABrokenRuneAtAnyBudget(t *testing.T) {
 	var checked int
 	for _, in := range inputs {
 		for maxBytes := -2; maxBytes <= len(in)+4; maxBytes++ {
-			got := TruncateUTF8Bytes(in, maxBytes)
+			got := TruncateUTF8BytesWithEllipsis(in, maxBytes)
 			checked++
 			if !utf8.ValidString(got) {
-				t.Errorf("TruncateUTF8Bytes(%q, %d) = %q, which is not valid UTF-8", in, maxBytes, got)
+				t.Errorf("TruncateUTF8BytesWithEllipsis(%q, %d) = %q, which is not valid UTF-8", in, maxBytes, got)
 			}
 			if maxBytes > 0 && len(got) > maxBytes {
-				t.Errorf("TruncateUTF8Bytes(%q, %d) returned %d bytes, over budget", in, maxBytes, len(got))
+				t.Errorf("TruncateUTF8BytesWithEllipsis(%q, %d) returned %d bytes, over budget", in, maxBytes, len(got))
 			}
 		}
 	}

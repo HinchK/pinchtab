@@ -79,7 +79,7 @@ func Network(client *http.Client, base, token string, cmd *cobra.Command, args [
 		return
 	}
 	for _, e := range resp.Entries {
-		fmt.Printf("%-6s %3d  %s\n", e.Method, e.Status, sanitize.TruncateUTF8Bytes(e.URL, networkURLDisplayMaxBytes))
+		fmt.Printf("%-6s %3d  %s\n", e.Method, e.Status, sanitize.TruncateUTF8BytesWithEllipsis(e.URL, networkURLDisplayMaxBytes))
 	}
 }
 

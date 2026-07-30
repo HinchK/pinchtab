@@ -183,16 +183,16 @@ func (s *ConsoleLogStore) RemoveTab(tabID string) {
 }
 
 func normalizeConsoleLogEntry(entry LogEntry) LogEntry {
-	entry.Level = sanitize.TruncateUTF8Bytes(entry.Level, maxConsoleLevelBytes)
-	entry.Message = sanitize.TruncateUTF8Bytes(entry.Message, maxConsoleMessageBytes)
-	entry.Source = sanitize.TruncateUTF8Bytes(entry.Source, maxConsoleSourceBytes)
+	entry.Level = sanitize.TruncateUTF8BytesWithEllipsis(entry.Level, maxConsoleLevelBytes)
+	entry.Message = sanitize.TruncateUTF8BytesWithEllipsis(entry.Message, maxConsoleMessageBytes)
+	entry.Source = sanitize.TruncateUTF8BytesWithEllipsis(entry.Source, maxConsoleSourceBytes)
 	return entry
 }
 
 func normalizeErrorLogEntry(entry ErrorEntry) ErrorEntry {
-	entry.Message = sanitize.TruncateUTF8Bytes(entry.Message, maxErrorMessageBytes)
-	entry.Type = sanitize.TruncateUTF8Bytes(entry.Type, maxErrorTypeBytes)
-	entry.URL = sanitize.TruncateUTF8Bytes(entry.URL, maxErrorURLBytes)
-	entry.Stack = sanitize.TruncateUTF8Bytes(entry.Stack, maxErrorStackBytes)
+	entry.Message = sanitize.TruncateUTF8BytesWithEllipsis(entry.Message, maxErrorMessageBytes)
+	entry.Type = sanitize.TruncateUTF8BytesWithEllipsis(entry.Type, maxErrorTypeBytes)
+	entry.URL = sanitize.TruncateUTF8BytesWithEllipsis(entry.URL, maxErrorURLBytes)
+	entry.Stack = sanitize.TruncateUTF8BytesWithEllipsis(entry.Stack, maxErrorStackBytes)
 	return entry
 }

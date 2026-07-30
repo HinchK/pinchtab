@@ -116,5 +116,5 @@ func compactBody(body []byte) string {
 	if trimmed == "" {
 		return "<empty>"
 	}
-	return sanitize.TruncateUTF8Bytes(trimmed, maxCompactBodyBytes)
+	return sanitize.TruncateUTF8BytesWithEllipsis(trimmed, maxCompactBodyBytes)
 }

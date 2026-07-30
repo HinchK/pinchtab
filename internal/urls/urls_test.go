@@ -154,7 +154,7 @@ func TestRedactForLog(t *testing.T) {
 }
 
 // The byte cap on a redacted log URL moved from a package-private copy to
-// sanitize.TruncateUTF8Bytes. These pin the empty, under-limit, at-limit and
+// sanitize.TruncateUTF8BytesWithEllipsis. These pin the empty, under-limit, at-limit and
 // over-limit cases at a converted call site.
 //
 // Rune-boundary splitting is deliberately NOT pinned here and cannot be:

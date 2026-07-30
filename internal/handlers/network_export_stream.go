@@ -274,7 +274,7 @@ func (s *exportStreamSession) exportEntry(entry bridge.NetworkEntry) (stop bool)
 		return true
 	}
 	s.count++
-	data, _ := json.Marshal(map[string]any{"entries": s.count, "url": sanitize.TruncateUTF8Bytes(entry.URL, maxProgressURLBytes)})
+	data, _ := json.Marshal(map[string]any{"entries": s.count, "url": sanitize.TruncateUTF8BytesWithEllipsis(entry.URL, maxProgressURLBytes)})
 	_, _ = fmt.Fprintf(s.w, "event: export\ndata: %s\n\n", data)
 	s.flusher.Flush()
 	return false

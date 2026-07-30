@@ -223,8 +223,8 @@ func normalizeDialogState(state *DialogState) *DialogState {
 	}
 
 	copyState := *state
-	copyState.Type = sanitize.TruncateUTF8Bytes(copyState.Type, 32)
-	copyState.Message = sanitize.TruncateUTF8Bytes(copyState.Message, maxDialogTextBytes)
-	copyState.DefaultPrompt = sanitize.TruncateUTF8Bytes(copyState.DefaultPrompt, maxDialogTextBytes)
+	copyState.Type = sanitize.TruncateUTF8BytesWithEllipsis(copyState.Type, 32)
+	copyState.Message = sanitize.TruncateUTF8BytesWithEllipsis(copyState.Message, maxDialogTextBytes)
+	copyState.DefaultPrompt = sanitize.TruncateUTF8BytesWithEllipsis(copyState.DefaultPrompt, maxDialogTextBytes)
 	return &copyState
 }

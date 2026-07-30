@@ -47,5 +47,5 @@ func RedactForLog(raw string) string {
 		}
 	}
 
-	return sanitize.TruncateUTF8Bytes(parsed.String(), maxLogURLBytes)
+	return sanitize.TruncateUTF8BytesWithEllipsis(parsed.String(), maxLogURLBytes)
 }

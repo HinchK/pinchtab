@@ -261,10 +261,10 @@ func TestBodyClampsAndDisplayFieldsUseTheirOwnHelper(t *testing.T) {
 	if end := strings.Index(clamp, "\nfunc "); end >= 0 {
 		clamp = clamp[:end]
 	}
-	if !strings.Contains(clamp, "sanitize.PrefixUTF8Bytes(") {
+	if !strings.Contains(clamp, "sanitize.TruncateUTF8BytesExact(") {
 		t.Error("clampRetainedBody no longer cuts with the suffix-free helper")
 	}
-	if strings.Contains(clamp, "sanitize.TruncateUTF8Bytes(") {
+	if strings.Contains(clamp, "sanitize.TruncateUTF8BytesWithEllipsis(") {
 		t.Error("clampRetainedBody reaches the ellipsis variant again: the retained body would carry characters the response never sent")
 	}
 	if !strings.Contains(src, "clampRetainedBody(entry.PostData,") {
@@ -284,11 +284,11 @@ func TestBodyClampsAndDisplayFieldsUseTheirOwnHelper(t *testing.T) {
 
 	displayFields := []string{"entry.URL", "entry.Method", "entry.ResourceType", "entry.StatusText", "entry.MimeType", "entry.Error"}
 	for _, field := range displayFields {
-		if !strings.Contains(src, field+" = sanitize.TruncateUTF8Bytes(") {
+		if !strings.Contains(src, field+" = sanitize.TruncateUTF8BytesWithEllipsis(") {
 			t.Errorf("%s no longer uses the ellipsis variant; a human reads it and the marker is the signal", field)
 		}
 	}
-	headerClamps := []string{"key = sanitize.TruncateUTF8Bytes(", "value = sanitize.TruncateUTF8Bytes("}
+	headerClamps := []string{"key = sanitize.TruncateUTF8BytesWithEllipsis(", "value = sanitize.TruncateUTF8BytesWithEllipsis("}
 	for _, headerClamp := range headerClamps {
 		if !strings.Contains(src, headerClamp) {
 			t.Errorf("header clamp %q no longer uses the ellipsis variant", headerClamp)
@@ -299,7 +299,7 @@ func TestBodyClampsAndDisplayFieldsUseTheirOwnHelper(t *testing.T) {
 	// helper, which cannot see a site it does not know about — and an unlisted field
 	// taking the ellipsis by default is how the defect this file exists for arrived.
 	accounted := len(displayFields) + len(headerClamps) + 1 // the one payload clamp, which both the retained body and PostData go through
-	if sites := strings.Count(src, "sanitize.TruncateUTF8Bytes(") + strings.Count(src, "sanitize.PrefixUTF8Bytes("); sites != accounted {
+	if sites := strings.Count(src, "sanitize.TruncateUTF8BytesWithEllipsis(") + strings.Count(src, "sanitize.TruncateUTF8BytesExact("); sites != accounted {
 		t.Errorf("network.go cuts a field at %d sites but this test classifies %d — a new field is picking a truncation policy nobody reviewed. Add it above: the ellipsis variant if a human reads it, the suffix-free one if it is machine-read and a marker would be fabricated content",
 			sites, accounted)
 	}

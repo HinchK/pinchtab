@@ -33,7 +33,7 @@ func TrimHTML(html string) string {
 		}
 	}
 
-	return sanitize.PrefixUTF8Bytes(strings.Join(trimmed, "\n"), maxTrimmedBytes)
+	return sanitize.TruncateUTF8BytesExact(strings.Join(trimmed, "\n"), maxTrimmedBytes)
 }
 
 var (

@@ -14,10 +14,10 @@ var (
 	winAbs  = regexp.MustCompile(`(^|[\s"'(=:])([A-Za-z]:\\(?:[^\s"'():;<>{}\[\]]+\\?)+)`)
 )
 
-// PrefixUTF8Bytes returns the longest prefix of s that fits in maxBytes bytes
+// TruncateUTF8BytesExact returns the longest prefix of s that fits in maxBytes bytes
 // without splitting a rune. Nothing is appended: callers that want a
-// truncation marker use TruncateUTF8Bytes.
-func PrefixUTF8Bytes(s string, maxBytes int) string {
+// truncation marker use TruncateUTF8BytesWithEllipsis.
+func TruncateUTF8BytesExact(s string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
 	}
@@ -34,7 +34,7 @@ func PrefixUTF8Bytes(s string, maxBytes int) string {
 	return s[:cut]
 }
 
-func TruncateUTF8Bytes(s string, maxBytes int) string {
+func TruncateUTF8BytesWithEllipsis(s string, maxBytes int) string {
 	if maxBytes <= 0 {
 		return ""
 	}
@@ -44,7 +44,7 @@ func TruncateUTF8Bytes(s string, maxBytes int) string {
 	if maxBytes <= len(TruncationSuffix) {
 		return TruncationSuffix[:maxBytes]
 	}
-	return PrefixUTF8Bytes(s, maxBytes-len(TruncationSuffix)) + TruncationSuffix
+	return TruncateUTF8BytesExact(s, maxBytes-len(TruncationSuffix)) + TruncationSuffix
 }
 
 func StripANSI(s string) string {
@@ -113,9 +113,9 @@ func isTextSpoofingRune(r rune) bool {
 }
 
 func CleanForLog(s string, maxBytes int) string {
-	return TruncateUTF8Bytes(StripTextSpoofingRunes(StripControlChars(StripANSI(s))), maxBytes)
+	return TruncateUTF8BytesWithEllipsis(StripTextSpoofingRunes(StripControlChars(StripANSI(s))), maxBytes)
 }
 
 func CleanError(s string, maxBytes int) string {
-	return TruncateUTF8Bytes(RedactAbsolutePaths(StripTextSpoofingRunes(StripControlChars(StripANSI(s)))), maxBytes)
+	return TruncateUTF8BytesWithEllipsis(RedactAbsolutePaths(StripTextSpoofingRunes(StripControlChars(StripANSI(s)))), maxBytes)
 }

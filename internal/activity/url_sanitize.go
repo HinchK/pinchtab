@@ -45,5 +45,5 @@ func sanitizeActivityURL(raw string) string {
 		}
 	}
 
-	return sanitize.TruncateUTF8Bytes(parsed.String(), maxActivityURLBytes)
+	return sanitize.TruncateUTF8BytesWithEllipsis(parsed.String(), maxActivityURLBytes)
 }

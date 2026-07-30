@@ -293,7 +293,7 @@ func clampRetainedBody(body string, base64Encoded bool, limit int, scope string)
 	if base64Encoded {
 		return "", false, "base64 body exceeds " + scope
 	}
-	prefix := sanitize.PrefixUTF8Bytes(body, limit)
+	prefix := sanitize.TruncateUTF8BytesExact(body, limit)
 	if prefix == "" {
 		return "", false, scope + " is smaller than the body's first character"
 	}
@@ -470,12 +470,12 @@ func requestEntryFromEvent(e *network.EventRequestWillBeSent) NetworkEntry {
 }
 
 func normalizeNetworkEntry(entry NetworkEntry) NetworkEntry {
-	entry.URL = sanitize.TruncateUTF8Bytes(entry.URL, maxNetworkURLBytes)
-	entry.Method = sanitize.TruncateUTF8Bytes(entry.Method, maxNetworkMethodBytes)
-	entry.ResourceType = sanitize.TruncateUTF8Bytes(entry.ResourceType, maxNetworkResourceTypeBytes)
-	entry.StatusText = sanitize.TruncateUTF8Bytes(entry.StatusText, maxNetworkStatusTextBytes)
-	entry.MimeType = sanitize.TruncateUTF8Bytes(entry.MimeType, maxNetworkMimeTypeBytes)
-	entry.Error = sanitize.TruncateUTF8Bytes(entry.Error, maxNetworkErrorBytes)
+	entry.URL = sanitize.TruncateUTF8BytesWithEllipsis(entry.URL, maxNetworkURLBytes)
+	entry.Method = sanitize.TruncateUTF8BytesWithEllipsis(entry.Method, maxNetworkMethodBytes)
+	entry.ResourceType = sanitize.TruncateUTF8BytesWithEllipsis(entry.ResourceType, maxNetworkResourceTypeBytes)
+	entry.StatusText = sanitize.TruncateUTF8BytesWithEllipsis(entry.StatusText, maxNetworkStatusTextBytes)
+	entry.MimeType = sanitize.TruncateUTF8BytesWithEllipsis(entry.MimeType, maxNetworkMimeTypeBytes)
+	entry.Error = sanitize.TruncateUTF8BytesWithEllipsis(entry.Error, maxNetworkErrorBytes)
 	// The request body is clamped by the one owner of that rule, so it inherits the
 	// prefix-or-nothing policy the response body already states. The budget measures the
 	// decoded body, which is what PostData holds, so the constant describes the request
@@ -508,7 +508,7 @@ func normalizeNetworkHeaders(headers map[string]string) map[string]string {
 			break
 		}
 
-		key = sanitize.TruncateUTF8Bytes(key, maxNetworkHeaderKeyBytes)
+		key = sanitize.TruncateUTF8BytesWithEllipsis(key, maxNetworkHeaderKeyBytes)
 		if key == "" {
 			continue
 		}
@@ -521,7 +521,7 @@ func normalizeNetworkHeaders(headers map[string]string) map[string]string {
 			break
 		}
 
-		value = sanitize.TruncateUTF8Bytes(value, valueLimit)
+		value = sanitize.TruncateUTF8BytesWithEllipsis(value, valueLimit)
 		entryBytes := len(key) + len(value)
 		if entryBytes <= 0 {
 			continue
