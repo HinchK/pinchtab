@@ -37,28 +37,10 @@ func TrimHTML(html string) string {
 }
 
 var (
-	reScript  = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
-	reStyle   = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
-	reComment = regexp.MustCompile(`(?s)<!--.*?-->`)
-	// reDataURI matches the URI itself, not the attribute value holding it. Anchored on
-	// the whole value ("data:[^"]*") it saw only src="data:…" and missed the shape that
-	// actually costs the budget, style="background:url(data:…)", where the URI is in the
-	// middle of a declaration. Replacing just the URI is also what keeps that declaration
-	// readable — url() rather than a blanked style attribute.
-	//
-	// The terminator set is what ends a URI in each host syntax: the quote of the
-	// attribute, the quote or paren of a CSS url(), and whitespace for a srcset
-	// candidate. A comma is NOT a terminator — it separates a data URI's own metadata
-	// from its payload, so excluding it would leave every base64 blob behind.
-	//
-	// Two guards, because each alone corrupts something. The leading delimiter (or start
-	// of input), captured in group 1 and re-emitted on replace, stops "data:" matching
-	// inside a word — without it "Metadata:" became "Meta". It has to include '>', or a
-	// URI opening an element's text content is missed and the whole blob survives. But '>'
-	// alone would then eat the prose label "<td>Data:</td>", so the payload must also look
-	// like a URI: a MIME-shaped prefix and one of '/', ';' or ','. A bare "data:" carries
-	// none of those and is left alone.
-	reDataURI    = regexp.MustCompile(`(?i)(\A|["'(,=\s>])data:[a-z0-9.+-]*[/;,][^"'()<>\s]*`)
+	reScript     = regexp.MustCompile(`(?is)<script[^>]*>.*?</script>`)
+	reStyle      = regexp.MustCompile(`(?is)<style[^>]*>.*?</style>`)
+	reComment    = regexp.MustCompile(`(?s)<!--.*?-->`)
+	reDataURI    = regexp.MustCompile(`(?i)(\A|["'(,=\s>;])data:(?:[a-z][a-z0-9.+-]*/[a-z][a-z0-9.+-]*)?(?:;[a-z0-9.+-]+(?:=[a-z0-9.+-]*)?)*,[^"'()<>\s&]*`)
 	reWhitespace = regexp.MustCompile(`[ \t]+`)
 	reNewlines   = regexp.MustCompile(`\n{3,}`)
 )

@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"golang.org/x/net/html"
 )
 
 func TestTrimHTMLStripsScriptsAndStyles(t *testing.T) {
@@ -83,121 +85,248 @@ func TestTrimHTMLSpendsTheBudgetOnMarkupNotOnStrippedContent(t *testing.T) {
 	}
 }
 
-// A base64 image is usually the single largest token contributor on a page, and the cap
-// is applied AFTER stripping — so one payload that survives spends the whole prompt
-// budget on a picture and pushes the interactive markup off the end. The old pattern was
-// anchored on the whole attribute value, so it only ever saw src="data:…" and missed the
-// commonest carrier of all: a URL inside an inline style declaration.
-func TestTrimHTMLStripsADataURIEmbeddedInAValue(t *testing.T) {
-	const payload = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="
+// dataURIGuards names each guard in reDataURI against the corruption it alone prevents.
+// Three rounds of tuning this one pattern each traded one corruption for another, because
+// a guard added for one round's cases reads as redundant to the next round's editor. Every
+// guard must be named by at least one row of dataURICases, so deleting the last row for a
+// guard reds here rather than going quiet.
+var dataURIGuards = map[string]string{
+	"leading delimiter":        `without it "Metadata:text/html,x" is cut to "Meta"`,
+	"delimiter includes >":     `without it a payload opening an element's text content survives whole`,
+	"delimiter includes ;":     `without it the ';' ending &quot; is unlicensed and the escaped CSS payload survives whole`,
+	"mediatype letter-initial": `without it a comma-separated pair of dates reads as a mediatype and "Data:30/07,31/07" is deleted`,
+	"mediatype comma required": `without it every other compact "Data:<value>" is deleted, and "Data:" is the word for date in five languages`,
+	"entity-safe payload end":  `without it url(&quot;data:…&quot;) loses its closing entity and the declaration stops parsing`,
+}
 
-	for _, tc := range []struct {
-		name string
-		html string
-		want string
-	}{
-		{
-			name: "css url, unquoted",
-			html: `<div style="background:url(data:image/png;base64,` + payload + `)">x</div>`,
-			want: `<div style="background:url()">x</div>`,
-		},
-		{
-			name: "css url, single-quoted",
-			html: `<div style="background-image:url('data:image/png;base64,` + payload + `')">x</div>`,
-			want: `<div style="background-image:url('')">x</div>`,
-		},
-		{
-			name: "css url among other declarations",
-			html: `<div style="color:red;background:url(data:image/gif;base64,` + payload + `);border:1px">x</div>`,
-			want: `<div style="color:red;background:url();border:1px">x</div>`,
-		},
-		{
-			name: "whole value, the already-covered form",
-			html: `<img src="data:image/png;base64,` + payload + `">`,
-			want: `<img src="">`,
-		},
-	} {
+const dataURIPayload = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="
+
+// dataURICases is the whole discovered class list for reDataURI in one table: every carrier
+// a payload arrives in, and every prose shape that must survive. One table rather than a
+// test per round, so a change to the pattern has to satisfy all of them at once.
+var dataURICases = []struct {
+	name string
+	html string
+	want string
+	pins []string
+}{
+	{
+		name: "attribute value, whole",
+		html: `<img src="data:image/png;base64,` + dataURIPayload + `">`,
+		want: `<img src="">`,
+	},
+	{
+		name: "css url, unquoted",
+		html: `<div style="background:url(data:image/png;base64,` + dataURIPayload + `)">x</div>`,
+		want: `<div style="background:url()">x</div>`,
+	},
+	{
+		name: "css url, single-quoted",
+		html: `<div style="background-image:url('data:image/png;base64,` + dataURIPayload + `')">x</div>`,
+		want: `<div style="background-image:url('')">x</div>`,
+	},
+	{
+		name: "css url, escaped double-quoted, the only shape serialisation emits for it",
+		html: `<div style="background:url(&quot;data:image/png;base64,` + dataURIPayload + `&quot;)">x</div>`,
+		want: `<div style="background:url(&quot;&quot;)">x</div>`,
+		pins: []string{"delimiter includes ;", "entity-safe payload end"},
+	},
+	{
+		name: "css url among other declarations",
+		html: `<div style="color:red;background:url(data:image/gif;base64,` + dataURIPayload + `);border:1px">x</div>`,
+		want: `<div style="color:red;background:url();border:1px">x</div>`,
+	},
+	{
+		name: "element text content",
+		html: `<td>data:image/png;base64,` + dataURIPayload + `</td>`,
+		want: `<td></td>`,
+		pins: []string{"delimiter includes >"},
+	},
+	{
+		name: "element text content, no base64",
+		html: `<code>data:text/html,hello</code>`,
+		want: `<code></code>`,
+		pins: []string{"delimiter includes >"},
+	},
+	{
+		name: "srcset candidate list",
+		html: `<img srcset="data:image/png;base64,AAAABBBBCCCC 1x, data:image/png;base64,DDDDEEEEFFFF 2x" alt="pic">`,
+		want: `<img srcset=" 1x, 2x" alt="pic">`,
+	},
+	{
+		name: "empty mediatype, rfc-valid",
+		html: `<td>data:,hello</td>`,
+		want: `<td></td>`,
+		pins: []string{"delimiter includes >"},
+	},
+	{
+		name: "parameters only, rfc-valid",
+		html: `<td>data:;base64,QUJD</td>`,
+		want: `<td></td>`,
+		pins: []string{"delimiter includes >"},
+	},
+	{
+		name: "parameter with a value",
+		html: `<td>data:text/plain;charset=utf-8,hello</td>`,
+		want: `<td></td>`,
+		pins: []string{"delimiter includes >"},
+	},
+	{
+		name: "uppercase",
+		html: `<td>DATA:IMAGE/PNG;BASE64,QUJD</td>`,
+		want: `<td></td>`,
+		pins: []string{"delimiter includes >"},
+	},
+	{
+		name: "percent-encoded payload",
+		html: `<td>data:text/plain,%20hi%21</td>`,
+		want: `<td></td>`,
+		pins: []string{"delimiter includes >"},
+	},
+	{
+		name: "bare label",
+		html: `<td>Data:</td>`,
+		want: `<td>Data:</td>`,
+		pins: []string{"mediatype comma required"},
+	},
+	{
+		name: "spaced label",
+		html: `<td>Data: 42</td>`,
+		want: `<td>Data: 42</td>`,
+		pins: []string{"mediatype comma required"},
+	},
+	{
+		name: "compact label with a date",
+		html: `<td>Data:30/07/2026</td>`,
+		want: `<td>Data:30/07/2026</td>`,
+		pins: []string{"mediatype comma required"},
+	},
+	{
+		name: "compact label with a date, mid-sentence",
+		html: `<p>Fattura Data:30/07/2026 totale</p>`,
+		want: `<p>Fattura Data:30/07/2026 totale</p>`,
+		pins: []string{"mediatype comma required"},
+	},
+	{
+		name: "compact label with two dates",
+		html: `<td>Data:30/07,31/07</td>`,
+		want: `<td>Data:30/07,31/07</td>`,
+		pins: []string{"mediatype letter-initial"},
+	},
+	{
+		name: "compact label with a comma list",
+		html: `<td>Data:1,2,3</td>`,
+		want: `<td>Data:1,2,3</td>`,
+		pins: []string{"mediatype comma required"},
+	},
+	{
+		name: "compact label with a semicolon pair",
+		html: `<td>Data:a;b</td>`,
+		want: `<td>Data:a;b</td>`,
+		pins: []string{"mediatype comma required"},
+	},
+	{
+		name: "compact label with a single-letter path",
+		html: `<td>Data:a/b</td>`,
+		want: `<td>Data:a/b</td>`,
+		pins: []string{"mediatype comma required"},
+	},
+	{
+		name: "data: inside a word",
+		html: `<p>Metadata: 2024</p>`,
+		want: `<p>Metadata: 2024</p>`,
+	},
+	{
+		name: "data: inside a word with a mime tail",
+		html: `<td>metadata:image/png here</td>`,
+		want: `<td>metadata:image/png here</td>`,
+	},
+	{
+		name: "data: inside a word with a whole uri after it",
+		html: `<td>Metadata:text/html,x</td>`,
+		want: `<td>Metadata:text/html,x</td>`,
+		pins: []string{"leading delimiter"},
+	},
+	{
+		name: "data- attribute",
+		html: `<div data-src="keep">x</div>`,
+		want: `<div data-src="keep">x</div>`,
+	},
+}
+
+func TestTrimHTMLHandlesEveryDataURICarrierAndProseShape(t *testing.T) {
+	for _, tc := range dataURICases {
 		t.Run(tc.name, func(t *testing.T) {
 			got := TrimHTML(tc.html)
-			if strings.Contains(got, payload) {
-				t.Errorf("the base64 payload survived:\n%s", got)
-			}
-			if strings.Contains(got, "data:") {
-				t.Errorf("the data URI survived:\n%s", got)
-			}
 			if got != tc.want {
-				t.Errorf("TrimHTML =\n  %s\nwant\n  %s", got, tc.want)
+				t.Errorf("TrimHTML(%q) =\n  %s\nwant\n  %s", tc.html, got, tc.want)
+			}
+			if strings.Contains(got, dataURIPayload) {
+				t.Errorf("the base64 payload survived and spends the whole prompt budget:\n%s", got)
 			}
 		})
 	}
 }
 
-// The widened pattern must not regress the forms that already stripped. srcset carries
-// several URIs in one value separated by commas, and a comma also separates a data URI's
-// own metadata from its payload — so the pattern cannot treat commas as a terminator,
-// and this is the case that proves it does not.
-func TestTrimHTMLStillStripsWholeValueDataURIs(t *testing.T) {
-	html := `<img srcset="data:image/png;base64,AAAABBBBCCCC 1x, data:image/png;base64,DDDDEEEEFFFF 2x" alt="pic">`
+// The escaped row above is hand-written with the entity Chrome's serialiser emits. This
+// derives the same shape by running a double-quoted CSS url() through a serialiser instead,
+// so the row is pinned against what serialisation actually produces rather than against an
+// approximation of it — and against either entity spelling a serialiser may choose.
+func TestTrimHTMLStripsThePayloadASerialiserEscapedItself(t *testing.T) {
+	div := &html.Node{
+		Type: html.ElementNode,
+		Data: "div",
+		Attr: []html.Attribute{
+			{Key: "id", Val: "d"},
+			{Key: "style", Val: `background:url("data:image/png;base64,` + dataURIPayload + `")`},
+		},
+	}
+	div.AppendChild(&html.Node{Type: html.TextNode, Data: "styled"})
 
-	got := TrimHTML(html)
+	var rendered strings.Builder
+	if err := html.Render(&rendered, div); err != nil {
+		t.Fatalf("render: %v", err)
+	}
 
-	for _, unwanted := range []string{"data:", "base64", "AAAABBBBCCCC", "DDDDEEEEFFFF"} {
-		if strings.Contains(got, unwanted) {
-			t.Errorf("srcset still carries %q:\n%s", unwanted, got)
+	serialised := rendered.String()
+	if strings.Contains(serialised, `url("data:`) {
+		t.Fatalf("the serialiser left a bare quote, so this fixture is not the escaped shape:\n%s", serialised)
+	}
+	if !strings.Contains(serialised, dataURIPayload) {
+		t.Fatalf("the serialiser dropped the payload, so nothing is left to strip:\n%s", serialised)
+	}
+
+	open := strings.Index(serialised, "url(") + len("url(")
+	entity := serialised[open:strings.Index(serialised, "data:")]
+
+	got := TrimHTML(serialised)
+	if strings.Contains(got, dataURIPayload) {
+		t.Errorf("the payload survived the shape serialisation actually emits:\n%s", got)
+	}
+	if want, have := strings.Count(serialised, entity), strings.Count(got, entity); have != want {
+		t.Errorf("the strip took %d of the %d %s that quote the url — the declaration no longer parses:\n%s",
+			want-have, want, entity, got)
+	}
+	if !strings.Contains(got, `)">styled`) {
+		t.Errorf("the declaration stopped being readable:\n%s", got)
+	}
+}
+
+func TestEveryDataURIGuardIsPinnedByACase(t *testing.T) {
+	pinned := map[string]int{}
+	for _, tc := range dataURICases {
+		for _, guard := range tc.pins {
+			if _, ok := dataURIGuards[guard]; !ok {
+				t.Errorf("case %q pins %q, which is not a declared guard", tc.name, guard)
+				continue
+			}
+			pinned[guard]++
 		}
 	}
-	// The descriptors and the rest of the tag are markup, not payload, and stay.
-	for _, want := range []string{"1x", "2x", `alt="pic"`, "<img"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("srcset stripping removed %q, which is markup rather than payload:\n%s", want, got)
+	for guard, corruption := range dataURIGuards {
+		if pinned[guard] == 0 {
+			t.Errorf("no case pins the %q guard, so removing it corrupts silently: %s", guard, corruption)
 		}
-	}
-}
-
-// A URI opening an element's text content is preceded by '>', not by a quote, paren, comma,
-// '=' or whitespace. Licensing only those delimiters missed it and the whole blob survived
-// — the budget cost this helper exists to prevent, reintroduced by the guard against
-// over-matching. Text position is where a URI is most expensive, since nothing else in the
-// pipeline strips it.
-func TestTrimHTMLStripsADataURIOpeningTextContent(t *testing.T) {
-	blob := strings.Repeat("A", 64)
-
-	for _, tc := range []struct{ name, html string }{
-		{"table cell", `<td>data:image/png;base64,` + blob + `</td>`},
-		{"code block", `<code>data:text/html,hello</code>`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := TrimHTML(tc.html)
-			for _, unwanted := range []string{"data:", blob, "text/html"} {
-				if strings.Contains(got, unwanted) {
-					t.Errorf("still carries %q, so a URI in text position costs the whole budget:\n%s", unwanted, got)
-				}
-			}
-		})
-	}
-}
-
-// The data-URI pattern strips a URI, not the letters "data:" wherever they fall. Widening
-// it to match anywhere inside a value also let it match inside a word — "Metadata:" in page
-// text became "Meta", eating the interactive markup this helper exists to carry. A real URI
-// is preceded by a quote, paren, comma, '=', whitespace or '>', so those are what license
-// the strip. Reverting either guard corrupts one of these.
-func TestTrimHTMLLeavesDataColonInsideAWordAlone(t *testing.T) {
-	for _, tc := range []struct{ name, html, want string }{
-		{"prose label", `<p>Metadata: 2024</p>`, `<p>Metadata: 2024</p>`},
-		{"word with a mime tail", `<td>metadata:image/png here</td>`, `<td>metadata:image/png here</td>`},
-		{"data- attribute is unaffected", `<div data-src="keep">x</div>`, `<div data-src="keep">x</div>`},
-		// A field label opening a cell has a delimiter before it — the '>' that closes the
-		// tag — so the delimiter guard cannot save it. What does is the payload shape: a
-		// label carries no MIME prefix and no '/', ';' or ','.
-		{"bare label opening a cell", `<td>Data:</td>`, `<td>Data:</td>`},
-		{"labelled value opening a cell", `<td>Data: 42</td>`, `<td>Data: 42</td>`},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := TrimHTML(tc.html); got != tc.want {
-				t.Errorf("TrimHTML(%q) = %q, want it unchanged — 'data:' inside a word is not a URI", tc.html, got)
-			}
-		})
 	}
 }
 
