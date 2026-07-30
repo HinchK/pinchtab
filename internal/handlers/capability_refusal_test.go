@@ -2,8 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -173,6 +177,113 @@ func TestEveryCapabilityRefusalCarriesTheRunnableRemedy(t *testing.T) {
 			}
 		})
 	}
+}
+
+// /wait is CapNone in the catalogue, so no route lock ever answers for it and the
+// in-handler gate on mode "fn" is the only thing refusing it. It used to build its
+// own details, carrying the setting but neither the hint nor the restart — and
+// writing the setting without restarting is a successful no-op, so a caller who
+// worked the config command out of `setting` alone got the identical 403 back.
+//
+// The two refusals are compared to EACH OTHER rather than to copied literals: same
+// capability, same guidance, and only this shape reds if the pair drifts.
+func TestWaitFnRefusesExactlyAsEvaluateDoesForTheSameCapability(t *testing.T) {
+	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func() {})
+
+	refuse := func(path, body string) (string, map[string]any) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		mux.ServeHTTP(w, r)
+		_, code, details := decodeRefusal(t, "POST "+path, w)
+		return code, details
+	}
+
+	waitCode, waitDetails := refuse("/wait", `{"fn":"1==1"}`)
+	evalCode, evalDetails := refuse("/evaluate", `{"expression":"1"}`)
+
+	if waitCode != evalCode {
+		t.Errorf("code = %q on /wait but %q on /evaluate, for one capability", waitCode, evalCode)
+	}
+	for _, key := range []string{"setting", "hint", "remedy"} {
+		got, _ := waitDetails[key].(string)
+		want, _ := evalDetails[key].(string)
+		if want == "" {
+			t.Fatalf("/evaluate carries no %s, so this comparison would pass vacuously: %v", key, evalDetails)
+		}
+		if got != want {
+			t.Errorf("details.%s = %q on /wait, %q on /evaluate", key, got, want)
+		}
+	}
+	// Writing the setting is only half the remedy; the security block is read at boot.
+	if remedy, _ := waitDetails["remedy"].(string); !strings.Contains(remedy, "restart") {
+		t.Errorf("remedy = %q, want it to name the restart", remedy)
+	}
+}
+
+// The census above derives its scope from the route catalogue and drives
+// writeCapabilityDisabled, so a gate that calls httpx.ErrorCode inline is invisible
+// to it — which is exactly how /wait shipped a refusal with no hint and no remedy.
+// This keys off the OPERATION instead: any site emitting a _disabled code must hand
+// it the shared details builder, whatever route or capability it belongs to.
+func TestEveryHandRolledDisabledRefusalUsesTheSharedDetailsBuilder(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fset := token.NewFileSet()
+	scanned, found := 0, 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		scanned++
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("ParseFile(%s): %v", name, err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || sel.Sel.Name != "ErrorCode" || len(call.Args) < 6 {
+				return true
+			}
+			code, ok := call.Args[2].(*ast.BasicLit)
+			if !ok || !strings.HasSuffix(strings.Trim(code.Value, `"`), "_disabled") {
+				return true
+			}
+			found++
+			if !callsDisabledEndpointDetails(call.Args[5]) {
+				t.Errorf("%s: %s builds its own details for %s; pass httpx.DisabledEndpointDetails(setting) instead, or the refusal ships without the hint and the restart",
+					fset.Position(call.Pos()), name, code.Value)
+			}
+			return true
+		})
+	}
+
+	if scanned == 0 {
+		t.Fatal("scanned no source files, so this census proves nothing")
+	}
+	if found == 0 {
+		t.Fatal("found no _disabled ErrorCode call at all; the shape moved and this census now passes over nothing")
+	}
+}
+
+func callsDisabledEndpointDetails(arg ast.Expr) bool {
+	call, ok := arg.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	return ok && sel.Sel.Name == "DisabledEndpointDetails"
 }
 
 // The bridge mux registers HandleRecordStart directly, with no route-level lock, so
