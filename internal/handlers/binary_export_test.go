@@ -292,49 +292,7 @@ func TestARefusedRecordStopLeavesNoReservedFile(t *testing.T) {
 	}
 }
 
-// The census the card asks a reviewer to run. Every auto-naming site in internal/handlers
-// must reach an exclusive create; a survivor is either a caller-supplied path or is named
-// here as deliberate, so a new one cannot land silently.
-func TestNoHandlerAutoNamesAFileItThenOverwrites(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// file -> why its timestamp is not an overwrite risk.
-	accounted := map[string]string{
-		"binary_export.go":   "exportTimestamp only builds the base name; createUniqueFile reserves the path",
-		"record_handlers.go": "the recording base name is reserved by fileout.ReserveUnique before it is returned",
-	}
-
-	var scanned int
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		body, err := os.ReadFile(name) // #nosec G304 -- files listed from this package's own directory.
-		if err != nil {
-			t.Fatal(err)
-		}
-		scanned++
-		if !strings.Contains(string(body), "150405") {
-			continue
-		}
-		if accounted[name] == "" {
-			t.Errorf("%s builds a name from a second-resolution timestamp and is not accounted for; route it through fileout (WriteUnique or ReserveUnique) or record why it cannot collide", name)
-		}
-	}
-	if scanned < 2 {
-		t.Fatalf("scanned %d handler files; this census would pass vacuously", scanned)
-	}
-	for name := range accounted {
-		body, err := os.ReadFile(name) // #nosec G304 -- fixed list in this package.
-		if err != nil {
-			t.Fatalf("%s is accounted for but unreadable: %v", name, err)
-		}
-		if !strings.Contains(string(body), "150405") {
-			t.Errorf("%s no longer builds a timestamped name; drop its entry from this census", name)
-		}
-	}
-}
+// The module-wide census for this rule lives in internal/fileout
+// (TestNoPackageAutoNamesAFileItThenOverwrites), beside the owner it defends. The
+// package-scoped version that stood here could not see an auto-naming site in any third
+// package, which is the coverage the consolidation buys.

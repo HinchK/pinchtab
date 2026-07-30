@@ -148,55 +148,10 @@ func TestAnExplicitOutputPathStillOverwrites(t *testing.T) {
 	}
 }
 
-// The census: every auto-naming site in this package must reach the exclusive create.
-// A survivor is either a caller-supplied path or named here as deliberate, so a sixth
-// site cannot land silently the way these five did.
-func TestNoCLIActionAutoNamesAFileItThenOverwrites(t *testing.T) {
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// file -> the call that reserves the name it builds.
-	accounted := map[string]string{
-		"actions_capture.go":    "writeOutputFile with autoNamed",
-		"actions_pdf.go":        "writeOutputFile with autoNamed",
-		"actions_screenshot.go": "writeOutputFile with autoNamed",
-		"actions_record.go":     "fileout.ReservePath before the rename",
-	}
-
-	var scanned, withTimestamp int
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		body, err := os.ReadFile(name) // #nosec G304 -- files listed from this package's own directory.
-		if err != nil {
-			t.Fatal(err)
-		}
-		scanned++
-		if !strings.Contains(string(body), "150405") {
-			continue
-		}
-		withTimestamp++
-		if accounted[name] == "" {
-			t.Errorf("%s builds a name from a second-resolution timestamp and is not accounted for; route it through writeOutputFile or fileout, or record why it cannot collide", name)
-		}
-	}
-
-	if scanned < len(accounted) {
-		t.Fatalf("scanned %d files in this package; this census would pass vacuously", scanned)
-	}
-	if withTimestamp != len(accounted) {
-		t.Errorf("found %d auto-naming files but %d are accounted for; a stale entry hides a site that no longer reserves", withTimestamp, len(accounted))
-	}
-	for name := range accounted {
-		if _, err := os.Stat(name); err != nil {
-			t.Errorf("accounted file %s no longer exists; the census is guarding nothing", name)
-		}
-	}
-}
+// The module-wide census for this rule lives in internal/fileout
+// (TestNoPackageAutoNamesAFileItThenOverwrites): one accounted map for the whole module,
+// so a site in a package neither of the two old directory-scoped censuses read cannot
+// land unseen.
 
 // printedName pulls the output filename out of whatever sentence a site wraps it in —
 // each of the four phrases it differently, and the assertion is about the name.
