@@ -21,13 +21,17 @@ const dragFixtureHTML = `<style>div{width:120px;height:80px;display:inline-block
 <script>
 window.h5 = 'no';
 window.mouse = 'no';
+window.pressedButton = -1;
+window.heldButtons = -1;
 const h5Src = document.getElementById('h5Src'), h5Dst = document.getElementById('h5Dst');
 h5Src.addEventListener('dragstart', e => { window.h5 = 'started'; e.dataTransfer.setData('text/plain', 'payload'); });
 h5Dst.addEventListener('dragover', e => e.preventDefault());
 h5Dst.addEventListener('drop', e => { e.preventDefault(); window.h5 = 'DROPPED'; });
 const mouseSrc = document.getElementById('mouseSrc'), mouseDst = document.getElementById('mouseDst');
 let pressed = false;
-mouseSrc.addEventListener('mousedown', () => { pressed = true; });
+mouseSrc.addEventListener('mousedown', e => { pressed = true; window.pressedButton = e.button; });
+mouseSrc.addEventListener('contextmenu', e => e.preventDefault());
+document.addEventListener('mousemove', e => { if (pressed && window.heldButtons < 0) window.heldButtons = e.buttons; });
 mouseDst.addEventListener('mouseup', () => { if (pressed) window.mouse = 'DROPPED'; });
 </script>`
 
@@ -233,6 +237,83 @@ func TestThePointerPrimitivesStillDispatchOneJumpEach(t *testing.T) {
 	f.handAssembledDrag(t, "#h5Src", "#h5Dst")
 	if html5, _ := f.state(t); html5 != "no" {
 		t.Errorf("hand-assembled pointer steps recorded h5=%q; if they now complete an HTML5 drop, this test records an obsolete limitation and `drag` no longer needs to own the sequence", html5)
+	}
+}
+
+func (f *dragFixture) buttonRecord(t *testing.T) (pressed int, held int) {
+	t.Helper()
+	if err := chromedp.Run(f.ctx,
+		chromedp.Evaluate(`window.pressedButton`, &pressed),
+		chromedp.Evaluate(`window.heldButtons`, &held),
+	); err != nil {
+		t.Fatal(err)
+	}
+	return pressed, held
+}
+
+// dragCmd registers --button with a default, so the flag reaches the body on every drag and
+// "is it set" proves nothing — only the page can say which button was actually held. Both
+// forms have to honour it: the press, and the interpolated moves that carry the held mask.
+func TestDragHoldsTheRequestedButton(t *testing.T) {
+	f := newDragFixture(t)
+
+	for _, tc := range []struct {
+		button      string
+		wantPressed int
+		wantHeld    int
+	}{
+		{button: "", wantPressed: 0, wantHeld: 1},
+		{button: "left", wantPressed: 0, wantHeld: 1},
+		{button: "right", wantPressed: 2, wantHeld: 2},
+		{button: "middle", wantPressed: 1, wantHeld: 4},
+	} {
+		for _, form := range []struct {
+			name string
+			req  func(t *testing.T) ActionRequest
+		}{
+			{
+				name: "target form",
+				req: func(t *testing.T) ActionRequest {
+					return ActionRequest{Kind: ActionDrag, Selector: "#mouseSrc", ToSelector: "#mouseDst", Button: tc.button}
+				},
+			},
+			{
+				name: "offset form",
+				req: func(t *testing.T) ActionRequest {
+					srcX, srcY := f.point(t, "#mouseSrc")
+					dstX, dstY := f.point(t, "#mouseDst")
+					return ActionRequest{Kind: ActionDrag, Selector: "#mouseSrc", DragX: int(dstX - srcX), DragY: int(dstY - srcY), Button: tc.button}
+				},
+			},
+		} {
+			f.reload(t)
+			if _, err := f.b.actionDrag(f.ctx, form.req(t)); err != nil {
+				t.Fatalf("button %q %s: %v", tc.button, form.name, err)
+			}
+
+			pressed, held := f.buttonRecord(t)
+			if pressed != tc.wantPressed {
+				t.Errorf("button %q %s: page saw mousedown button %d, want %d", tc.button, form.name, pressed, tc.wantPressed)
+			}
+			if held != tc.wantHeld {
+				t.Errorf("button %q %s: page saw buttons=%d during the drag, want %d; the moves must carry the same button as the press", tc.button, form.name, held, tc.wantHeld)
+			}
+		}
+	}
+}
+
+// A drag cannot be both a destination and an offset. Picking one silently discards the
+// other, which is a confidently wrong drag reported as success.
+func TestDragRefusesADestinationAndAnOffsetTogether(t *testing.T) {
+	f := newDragFixture(t)
+	f.reload(t)
+
+	_, err := f.b.actionDrag(f.ctx, ActionRequest{Kind: ActionDrag, Selector: "#h5Src", ToSelector: "#h5Dst", DragX: 180})
+	if err == nil {
+		t.Fatal("a drag carrying both a destination and an offset was accepted, so one of them was silently dropped")
+	}
+	if html5, _ := f.state(t); html5 != "no" {
+		t.Errorf("the refused drag still moved the pointer: h5=%q", html5)
 	}
 }
 

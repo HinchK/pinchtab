@@ -607,13 +607,16 @@ func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[strin
 
 func (b *Bridge) actionDrag(ctx context.Context, req ActionRequest) (map[string]any, error) {
 	if req.hasDragDestination() {
+		if req.DragX != 0 || req.DragY != 0 {
+			return nil, fmt.Errorf("drag takes a destination (toSelector/toNodeId/toX+toY) or an offset (dragX/dragY), not both")
+		}
 		return b.dragToDestination(ctx, req)
 	}
 	if req.DragX == 0 && req.DragY == 0 {
 		return nil, fmt.Errorf("dragX or dragY required for drag")
 	}
 	if req.NodeID > 0 {
-		err := DragByNodeID(ctx, req.NodeID, req.DragX, req.DragY)
+		err := DragByNodeID(ctx, req.NodeID, req.DragX, req.DragY, req.Button)
 		if err != nil {
 			return nil, err
 		}
@@ -624,7 +627,7 @@ func (b *Bridge) actionDrag(ctx context.Context, req ActionRequest) (map[string]
 		if err != nil {
 			return nil, err
 		}
-		err = DragByNodeID(ctx, int64(node.BackendNodeID), req.DragX, req.DragY)
+		err = DragByNodeID(ctx, int64(node.BackendNodeID), req.DragX, req.DragY, req.Button)
 		if err != nil {
 			return nil, err
 		}
@@ -633,10 +636,6 @@ func (b *Bridge) actionDrag(ctx context.Context, req ActionRequest) (map[string]
 	return nil, fmt.Errorf("need selector, ref, or nodeId")
 }
 
-// dragToDestination is the target form: source and destination in one action, so the
-// interpolated move sequence Chrome needs to recognise a drag happens between them. The
-// zero-offset refusal above does not apply here — a drop onto an overlapping target is a
-// legitimate request, and it is the destination, not a delta, that says where to go.
 func (b *Bridge) dragToDestination(ctx context.Context, req ActionRequest) (map[string]any, error) {
 	fromX, fromY, err := dragPointFor(ctx, dragEnd{nodeID: req.NodeID, selector: req.Selector, x: req.X, y: req.Y, hasPoint: req.HasXY})
 	if err != nil {
@@ -646,7 +645,7 @@ func (b *Bridge) dragToDestination(ctx context.Context, req ActionRequest) (map[
 	if err != nil {
 		return nil, fmt.Errorf("drag destination: %w", err)
 	}
-	if err := DragBetweenPoints(ctx, fromX, fromY, toX, toY); err != nil {
+	if err := DragBetweenPoints(ctx, fromX, fromY, toX, toY, req.Button); err != nil {
 		return nil, err
 	}
 	return map[string]any{
@@ -658,8 +657,6 @@ func (b *Bridge) dragToDestination(ctx context.Context, req ActionRequest) (map[
 	}, nil
 }
 
-// dragEnd is one end of a target drag. Both ends accept the same three vocabularies, so
-// they resolve through one function rather than two bodies that can drift apart.
 type dragEnd struct {
 	nodeID   int64
 	selector string

@@ -102,12 +102,12 @@ func JSDoubleClickByBackendNode(ctx context.Context, nodeID int64) error {
 	return bridgecdpops.JSDoubleClickByBackendNode(ctx, nodeID)
 }
 
-func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int) error {
-	return bridgecdpops.DragByNodeID(ctx, nodeID, dx, dy)
+func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int, button string) error {
+	return bridgecdpops.DragByNodeID(ctx, nodeID, dx, dy, button)
 }
 
-func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64) error {
-	return bridgecdpops.DragBetweenPoints(ctx, x, y, endX, endY)
+func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64, button string) error {
+	return bridgecdpops.DragBetweenPoints(ctx, x, y, endX, endY, button)
 }
 
 func HoverByCoordinate(ctx context.Context, x, y float64) error {

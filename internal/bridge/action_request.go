@@ -87,13 +87,9 @@ type ActionRequest struct {
 	DragX  int `json:"dragX"`
 	DragY  int `json:"dragY"`
 
-	// ToSelector is a drag's DESTINATION, in the same unified selector vocabulary as
-	// Selector (ref, CSS, text:), resolved to ToNodeID by the handler. It is what makes
-	// "drag this onto that" one action: assembling it from four pointer requests moved the
-	// pointer in a single jump, which Chrome never reads as the start of a drag, so an
-	// HTML5 draggable saw nothing while every request answered OK. ToX/ToY are the same
-	// destination given as a point, and HasToXY separates an absent destination from the
-	// legitimate one at (0,0).
+	// A drag's destination. ToSelector takes the same unified selector vocabulary as
+	// Selector and the handler resolves it to ToNodeID; HasToXY separates an absent
+	// destination from the legitimate one at (0,0).
 	ToSelector string  `json:"toSelector,omitempty"`
 	ToNodeID   int64   `json:"toNodeId,omitempty"`
 	ToX        float64 `json:"toX,omitempty"`

@@ -358,9 +358,6 @@ func actionBodyForTarget(kind string, target dragTarget) map[string]any {
 }
 
 func Drag(client *http.Client, base, token string, args []string, cmd *cobra.Command) {
-	// Two modes, both ONE "drag" action: the offset form (dragX/dragY) and the target form
-	// (toSelector/toX/toY). The target form used to be four separate pointer requests, which
-	// moved the pointer in a single jump — never a drag as far as Chrome is concerned.
 	hasDragX := cmd.Flags().Changed("drag-x")
 	hasDragY := cmd.Flags().Changed("drag-y")
 

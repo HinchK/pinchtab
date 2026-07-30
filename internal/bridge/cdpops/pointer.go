@@ -356,21 +356,30 @@ func DoubleClickByNodeID(ctx context.Context, nodeID int64) error {
 	return chromedp.Run(ctx, actions...)
 }
 
-func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int) error {
+func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int, button string) error {
 	x, y, err := PointerPointForNode(ctx, nodeID, true)
 	if err != nil {
 		return err
 	}
-	return DragBetweenPoints(ctx, x, y, x+float64(dx), y+float64(dy))
+	return DragBetweenPoints(ctx, x, y, x+float64(dx), y+float64(dy), button)
 }
 
-// DragBetweenPoints is the one drag implementation, and the interpolation is the whole of
-// it: Chrome starts an HTML5 drag only after sustained movement follows the press, so a
-// single jump from source to destination never fires dragstart. That is why the CLI's
-// four-request from->to sequence — move, down, ONE move, up — silently did nothing on a
-// draggable element while reporting success, and why the destination has to be resolved
-// into one action rather than assembled from the pointer primitives.
-func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64) error {
+// heldButton maps a button name to the pair Input.dispatchMouseEvent needs while that
+// button is down: the enum for "button" and the bitmask for "buttons".
+func heldButton(button string) (input.MouseButton, int64) {
+	switch normalizeMouseButton(button) {
+	case "right":
+		return input.Right, 2
+	case "middle":
+		return input.Middle, 4
+	default:
+		return input.Left, 1
+	}
+}
+
+// Chrome starts an HTML5 drag only after sustained movement follows the press, so the
+// interpolation is load-bearing: a single jump from source to destination fires no dragstart.
+func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64, button string) error {
 	dx := endX - x
 	dy := endY - y
 	dist := math.Sqrt(dx*dx + dy*dy)
@@ -381,13 +390,15 @@ func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64) error {
 	if steps > 20 {
 		steps = 20
 	}
+	held, heldMask := heldButton(button)
+	name := normalizeMouseButton(button)
 
 	if err := dispatchMouseMove(ctx, x, y, input.None, 0); err != nil {
 		return err
 	}
 	if err := dispatchMouseEvent(ctx, map[string]any{
 		"type":       "mousePressed",
-		"button":     "left",
+		"button":     name,
 		"clickCount": 1,
 		"x":          x, "y": y,
 	}); err != nil {
@@ -395,13 +406,13 @@ func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64) error {
 	}
 	for i := 1; i <= steps; i++ {
 		t := float64(i) / float64(steps)
-		if err := dispatchMouseMove(ctx, x+t*dx, y+t*dy, input.Left, 1); err != nil {
+		if err := dispatchMouseMove(ctx, x+t*dx, y+t*dy, held, heldMask); err != nil {
 			return err
 		}
 	}
 	return dispatchMouseEvent(ctx, map[string]any{
 		"type":       "mouseReleased",
-		"button":     "left",
+		"button":     name,
 		"clickCount": 1,
 		"x":          endX, "y": endY,
 	})
