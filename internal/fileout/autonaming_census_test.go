@@ -28,6 +28,13 @@ import (
 // are illegal in Windows filenames and vanishingly rare in output names, and the named
 // constants are overwhelmingly used to format timestamps for display, where they would
 // produce noise on every log line. A filename built from either is an unguarded site.
+//
+// Coarser-than-second stamps are unscanned too, and this is the limit a reader is most
+// likely to guess wrong: a date-only name (Format("20060102")) collides between any two
+// outputs on the same DAY, so it is worse than the shapes above rather than safer. It is
+// left out because 20060102 opens every layout listed here and appears throughout code
+// that names no file, so scanning it would cry wolf everywhere. Nothing in the module
+// builds one today; the next one is unguarded.
 var timestampLayouts = []string{"150405", "15-04-05", "15_04_05", "15.04.05"}
 
 // autoNamingSites maps a MODULE-RELATIVE path to why its timestamp cannot destroy an
