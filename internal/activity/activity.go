@@ -254,15 +254,15 @@ func (tr *TailReader) nextSourceFilePath(cursorPath, todayPath, source string) s
 
 type noopRecorder struct{}
 
-func NewRecorder(cfg Config, stateDir string) (Recorder, error) {
+func NewRecorder(cfg Config, logDir string) (Recorder, error) {
 	if !cfg.Enabled {
 		return noopRecorder{}, nil
 	}
-	return NewStoreWithEvents(stateDir, cfg.RetentionDays, cfg.Events)
+	return NewStoreWithEvents(logDir, cfg.RetentionDays, cfg.Events)
 }
 
-func NewStore(stateDir string, retentionDays int) (*Store, error) {
-	return NewStoreWithEvents(stateDir, retentionDays, EventSourceConfig{
+func NewStore(logDir string, retentionDays int) (*Store, error) {
+	return NewStoreWithEvents(logDir, retentionDays, EventSourceConfig{
 		Dashboard:    true,
 		Server:       true,
 		Bridge:       true,
@@ -273,9 +273,11 @@ func NewStore(stateDir string, retentionDays int) (*Store, error) {
 	})
 }
 
-func NewStoreWithEvents(stateDir string, retentionDays int, events EventSourceConfig) (*Store, error) {
-	activityDir := filepath.Join(stateDir, "activity")
-	if err := os.MkdirAll(activityDir, 0750); err != nil {
+// NewStoreWithEvents takes the directory it writes into. The state-directory layout
+// belongs to internal/config, which derives this path once, so appending a name here
+// as well would put the same rule in two places.
+func NewStoreWithEvents(logDir string, retentionDays int, events EventSourceConfig) (*Store, error) {
+	if err := os.MkdirAll(logDir, 0750); err != nil {
 		return nil, fmt.Errorf("create activity dir: %w", err)
 	}
 	if retentionDays <= 0 {
@@ -283,7 +285,7 @@ func NewStoreWithEvents(stateDir string, retentionDays int, events EventSourceCo
 	}
 
 	store := &Store{
-		dir:           activityDir,
+		dir:           logDir,
 		retentionDays: retentionDays,
 		events:        events,
 		lastPruneTime: time.Now().UTC(),

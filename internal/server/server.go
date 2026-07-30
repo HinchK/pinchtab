@@ -138,7 +138,7 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 			MCP:          cfg.Observability.Activity.Events.MCP,
 			Other:        cfg.Observability.Activity.Events.Other,
 		},
-	}, cfg.ActivityStateDir())
+	}, cfg.ActivityLogDir())
 	if err != nil {
 		fatalStartup("activity store", err)
 	}
@@ -269,29 +269,7 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 
 	var sched *scheduler.Scheduler
 	if cfg.Scheduler.Enabled {
-		schedCfg := scheduler.DefaultConfig()
-		schedCfg.Enabled = true
-		if cfg.Scheduler.Strategy != "" {
-			schedCfg.Strategy = cfg.Scheduler.Strategy
-		}
-		if cfg.Scheduler.MaxQueueSize > 0 {
-			schedCfg.MaxQueueSize = cfg.Scheduler.MaxQueueSize
-		}
-		if cfg.Scheduler.MaxPerAgent > 0 {
-			schedCfg.MaxPerAgent = cfg.Scheduler.MaxPerAgent
-		}
-		if cfg.Scheduler.MaxInflight > 0 {
-			schedCfg.MaxInflight = cfg.Scheduler.MaxInflight
-		}
-		if cfg.Scheduler.MaxPerAgentFlight > 0 {
-			schedCfg.MaxPerAgentFlight = cfg.Scheduler.MaxPerAgentFlight
-		}
-		if cfg.Scheduler.ResultTTLSec > 0 {
-			schedCfg.ResultTTL = time.Duration(cfg.Scheduler.ResultTTLSec) * time.Second
-		}
-		if cfg.Scheduler.WorkerCount > 0 {
-			schedCfg.WorkerCount = cfg.Scheduler.WorkerCount
-		}
+		schedCfg := scheduler.ConfigFromRuntime(cfg.Scheduler)
 
 		resolver := &scheduler.ManagerResolver{Mgr: orch.InstanceManager()}
 		sched = scheduler.New(schedCfg, resolver)

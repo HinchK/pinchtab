@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pinchtab/pinchtab/internal/safelog"
 )
@@ -569,10 +570,19 @@ func EffectiveConfigValue(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(value) != "" {
+	if strings.TrimSpace(value) != "" && !runtimeSettlesTheValue(path) {
 		return value, nil
 	}
 	return resolvedConfigValue(path)
+}
+
+// runtimeSettlesTheValue marks the paths whose file entry is an input rather than the
+// answer, so reading the file would report something nothing acts on:
+//
+//	scheduler.*                      a configured zero means "use the default" here
+//	observability.activity.stateDir  applyFileConfig never copies it; the path derives
+func runtimeSettlesTheValue(path string) bool {
+	return strings.HasPrefix(path, "scheduler.") || path == "observability.activity.stateDir"
 }
 
 func resolvedConfigValue(path string) (string, error) {
@@ -581,8 +591,43 @@ func resolvedConfigValue(path string) (string, error) {
 		return "", fmt.Errorf("load config: %w", err)
 	}
 	resolved := FileConfigFromRuntime(cfg)
+	addSettledDefaults(&resolved, cfg)
+	return GetConfigValue(&resolved, path)
+}
+
+// addSettledDefaults fills the sections FileConfigFromRuntime leaves out on purpose:
+// it serialises configs for writing, where emitting every default would add noise to
+// a file the operator did not ask for. The reader needs the opposite, so it takes the
+// values back off the RuntimeConfig that has already settled them — never from a
+// literal spelled here, which would be a second copy free to drift.
+func addSettledDefaults(resolved *FileConfig, cfg *RuntimeConfig) {
 	if strings.TrimSpace(resolved.Server.LogLevel) == "" {
 		resolved.Server.LogLevel = safelog.LevelName(safelog.DefaultLevel)
 	}
-	return GetConfigValue(&resolved, path)
+	resolved.Scheduler = SchedulerFileConfig{
+		Enabled:           boolPtrValue(cfg.Scheduler.Enabled),
+		Strategy:          cfg.Scheduler.Strategy,
+		MaxQueueSize:      intPtrIfPositive(cfg.Scheduler.MaxQueueSize),
+		MaxPerAgent:       intPtrIfPositive(cfg.Scheduler.MaxPerAgent),
+		MaxInflight:       intPtrIfPositive(cfg.Scheduler.MaxInflight),
+		MaxPerAgentFlight: intPtrIfPositive(cfg.Scheduler.MaxPerAgentFlight),
+		ResultTTLSec:      intPtrIfPositive(cfg.Scheduler.ResultTTLSec),
+		WorkerCount:       intPtrIfPositive(cfg.Scheduler.WorkerCount),
+	}
+	if resolved.InstanceDefaults.TabPolicy == nil {
+		resolved.InstanceDefaults.TabPolicy = &TabPolicyDefaults{}
+	}
+	tabPolicy := resolved.InstanceDefaults.TabPolicy
+	if tabPolicy.Eviction == "" {
+		tabPolicy.Eviction = cfg.TabEvictionPolicy
+	}
+	if tabPolicy.Lifecycle == "" {
+		tabPolicy.Lifecycle = cfg.TabLifecyclePolicy
+	}
+	if tabPolicy.CloseDelaySec == nil {
+		tabPolicy.CloseDelaySec = intPtrIfPositive(int(cfg.TabCloseDelay / time.Second))
+	}
+	if strings.TrimSpace(resolved.Observability.Activity.StateDir) == "" {
+		resolved.Observability.Activity.StateDir = cfg.ActivityLogDir()
+	}
 }

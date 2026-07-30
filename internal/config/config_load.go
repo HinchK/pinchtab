@@ -303,6 +303,7 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 	// server.stateDir could never relocate profiles. A defer is the one shape that
 	// cannot miss one of this function's several early returns.
 	defer finalizeProfileConfig(cfg)
+	defer finalizeSchedulerConfig(cfg)
 
 	var diags []LoadDiagnostic
 	res := readAndParseConfigFile()

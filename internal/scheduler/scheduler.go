@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/pinchtab/pinchtab/internal/config"
 )
 
 // InstanceResolver finds the localhost port for a given tab ID.
@@ -28,18 +30,59 @@ type Config struct {
 	WatcherInterval   time.Duration `json:"watcherInterval"`
 }
 
-// DefaultConfig returns safe defaults.
+// DefaultConfig returns safe defaults. The knobs an operator can set live in
+// internal/config, which owns their defaults and reports them through `config get`;
+// only the two this package does not expose as config keys are written here.
 func DefaultConfig() Config {
+	out := ConfigFromRuntime(config.DefaultSchedulerConfig())
+	out.MaxBatchSize = 50
+	out.WatcherInterval = 30 * time.Second
+	return out
+}
+
+// ConfigFromRuntime maps the operator-facing scheduler settings onto this package's
+// Config. It is the one place that conversion happens, so the seconds-to-duration
+// step cannot drift between callers.
+func ConfigFromRuntime(s config.SchedulerConfig) Config {
 	return Config{
-		Strategy:          "fair-fifo",
-		MaxQueueSize:      1000,
-		MaxPerAgent:       100,
-		MaxInflight:       20,
-		MaxPerAgentFlight: 10,
-		ResultTTL:         5 * time.Minute,
-		WorkerCount:       4,
-		MaxBatchSize:      50,
-		WatcherInterval:   30 * time.Second,
+		Enabled:           s.Enabled,
+		Strategy:          s.Strategy,
+		MaxQueueSize:      s.MaxQueueSize,
+		MaxPerAgent:       s.MaxPerAgent,
+		MaxInflight:       s.MaxInflight,
+		MaxPerAgentFlight: s.MaxPerAgentFlight,
+		ResultTTL:         time.Duration(s.ResultTTLSec) * time.Second,
+		WorkerCount:       s.WorkerCount,
+	}
+}
+
+// withDefaults fills every knob left at or below zero. A configured zero has always
+// meant "use the default" here, never unlimited.
+func withDefaults(cfg *Config) {
+	defaults := DefaultConfig()
+	if cfg.Strategy == "" {
+		cfg.Strategy = defaults.Strategy
+	}
+	for _, knob := range []struct {
+		value    *int
+		fallback int
+	}{
+		{&cfg.MaxQueueSize, defaults.MaxQueueSize},
+		{&cfg.MaxPerAgent, defaults.MaxPerAgent},
+		{&cfg.MaxInflight, defaults.MaxInflight},
+		{&cfg.MaxPerAgentFlight, defaults.MaxPerAgentFlight},
+		{&cfg.WorkerCount, defaults.WorkerCount},
+		{&cfg.MaxBatchSize, defaults.MaxBatchSize},
+	} {
+		if *knob.value <= 0 {
+			*knob.value = knob.fallback
+		}
+	}
+	if cfg.ResultTTL <= 0 {
+		cfg.ResultTTL = defaults.ResultTTL
+	}
+	if cfg.WatcherInterval <= 0 {
+		cfg.WatcherInterval = defaults.WatcherInterval
 	}
 }
 
@@ -70,30 +113,7 @@ type Scheduler struct {
 
 // New creates a scheduler with the given config and instance resolver.
 func New(cfg Config, resolver InstanceResolver) *Scheduler {
-	if cfg.MaxQueueSize <= 0 {
-		cfg.MaxQueueSize = 1000
-	}
-	if cfg.MaxPerAgent <= 0 {
-		cfg.MaxPerAgent = 100
-	}
-	if cfg.MaxInflight <= 0 {
-		cfg.MaxInflight = 20
-	}
-	if cfg.MaxPerAgentFlight <= 0 {
-		cfg.MaxPerAgentFlight = 10
-	}
-	if cfg.ResultTTL <= 0 {
-		cfg.ResultTTL = 5 * time.Minute
-	}
-	if cfg.WorkerCount <= 0 {
-		cfg.WorkerCount = 4
-	}
-	if cfg.MaxBatchSize <= 0 {
-		cfg.MaxBatchSize = 50
-	}
-	if cfg.WatcherInterval <= 0 {
-		cfg.WatcherInterval = 30 * time.Second
-	}
+	withDefaults(&cfg)
 
 	return &Scheduler{
 		cfg:      cfg,

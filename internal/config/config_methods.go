@@ -1,5 +1,7 @@
 package config
 
+import "path/filepath"
+
 // EnabledSensitiveEndpoints returns the names of sensitive endpoint families
 // that are currently enabled in the runtime configuration.
 func (cfg *RuntimeConfig) EnabledSensitiveEndpoints() []string {
@@ -40,3 +42,17 @@ func (cfg *RuntimeConfig) ActivityStateDir() string {
 	}
 	return cfg.StateDir
 }
+
+// ActivityLogDir is where the activity store keeps its files. This package owns the
+// state-directory layout — the same rule as profiles.baseDir — so the store is handed
+// the directory rather than appending its own name to a parent, and `config get` can
+// report it without a second join.
+func (cfg *RuntimeConfig) ActivityLogDir() string {
+	root := cfg.ActivityStateDir()
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, activityLogSubdir)
+}
+
+const activityLogSubdir = "activity"

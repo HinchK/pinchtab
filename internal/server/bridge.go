@@ -46,7 +46,7 @@ func RunBridgeServer(cfg *config.RuntimeConfig, version string) {
 			MCP:          cfg.Observability.Activity.Events.MCP,
 			Other:        cfg.Observability.Activity.Events.Other,
 		},
-	}, cfg.ActivityStateDir())
+	}, cfg.ActivityLogDir())
 	if err != nil {
 		fatalStartup("activity store", err)
 	}

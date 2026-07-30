@@ -96,6 +96,7 @@ var blankIsTheAnswer = map[string]string{
 	"browser.proxy.geo.locale":                "no proxy geo override",
 	"browser.proxy.geo.webrtcIP":              "no proxy geo override",
 	"browser.proxy.geo.countryISO":            "no proxy geo override",
+	"browser.fallbackOrder":                   "no fallback configured; an implicit launch then tries the primary target only",
 	"instanceDefaults.timezone":               "unset means the host timezone",
 	"instanceDefaults.userAgent":              "unset means the browser's own user agent",
 	"security.downloadAllowedDomains":         "empty list, downloads follow the main allowlist",
@@ -121,20 +122,7 @@ var blankIsTheAnswer = map[string]string{
 // out a second time in this package. A key must move out of this table, not gain a
 // hardcoded value in the print path.
 var defaultLivesAtItsConsumer = map[string]string{
-	"server.cookieSecure":                      "the cookie layer decides from the request scheme",
-	"browser.fallbackOrder":                    "the browser registry orders fallbacks",
-	"instanceDefaults.tabPolicy.eviction":      "the tab policy layer",
-	"instanceDefaults.tabPolicy.lifecycle":     "the tab policy layer",
-	"instanceDefaults.tabPolicy.closeDelaySec": "the tab policy layer",
-	"observability.activity.stateDir":          "the activity recorder derives it when unset",
-	"scheduler.enabled":                        "scheduler.New applies its own defaults",
-	"scheduler.strategy":                       "scheduler.New applies its own defaults",
-	"scheduler.maxQueueSize":                   "scheduler.New applies its own defaults",
-	"scheduler.maxPerAgent":                    "scheduler.New applies its own defaults",
-	"scheduler.maxInflight":                    "scheduler.New applies its own defaults",
-	"scheduler.maxPerAgentInflight":            "scheduler.New applies its own defaults",
-	"scheduler.resultTTLSec":                   "scheduler.New applies its own defaults",
-	"scheduler.workerCount":                    "scheduler.New applies its own defaults",
+	"server.cookieSecure": "there is no single value: the cookie layer decides per request from that request's scheme, so any printed answer would be wrong for half the requests",
 }
 
 // TestEveryAddressableConfigKeyAnswersOrIsAccountedFor is the standing census behind
