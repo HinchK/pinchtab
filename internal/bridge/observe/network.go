@@ -2,12 +2,14 @@ package observe
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
@@ -138,12 +140,7 @@ func (nm *NetworkMonitor) StartCaptureWithSize(tabCtx context.Context, tabID str
 					}
 				}
 			}
-			var postData string
-			if e.Request.HasPostData && len(e.Request.PostDataEntries) > 0 {
-				for _, entry := range e.Request.PostDataEntries {
-					postData += entry.Bytes
-				}
-			}
+			postData := decodePostData(e.Request.PostDataEntries)
 			entry := NetworkEntry{
 				RequestID:      string(e.RequestID),
 				URL:            e.Request.URL,
@@ -434,6 +431,34 @@ func GetResponseBody(ctx context.Context, requestID string) (string, bool, error
 	return body, base64Encoded, err
 }
 
+// decodePostData joins a request's body entries into the bytes the page sent. CDP declares
+// PostDataEntry.Bytes as a protocol binary field, so each entry arrives base64-encoded, and
+// joining the entries as strings is wrong twice over: the published value is an encoded blob
+// in a field named after the request body, and base64(a)+base64(b) is not base64(a+b) once an
+// entry's length is not a multiple of three, so any multi-entry body arrives corrupt.
+//
+// Anything that cannot be published as the text it claims to be publishes nothing: an entry
+// that is not base64, or a body that is not valid UTF-8 once decoded, such as a file part in
+// a multipart POST. The alternative is mojibake or a blob in a field with no encoding signal.
+// The reason for the absence has nowhere to ride yet — the signal is PIN-114's.
+func decodePostData(entries []*network.PostDataEntry) string {
+	var decoded []byte
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		chunk, err := base64.StdEncoding.DecodeString(entry.Bytes)
+		if err != nil {
+			return ""
+		}
+		decoded = append(decoded, chunk...)
+	}
+	if !utf8.Valid(decoded) {
+		return ""
+	}
+	return string(decoded)
+}
+
 func normalizeNetworkEntry(entry NetworkEntry) NetworkEntry {
 	entry.URL = sanitize.TruncateUTF8Bytes(entry.URL, maxNetworkURLBytes)
 	entry.Method = sanitize.TruncateUTF8Bytes(entry.Method, maxNetworkMethodBytes)
@@ -441,8 +466,8 @@ func normalizeNetworkEntry(entry NetworkEntry) NetworkEntry {
 	entry.StatusText = sanitize.TruncateUTF8Bytes(entry.StatusText, maxNetworkStatusTextBytes)
 	entry.MimeType = sanitize.TruncateUTF8Bytes(entry.MimeType, maxNetworkMimeTypeBytes)
 	entry.Error = sanitize.TruncateUTF8Bytes(entry.Error, maxNetworkErrorBytes)
-	// PostData is the request body: machine-read like the response body, so it is
-	// cut to a byte-exact prefix rather than display-truncated with an ellipsis.
+	// The budget measures the decoded body, which is what PostData now holds, so the
+	// constant describes the request content rather than its encoded length.
 	entry.PostData = sanitize.PrefixUTF8Bytes(entry.PostData, maxNetworkPostDataBytes)
 	entry.RequestHeaders = normalizeNetworkHeaders(entry.RequestHeaders)
 	entry.ResponseHeaders = normalizeNetworkHeaders(entry.ResponseHeaders)

@@ -599,6 +599,13 @@ Response body behavior for network detail/export:
 - retained bodies are capped by `server.retainNetworkBodyMaxBytes`; oversized retained bodies are truncated and marked with `bodyTruncated=true`
 - retained responses may include `bodyRetained=true`
 
+Request body (`postData`) behavior:
+
+- `postData` holds the request body as the page sent it, decoded. Chrome delivers it base64-encoded and split into chunks; PinchTab decodes and joins it, so no base64 decoding is needed by the caller
+- it is capped at 64 KiB of decoded body, cut on a character boundary
+- it is omitted when the body is not text — a binary part in a multipart upload, for example — because the field carries no encoding marker
+- HAR export puts the same decoded value in `request.postData.text`, and omits the block entirely when there is no publishable body
+
 Network export query parameters:
 
 - `format` — `har` (default) or `ndjson`. Pluggable: new formats register at startup.
