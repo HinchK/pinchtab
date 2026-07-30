@@ -29,9 +29,12 @@ func detect(t *testing.T, title, url string) *autosolver.Intent {
 	return intent
 }
 
-// Mixed case on purpose: DetectIntent lowercases the title and
-// DetectChallengeIntent lowercases again, so these rows fail if either
-// lowercasing is moved or dropped.
+// Mixed case on purpose, but these rows survive dropping either lowercasing on its
+// own — DetectIntent folds the title and DetectChallengeIntent folds again — so what
+// they pin is that the pair still folds between them. The adapter's own ToLower is
+// pinned by the local-rule and golden rows below, which reach the tables the canonical
+// detector does not refold for; DetectChallengeIntent's is pinned on the autosolver
+// side, the only entry point that hands it a raw title.
 var cloudflareTriggerTitles = []string{
 	"Just a moment...",
 	"Attention Required! | Cloudflare",
@@ -134,8 +137,12 @@ func TestCaptchaRules_MatchTheURLToo(t *testing.T) {
 	}
 }
 
-// detectIntentGolden is the classification an agent observes, captured before
-// the ladders became data-driven.
+// detectIntentGolden is the classification an agent observes, captured before the
+// ladders became data-driven. The trailing rows each match two rules, which is what
+// pins the order inside flowRules — every single-match title leaves the order free.
+// The last one matches only onboarding here and signup on the autosolver side: "join"
+// is a heuristics-only pattern, so it pins that the two tables differ in CONTENT while
+// sharing MatchIntentRules' semantics.
 var detectIntentGolden = []struct {
 	title         string
 	url           string
@@ -190,6 +197,12 @@ var detectIntentGolden = []struct {
 	{"Blocked", "", autosolver.IntentNormal, "", 0.6, "no challenge indicators detected"},
 	{"Unauthorized", "", autosolver.IntentNormal, "", 0.6, "no challenge indicators detected"},
 	{"Home page", "", autosolver.IntentNormal, "", 0.6, "no challenge indicators detected"},
+
+	{"Sign up or log in", "", autosolver.IntentLogin, "", 0.7, "login page detected via semantic title analysis"},
+	{"Register or sign in", "", autosolver.IntentLogin, "", 0.7, "login page detected via semantic title analysis"},
+	{"Welcome, register now", "", autosolver.IntentSignup, "", 0.7, "signup page detected via semantic title analysis"},
+	{"Checkout, continue", "", autosolver.IntentNavigation, "", 0.6, "navigation flow detected via semantic title analysis"},
+	{"Welcome, join our community", "", autosolver.IntentOnboarding, "", 0.65, "onboarding flow detected via semantic title analysis"},
 }
 
 func TestDetectIntent_Golden(t *testing.T) {

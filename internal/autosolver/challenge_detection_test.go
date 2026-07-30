@@ -144,7 +144,10 @@ func TestTitleIntentRules_EveryPatternIsReachable(t *testing.T) {
 }
 
 // detectIntentByTitleGolden is the classification an agent observes, captured
-// before the ladders became data-driven.
+// before the ladders became data-driven. The trailing rows each match TWO rules,
+// which is what pins the order inside titleIntentRules — every single-match title
+// leaves the order free, and rule order is what a ladder-to-table rewrite most
+// easily breaks.
 var detectIntentByTitleGolden = []struct {
 	title         string
 	intentType    IntentType
@@ -193,6 +196,12 @@ var detectIntentByTitleGolden = []struct {
 	{"Security challenge", IntentNormal, "", 0.5, "no challenge indicators found in title"},
 	{"Verify your identity", IntentNormal, "", 0.5, "no challenge indicators found in title"},
 	{"Home page", IntentNormal, "", 0.5, "no challenge indicators found in title"},
+
+	{"Sign up or log in", IntentLogin, "", 0.6, "login page detected via title"},
+	{"Register or sign in", IntentLogin, "", 0.6, "login page detected via title"},
+	{"Welcome, join our community", IntentSignup, "", 0.6, "signup page detected via title"},
+	{"Welcome, register now", IntentSignup, "", 0.6, "signup page detected via title"},
+	{"Checkout, continue", IntentNavigation, "", 0.6, "navigation flow detected via title"},
 }
 
 func TestDetectIntentByTitle_Golden(t *testing.T) {
