@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -171,10 +173,49 @@ func (h *Handlers) runResolvedActionStep(
 	return actionResult{Index: index, Success: true, Result: res}, nextCtx, nextTabID
 }
 
+// queryUndecodedActionFields maps each bridge.ActionRequest JSON key the GET form does not
+// decode to why. It is the OWNER of that fact: the GET branch refuses a request carrying one
+// of these, and the query/body parity guard excuses exactly these from comparison. A shift
+// click sent as ?modifiers=8 used to answer 200 for a plain click, so an undecoded field
+// recorded here but not enforced is a wrong action reported as success.
+var queryUndecodedActionFields = map[string]string{
+	"hasText":   "derived: the flag comes from the presence of text/value, so it is not a parameter of its own",
+	"hasToXY":   "derived: the flag comes from the presence of toX/toY",
+	"mode":      "the GET form cannot express it; a caller needing it must POST",
+	"frameW":    "the GET form cannot express it; a caller needing it must POST",
+	"frameH":    "the GET form cannot express it; a caller needing it must POST",
+	"modifiers": "the GET form cannot express it; a caller needing a key chord must POST",
+	"dragX":     "the GET form cannot express it; a caller needing a drag must POST",
+	"dragY":     "the GET form cannot express it; a caller needing a drag must POST",
+	"toNodeId":  "the GET form cannot express it; a caller needing a drag destination by node must POST",
+	"waitNav":   "the GET form cannot express it; a caller needing to wait for navigation must POST",
+	"fast":      "the GET form cannot express it; a caller needing it must POST",
+	"humanize":  "the GET form cannot express it; a caller needing humanized input must POST",
+}
+
+// unsupportedQueryFields names every recorded field the query supplies, sorted, so the
+// refusal is the same message on every run rather than whichever key the map yielded first.
+// Presence follows the decoder's own rule — a non-empty value — so ?humanize= is absent
+// rather than an unsupported request.
+func unsupportedQueryFields(q url.Values) []string {
+	var offenders []string
+	for key := range queryUndecodedActionFields {
+		if strings.TrimSpace(q.Get(key)) != "" {
+			offenders = append(offenders, key)
+		}
+	}
+	sort.Strings(offenders)
+	return offenders
+}
+
 func decodeActionRequest(w http.ResponseWriter, r *http.Request) (bridge.ActionRequest, bool) {
 	var req bridge.ActionRequest
 	if r.Method == http.MethodGet {
 		q := r.URL.Query()
+		if offenders := unsupportedQueryFields(q); len(offenders) > 0 {
+			httpx.Error(w, 400, fmt.Errorf("%s cannot be sent as query parameters and would be silently dropped; send this as POST /action with a JSON body", strings.Join(offenders, ", ")))
+			return bridge.ActionRequest{}, false
+		}
 		d := newQueryDecoder(q)
 		req.Kind = bridge.CanonicalActionKind(q.Get("kind"))
 		req.TabID = q.Get("tabId")

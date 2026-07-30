@@ -780,23 +780,9 @@ func TestActionQueryDecodesScrollDeltasAndTheirPresence(t *testing.T) {
 // simply missing from a hand-written decoder, and nothing could see the omission. A field wired
 // into one branch only now reds by name.
 //
-// queryUndecodedActionFields RECORDS what the GET form cannot express; it is not an
-// endorsement. A caller needing one of these must POST.
-var queryUndecodedActionFields = map[string]string{
-	"hasText":   "derived: the flag comes from the presence of text/value, so it is not a parameter of its own",
-	"hasToXY":   "derived: the flag comes from the presence of toX/toY",
-	"mode":      "the GET form cannot express it; a caller needing it must POST",
-	"frameW":    "the GET form cannot express it; a caller needing it must POST",
-	"frameH":    "the GET form cannot express it; a caller needing it must POST",
-	"modifiers": "the GET form cannot express it; a caller needing a key chord must POST",
-	"dragX":     "the GET form cannot express it; a caller needing a drag must POST",
-	"dragY":     "the GET form cannot express it; a caller needing a drag must POST",
-	"toNodeId":  "the GET form cannot express it; a caller needing a drag destination by node must POST",
-	"waitNav":   "the GET form cannot express it; a caller needing to wait for navigation must POST",
-	"fast":      "the GET form cannot express it; a caller needing it must POST",
-	"humanize":  "the GET form cannot express it; a caller needing humanized input must POST",
-}
-
+// The excusal list is production's queryUndecodedActionFields, not a copy: the same record
+// that excuses a field here is what makes the GET form refuse it, so the two cannot drift.
+// Delete an entry and this guard demands the field decode identically on both forms.
 func TestActionQueryAndBodyDecodeToTheSameRequest(t *testing.T) {
 	fields := reflect.VisibleFields(reflect.TypeOf(bridge.ActionRequest{}))
 	if len(fields) == 0 {
@@ -843,6 +829,111 @@ func TestActionQueryAndBodyDecodeToTheSameRequest(t *testing.T) {
 		if !declaresActionJSONKey(key) {
 			t.Errorf("%q is recorded as undecodable but ActionRequest no longer declares it — the record is stale", key)
 		}
+	}
+}
+
+// The measured instance: a shift-click over the query form answered 200 and clicked plain,
+// because the GET branch reads no modifiers key and dropped it without a word.
+func TestActionQueryRefusesAShiftClickItCannotExpress(t *testing.T) {
+	rec := httptest.NewRecorder()
+	_, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, "/action?kind=click&x=120&y=50&hasXY=true&modifiers=8", nil))
+
+	if ok {
+		t.Fatal("the query form accepted modifiers=8; it decodes no modifiers, so this is a plain click reported as the shift click the caller asked for")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "modifiers") {
+		t.Errorf("the refusal does not name the field the caller must fix: %s", body)
+	}
+	if !strings.Contains(body, "POST /action") {
+		t.Errorf("the refusal does not say where the field does work: %s", body)
+	}
+}
+
+// Every recorded field, not just the measured one — the table IS the production record, so a
+// field added there refuses with no second edit here.
+func TestActionQueryRefusesEveryFieldItCannotDecode(t *testing.T) {
+	if len(queryUndecodedActionFields) == 0 {
+		t.Fatal("no field is recorded as undecodable; this guard would pass vacuously")
+	}
+	for key := range queryUndecodedActionFields {
+		t.Run(key, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			_, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, "/action?kind=click&"+key+"=1", nil))
+
+			if ok {
+				t.Fatalf("the query form accepted %q, which it does not decode — the caller's parameter is dropped and the wrong action is reported as success", key)
+			}
+			if !strings.Contains(rec.Body.String(), key) {
+				t.Errorf("the refusal does not name %q: %s", key, rec.Body.String())
+			}
+		})
+	}
+}
+
+// An empty value is absent, the same rule every decoded field follows, so it is not a
+// supplied parameter and must not refuse.
+func TestActionQueryAcceptsAnEmptyUndecodedField(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if _, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, "/action?kind=click&modifiers=", nil)); !ok {
+		t.Fatalf("an empty modifiers refused, but no value was supplied to drop: %s", rec.Body.String())
+	}
+}
+
+// The refusal names EVERY offender in a fixed order. A message built by ranging the record
+// would name whichever key came first that run, so the same request would be refused two
+// different ways and neither reproduces.
+func TestActionQueryRefusalNamesEveryOffenderInAStableOrder(t *testing.T) {
+	const query = "/action?kind=click&waitNav=true&modifiers=8&humanize=true"
+
+	first := ""
+	for range 20 {
+		rec := httptest.NewRecorder()
+		if _, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, query, nil)); ok {
+			t.Fatal("three undecoded fields were accepted")
+		}
+		body := rec.Body.String()
+		for _, want := range []string{"humanize", "modifiers", "waitNav"} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("the refusal names only some offenders, so a caller fixes one and is refused again: %s", body)
+			}
+		}
+		if first == "" {
+			first = body
+		}
+		if body != first {
+			t.Fatalf("the refusal differs between runs; map iteration order is deciding the message:\n  %s\n  %s", first, body)
+		}
+	}
+	if !strings.Contains(first, "humanize, modifiers, waitNav") {
+		t.Errorf("the offenders are not sorted: %s", first)
+	}
+}
+
+// The refusal is DERIVED from the record rather than parallel to it: a field added to the
+// record refuses with no edit to the GET branch. Driven by adding one, since a reader cannot
+// tell a derived rule from a coincidental one by looking at either.
+func TestAFieldAddedToTheRecordRefusesWithNoSecondEdit(t *testing.T) {
+	const key = "browser"
+	if _, recorded := queryUndecodedActionFields[key]; recorded {
+		t.Fatalf("%q is already recorded, so this mutation proves nothing — pick a decoded field", key)
+	}
+	if _, ok := decodeActionRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/action?kind=click&"+key+"=chrome", nil)); !ok {
+		t.Fatalf("%q is refused before the record names it, so the refusal is not the record's doing", key)
+	}
+
+	queryUndecodedActionFields[key] = "recorded by a test"
+	defer delete(queryUndecodedActionFields, key)
+
+	rec := httptest.NewRecorder()
+	if _, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, "/action?kind=click&"+key+"=chrome", nil)); ok {
+		t.Fatalf("%q was recorded as undecodable and the GET form still accepted it; the refusal keeps its own list", key)
+	}
+	if !strings.Contains(rec.Body.String(), key) {
+		t.Errorf("the refusal does not name %q: %s", key, rec.Body.String())
 	}
 }
 
