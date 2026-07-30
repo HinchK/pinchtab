@@ -195,6 +195,9 @@ func (h *Handlers) auditCollectors(tCtx context.Context, tabID string) audit.Col
 		Console: func() ([]bridge.LogEntry, error) {
 			return h.Bridge.GetConsoleLogs(tabID, 0), nil
 		},
+		JSErrors: func() ([]bridge.ErrorEntry, error) {
+			return h.Bridge.GetErrorLogs(tabID, 0), nil
+		},
 		Network: func() ([]observe.NetworkEntry, error) {
 			nm := h.Bridge.NetworkMonitor()
 			if nm == nil {

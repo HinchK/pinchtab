@@ -12,11 +12,13 @@ import (
 type PageOptions struct {
 	Screenshot bool `json:"screenshot"`
 	Network    bool `json:"network"`
-	Console    bool `json:"console"`
-	A11y       bool `json:"a11y"`
-	Timing     bool `json:"timing"`
-	Elements   bool `json:"elements"`
-	Security   bool `json:"security"`
+	// Console captures both page-message channels: console calls and
+	// uncaught JavaScript exceptions.
+	Console  bool `json:"console"`
+	A11y     bool `json:"a11y"`
+	Timing   bool `json:"timing"`
+	Elements bool `json:"elements"`
+	Security bool `json:"security"`
 }
 
 // DefaultPageOptions enables every collector.
@@ -30,6 +32,7 @@ type Collectors struct {
 	Title      func() (string, error)
 	Screenshot func() ([]byte, error)
 	Console    func() ([]bridge.LogEntry, error)
+	JSErrors   func() ([]bridge.ErrorEntry, error)
 	Network    func() ([]observe.NetworkEntry, error)
 	Snapshot   func() ([]observe.A11yNode, error)
 	PageFacts  func() (PageFacts, error)
@@ -80,6 +83,14 @@ func EnrichPage(url string, opts PageOptions, c Collectors) PageAudit {
 			fail("console", err)
 		} else {
 			pa.ConsoleLogs = MapConsoleLogs(logs)
+		}
+	}
+
+	if opts.Console && c.JSErrors != nil {
+		if errors, err := c.JSErrors(); err != nil {
+			fail("jsErrors", err)
+		} else {
+			pa.JSErrors = MapJSErrors(errors)
 		}
 	}
 
@@ -154,6 +165,23 @@ func MapConsoleLogs(logs []bridge.LogEntry) []ConsoleLogEntry {
 			Level:     l.Level,
 			Message:   l.Message,
 			Source:    l.Source,
+		})
+	}
+	return out
+}
+
+// MapJSErrors converts bridge uncaught-exception entries to the audit schema.
+func MapJSErrors(errors []bridge.ErrorEntry) []JSError {
+	out := make([]JSError, 0, len(errors))
+	for _, e := range errors {
+		out = append(out, JSError{
+			Timestamp: e.Timestamp,
+			Message:   e.Message,
+			Type:      e.Type,
+			URL:       e.URL,
+			Line:      e.Line,
+			Column:    e.Column,
+			Stack:     e.Stack,
 		})
 	}
 	return out

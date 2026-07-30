@@ -20,6 +20,16 @@ func fullCollectors() Collectors {
 		Console: func() ([]bridge.LogEntry, error) {
 			return []bridge.LogEntry{{Timestamp: enrichTS, Level: "error", Message: "boom", Source: "app.js"}}, nil
 		},
+		JSErrors: func() ([]bridge.ErrorEntry, error) {
+			return []bridge.ErrorEntry{{
+				Timestamp: enrichTS,
+				Message:   "Uncaught: ReferenceError: undefinedFn is not defined\n    at http://fixtures/page.html:5:64",
+				URL:       "http://fixtures/page.html",
+				Line:      4,
+				Column:    63,
+				Stack:     "ReferenceError: undefinedFn is not defined\n    at http://fixtures/page.html:5:64",
+			}}, nil
+		},
 		Network: func() ([]observe.NetworkEntry, error) {
 			return []observe.NetworkEntry{
 				{URL: "http://fixtures/page.html", Method: "GET", Status: 200, ResourceType: "Document", Finished: true},
@@ -53,6 +63,9 @@ func TestEnrichPageAllCollectors(t *testing.T) {
 	}
 	if len(pa.ConsoleLogs) != 1 || pa.ConsoleLogs[0].Level != "error" {
 		t.Errorf("ConsoleLogs = %+v", pa.ConsoleLogs)
+	}
+	if len(pa.JSErrors) != 1 || !strings.Contains(pa.JSErrors[0].Message, "ReferenceError") || pa.JSErrors[0].Stack == "" {
+		t.Errorf("JSErrors = %+v (want the uncaught exception with its stack)", pa.JSErrors)
 	}
 	if len(pa.NetworkRequests) != 2 {
 		t.Errorf("NetworkRequests = %+v", pa.NetworkRequests)
@@ -102,6 +115,52 @@ func TestEnrichPageOptionToggles(t *testing.T) {
 		if _, ok := fields[absent]; ok {
 			t.Errorf("field %q should be omitted when disabled", absent)
 		}
+	}
+}
+
+// A broken asset and an uncaught exception are the two failures a page can
+// carry while still navigating fine; both must reach the report and the page
+// must not read as healthy.
+func TestEnrichPageSurfacesBrokenAssetAndUncaughtError(t *testing.T) {
+	pr := EnrichPage("http://fixtures/page.html", DefaultPageOptions(), fullCollectors()).ToPageResult()
+	if len(pr.Browser.BrokenAssets) != 1 {
+		t.Errorf("BrokenAssets = %+v, want the 404 image", pr.Browser.BrokenAssets)
+	}
+	if len(pr.Browser.JSErrors) != 1 {
+		t.Fatalf("JSErrors = %+v, want the uncaught exception", pr.Browser.JSErrors)
+	}
+	if !strings.Contains(pr.Browser.JSErrors[0].Message, "undefinedFn") || pr.Browser.JSErrors[0].Stack == "" {
+		t.Errorf("JSError = %+v, want the message and stack", pr.Browser.JSErrors[0])
+	}
+	if got := PageStatus(pr); got == "ok" {
+		t.Errorf("PageStatus = %q, want a page raising an uncaught exception not to read as ok", got)
+	}
+}
+
+// The two channels stay separate all the way into the report: console.error
+// is not an uncaught exception and an uncaught exception is not console noise.
+func TestEnrichPageKeepsConsoleAndUncaughtErrorsDistinct(t *testing.T) {
+	pa := EnrichPage("http://fixtures/page.html", DefaultPageOptions(), fullCollectors())
+	if len(pa.ConsoleLogs) != 1 || pa.ConsoleLogs[0].Message != "boom" {
+		t.Errorf("ConsoleLogs = %+v, want only the console.error entry", pa.ConsoleLogs)
+	}
+	if len(pa.JSErrors) != 1 || strings.Contains(pa.JSErrors[0].Message, "boom") {
+		t.Errorf("JSErrors = %+v, want only the uncaught exception", pa.JSErrors)
+	}
+}
+
+func TestEnrichPageConsoleOptionGatesBothChannels(t *testing.T) {
+	opts := DefaultPageOptions()
+	opts.Console = false
+	pa := EnrichPage("http://fixtures/page.html", opts, fullCollectors())
+	if len(pa.ConsoleLogs) != 0 || len(pa.JSErrors) != 0 {
+		t.Errorf("ConsoleLogs = %+v, JSErrors = %+v, want both empty", pa.ConsoleLogs, pa.JSErrors)
+	}
+	data, _ := json.Marshal(pa)
+	var fields map[string]any
+	_ = json.Unmarshal(data, &fields)
+	if _, ok := fields["jsErrors"]; ok {
+		t.Error("jsErrors should be omitted when the console collector is disabled")
 	}
 }
 

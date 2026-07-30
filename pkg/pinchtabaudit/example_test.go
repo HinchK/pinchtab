@@ -37,5 +37,5 @@ func ExampleClient_EnrichWithBrowser() {
 		log.Fatal(err)
 	}
 
-	fmt.Printf("audited %d pages, summary score %d/100\n", len(report.Pages), report.SummaryScore)
+	fmt.Printf("audited %d pages, mean accessibility score %d/100\n", len(report.Pages), report.SummaryScore)
 }

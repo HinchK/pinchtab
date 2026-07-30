@@ -215,6 +215,7 @@ type mirrorPair struct {
 var mirrorPairsWithTypes = []mirrorPair{
 	{"InteractiveElement", "InteractiveElement", InteractiveElement{}, pinchtabaudit.InteractiveElement{}},
 	{"ConsoleLogEntry", "ConsoleLogEntry", ConsoleLogEntry{}, pinchtabaudit.ConsoleLogEntry{}},
+	{"JSError", "JSError", JSError{}, pinchtabaudit.JSError{}},
 	{"NetworkRequest", "NetworkRequest", NetworkRequest{}, pinchtabaudit.NetworkRequest{}},
 	{"BrokenAsset", "BrokenAsset", BrokenAsset{}, pinchtabaudit.BrokenAsset{}},
 	{"SecurityFinding", "SecurityFinding", SecurityFinding{}, pinchtabaudit.SecurityFinding{}},

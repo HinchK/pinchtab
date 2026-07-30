@@ -494,34 +494,28 @@ func writeAuditArtifacts(dir string, report map[string]any) error {
 }
 
 func printAuditSummary(report map[string]any) {
-	pages, _ := report["pages"].([]any)
-	failed := 0
-	broken := 0
-	for _, p := range pages {
-		page, ok := p.(map[string]any)
-		if !ok {
-			continue
-		}
-		if e, _ := page["error"].(string); e != "" {
+	for _, line := range auditSummaryLines(typedAuditReport(report)) {
+		fmt.Println(line)
+	}
+}
+
+// auditSummaryLines renders the human summary of an audit run: the headline
+// counts followed by one status line per page. The headline names the score
+// for what it measures, since it cannot move for the failures printed beside it.
+func auditSummaryLines(report audit.AuditReport) []string {
+	failed, broken, jsErrors := 0, 0, 0
+	for _, p := range report.Pages {
+		if p.Error != "" {
 			failed++
 		}
-		if browser, ok := page["browser"].(map[string]any); ok {
-			if assets, ok := browser["brokenAssets"].([]any); ok {
-				broken += len(assets)
-			}
-		}
+		broken += len(p.Browser.BrokenAssets)
+		jsErrors += len(p.Browser.JSErrors)
 	}
-	fmt.Printf("Audited %d page(s) · summary score %v · %d broken asset(s) · %d failed page(s)\n",
-		len(pages), report["summaryScore"], broken, failed)
-	for _, p := range pages {
-		page, ok := p.(map[string]any)
-		if !ok {
-			continue
-		}
-		status := "ok"
-		if e, _ := page["error"].(string); e != "" {
-			status = "error: " + e
-		}
-		fmt.Printf("  %s · %s\n", page["url"], status)
+	lines := []string{fmt.Sprintf(
+		"Audited %d page(s) · mean accessibility score %d · %d broken asset(s) · %d uncaught JS error(s) · %d failed page(s)",
+		len(report.Pages), report.SummaryScore, broken, jsErrors, failed)}
+	for _, p := range report.Pages {
+		lines = append(lines, fmt.Sprintf("  %s · %s", p.URL, audit.PageStatus(p)))
 	}
+	return lines
 }

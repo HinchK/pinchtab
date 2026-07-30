@@ -109,6 +109,24 @@ func hasConsoleProblems(r audit.AuditReport) bool {
 	return false
 }
 
+func hasJSErrors(r audit.AuditReport) bool {
+	for _, p := range r.Pages {
+		if len(p.Browser.JSErrors) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// firstLine trims an exception message down to its first line, so a stack trace
+// never breaks the list or table cell it is rendered into.
+func firstLine(s string) string {
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return strings.TrimSpace(s[:i])
+	}
+	return strings.TrimSpace(s)
+}
+
 func hasBrokenAssets(r audit.AuditReport) bool {
 	for _, p := range r.Pages {
 		if len(p.Browser.BrokenAssets) > 0 {
@@ -137,6 +155,14 @@ func totalBrokenAssets(r audit.AuditReport) int {
 	return n
 }
 
+func totalJSErrors(r audit.AuditReport) int {
+	n := 0
+	for _, p := range r.Pages {
+		n += len(p.Browser.JSErrors)
+	}
+	return n
+}
+
 func totalConsoleErrors(r audit.AuditReport) int {
 	n := 0
 	for _, p := range r.Pages {
@@ -155,6 +181,9 @@ func recommendations(r audit.AuditReport) []string {
 	recs := append([]string(nil), r.Recommendations...)
 	if n := totalBrokenAssets(r); n > 0 {
 		recs = append(recs, fmt.Sprintf("Fix %d broken asset reference(s) — see Broken Assets.", n))
+	}
+	if n := totalJSErrors(r); n > 0 {
+		recs = append(recs, fmt.Sprintf("Fix %d uncaught JS error(s) — each halts the script that raised it; see Console & JS Errors.", n))
 	}
 	if n := totalConsoleErrors(r); n > 0 {
 		recs = append(recs, fmt.Sprintf("Investigate %d console error(s) — see Console & JS Errors.", n))

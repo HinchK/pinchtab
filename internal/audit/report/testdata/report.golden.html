@@ -21,11 +21,11 @@ code { background: #f2f4f8; padding: .1rem .3rem; border-radius: 3px; }
 <p>Schema version 1.0 · generated 2026-07-04 12:00:00 UTC · 2 page(s)</p>
 
 <h2>Summary</h2>
-<p class="score">Summary score: 85/100</p>
+<p class="score">Mean accessibility score: 85/100</p>
 <table>
-<tr><th>Page</th><th>Score</th><th>Load</th><th>Broken assets</th><th>Console errors</th><th>Status</th></tr>
-<tr><td>Audit Fixture Site</td><td>70</td><td>200 ms</td><td>2</td><td>1</td><td>ok</td></tr>
-<tr><td>http://fixtures/audit-site/down.html</td><td>0</td><td>-</td><td>0</td><td>0</td><td><span class="error">navigation failed: net::ERR_CONNECTION_REFUSED</span></td></tr>
+<tr><th>Page</th><th>Score</th><th>Load</th><th>Broken assets</th><th>Console errors</th><th>Uncaught JS errors</th><th>Status</th></tr>
+<tr><td>Audit Fixture Site</td><td>70</td><td>200 ms</td><td>2</td><td>1</td><td>1</td><td>1 uncaught JS error(s)</td></tr>
+<tr><td>http://fixtures/audit-site/down.html</td><td>0</td><td>-</td><td>0</td><td>0</td><td>0</td><td><span class="error">navigation failed: net::ERR_CONNECTION_REFUSED</span></td></tr>
 </table>
 
 <h2>SEO &amp; Metadata</h2>
@@ -55,6 +55,7 @@ code { background: #f2f4f8; padding: .1rem .3rem; border-radius: 3px; }
 
 <h2>Console &amp; JS Errors</h2>
 <h3>Audit Fixture Site</h3><ul>
+<li><code>uncaught</code> Uncaught: ReferenceError: undefinedFn is not defined</li>
 <li><code>error</code> boom</li>
 <li><code>warning</code> careful</li>
 </ul>
@@ -76,6 +77,7 @@ code { background: #f2f4f8; padding: .1rem .3rem; border-radius: 3px; }
 <h2>Recommendations</h2><ol>
 <li>Serve the site over https.</li>
 <li>Fix 2 broken asset reference(s) — see Broken Assets.</li>
+<li>Fix 1 uncaught JS error(s) — each halts the script that raised it; see Console &amp; JS Errors.</li>
 <li>Investigate 1 console error(s) — see Console &amp; JS Errors.</li>
 <li>Improve accessibility on 1 page(s) scoring below 100 — see Usability Issues.</li>
 <li>Address 1 security finding(s) — see Security Findings.</li>

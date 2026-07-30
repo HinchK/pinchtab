@@ -279,3 +279,39 @@ func TestAuditSeaportalReportInjectsCookiesWithoutPositionalURL(t *testing.T) {
 		t.Fatalf("cookie URLs = %v, want %v", cookieURLs, want)
 	}
 }
+
+func TestAuditSummaryLines(t *testing.T) {
+	report := audit.NewAuditReport()
+	report.SummaryScore = 95
+	report.Pages = []audit.PageResult{
+		{
+			URL: "http://fixtures/audit.html",
+			Browser: audit.BrowserPageData{
+				BrokenAssets: []audit.BrokenAsset{{URL: "/missing-image.png", Status: 404}, {URL: "/missing-script.js", Status: 404}},
+				ConsoleLogs:  []audit.ConsoleLogEntry{{Level: "error", Message: "boom"}},
+				JSErrors:     []audit.JSError{{Message: "Uncaught: ReferenceError: undefinedFn is not defined"}},
+			},
+		},
+		{URL: "http://fixtures/clean.html"},
+		{URL: "http://fixtures/down.html", Error: "connection refused"},
+	}
+
+	lines := auditSummaryLines(report)
+	want := []string{
+		"Audited 3 page(s) · mean accessibility score 95 · 2 broken asset(s) · 1 uncaught JS error(s) · 1 failed page(s)",
+		"  http://fixtures/audit.html · 1 uncaught JS error(s)",
+		"  http://fixtures/clean.html · ok",
+		"  http://fixtures/down.html · error: connection refused",
+	}
+	if len(lines) != len(want) {
+		t.Fatalf("auditSummaryLines = %q", lines)
+	}
+	for i := range want {
+		if lines[i] != want[i] {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want[i])
+		}
+	}
+	if strings.Contains(lines[0], "summary score") {
+		t.Errorf("headline still calls the accessibility mean a summary score: %q", lines[0])
+	}
+}

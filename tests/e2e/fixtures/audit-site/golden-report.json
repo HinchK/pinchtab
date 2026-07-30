@@ -61,6 +61,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -109,6 +110,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -171,6 +173,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 1,
         "networkRequests": [
           {
             "method": "GET",
@@ -205,6 +208,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -244,6 +248,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -281,6 +286,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -319,6 +325,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -344,6 +351,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -369,6 +377,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -394,6 +403,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -419,6 +429,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",
@@ -444,6 +455,7 @@
             "role": "link"
           }
         ],
+        "jsErrors": 0,
         "networkRequests": [
           {
             "method": "GET",

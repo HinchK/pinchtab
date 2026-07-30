@@ -14,6 +14,19 @@ type ConsoleLogEntry struct {
 	Source    string    `json:"source,omitempty"`
 }
 
+// JSError is an uncaught JavaScript exception raised while the page loaded.
+// It is a separate channel from ConsoleLogEntry: a console.error call lands
+// there, a thrown exception lands here.
+type JSError struct {
+	Timestamp time.Time `json:"timestamp"`
+	Message   string    `json:"message"`
+	Type      string    `json:"type,omitempty"`
+	URL       string    `json:"url,omitempty"`
+	Line      int64     `json:"line,omitempty"`
+	Column    int64     `json:"column,omitempty"`
+	Stack     string    `json:"stack,omitempty"`
+}
+
 // NetworkRequest is a resource request observed while loading a page.
 type NetworkRequest struct {
 	URL          string    `json:"url"`
@@ -88,6 +101,7 @@ type BrowserPageData struct {
 	ScreenshotPath      string               `json:"screenshotPath,omitempty"`
 	FullPageScreenshot  bool                 `json:"fullPageScreenshot,omitempty"`
 	ConsoleLogs         []ConsoleLogEntry    `json:"consoleLogs,omitempty"`
+	JSErrors            []JSError            `json:"jsErrors,omitempty"`
 	NetworkRequests     []NetworkRequest     `json:"networkRequests,omitempty"`
 	BrokenAssets        []BrokenAsset        `json:"brokenAssets,omitempty"`
 	InteractiveElements []InteractiveElement `json:"interactiveElements,omitempty"`
@@ -167,11 +181,14 @@ type AuditOptions struct {
 // omitempty is a no-op on a non-pointer struct field anyway, so keeping it would
 // only make the two sides of the mirror read as if they disagreed.
 type AuditReport struct {
-	SchemaVersion    string            `json:"schemaVersion"`
-	GeneratedAt      time.Time         `json:"generatedAt"`
-	Input            AuditReportInput  `json:"input"`
-	Options          AuditOptions      `json:"options"`
-	Pages            []PageResult      `json:"pages"`
+	SchemaVersion string           `json:"schemaVersion"`
+	GeneratedAt   time.Time        `json:"generatedAt"`
+	Input         AuditReportInput `json:"input"`
+	Options       AuditOptions     `json:"options"`
+	Pages         []PageResult     `json:"pages"`
+	// SummaryScore is the mean accessibility score of enriched pages, in
+	// [0,100]; broken assets, failed requests and uncaught JS errors do not
+	// move it.
 	SummaryScore     int               `json:"summaryScore"`
 	SecurityFindings []SecurityFinding `json:"securityFindings,omitempty"`
 	Recommendations  []string          `json:"recommendations,omitempty"`

@@ -82,19 +82,26 @@ sitemap).
 
 ```
 schemaVersion, generatedAt, input, options
-summaryScore                     # mean accessibility score of enriched pages
+summaryScore                     # mean accessibility score of enriched pages;
+                                 # broken assets, failed requests and uncaught
+                                 # JS errors do not move it
 pages[]:
   url, title, error?             # error set when the page failed to load
   seaportal?                     # HTTP-extraction summary when ingested
   securityFindings[]?            # ruleId, severity, detail, url
   browser:
     screenshotPath               # relative path under the output dir
-    consoleLogs[], networkRequests[], brokenAssets[]
+    consoleLogs[], jsErrors[], networkRequests[], brokenAssets[]
     interactiveElements[], accessibilityScore
     timingMetrics: ttfbMs, fcpMs, lcpMs, cls, domContentLoadedMs, loadMs
 securityFindings[]               # page findings aggregated site-level
 recommendations[]
 ```
+
+`jsErrors[]` are uncaught JavaScript exceptions (message, stack, line,
+column) — the `GET /errors` channel, separate from `consoleLogs[]`, so a
+`console.error` call and a thrown exception never merge. A page that raised
+one is never reported `ok`.
 
 `--format md` / `--format html` write `report.md` / `report.html` next to
 `report.json` (or print to stdout without `--output-dir`). The HTML is
