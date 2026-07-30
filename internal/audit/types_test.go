@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -192,14 +193,14 @@ func TestReportJSONHasNoVisibleKeyForInteractiveElements(t *testing.T) {
 // internal packages, which means nothing but this guard keeps a field removed from
 // one side from surviving on the other.
 //
-// There are two tiers because there are two comparable axes, not because one list
-// grew awkward. A struct whose fields are all primitives can be compared on name +
-// TYPE + tag — a changed primitive type is a decode failure, the one divergence that
-// actually breaks a consumer. A struct holding mirrored structs cannot: its field
-// types read as audit.ConsoleLogEntry on one side and pinchtabaudit.ConsoleLogEntry
-// on the other, which is package qualification rather than divergence. Those are
-// compared on name + tag, which still catches a field added or removed on one side —
-// and they are the top-level payload shapes, so they are the likeliest to gain one.
+// Every pair is compared on name + TYPE + tag, because a changed field type is a
+// decode failure — the one divergence that actually breaks a consumer. The reason
+// this once needed a weaker second tier was package qualification: a field reads as
+// audit.ConsoleLogEntry on one side and pinchtabaudit.ConsoleLogEntry on the other,
+// which is not divergence. normaliseMirrorType removes exactly that difference, so
+// the tier is gone. Tier membership was a hand-maintained axis nothing guarded, and
+// dropping to the weak tier disabled type comparison on a struct's OTHER fields as
+// collateral — PageResult.StatusCode int was unguarded that way.
 type mirrorPair struct {
 	// internalName and sdkName are the declared type names. They are carried
 	// explicitly rather than derived because two pairs are not name-equal, and the
@@ -210,9 +211,7 @@ type mirrorPair struct {
 	sdk          any
 }
 
-// mirrorPairsWithTypes are compared on name + type + tag: every field is a
-// primitive, a slice of primitives, or a time, so no field type is package-qualified.
-var mirrorPairsWithTypes = []mirrorPair{
+var mirrorPairs = []mirrorPair{
 	{"InteractiveElement", "InteractiveElement", InteractiveElement{}, pinchtabaudit.InteractiveElement{}},
 	{"ConsoleLogEntry", "ConsoleLogEntry", ConsoleLogEntry{}, pinchtabaudit.ConsoleLogEntry{}},
 	{"JSError", "JSError", JSError{}, pinchtabaudit.JSError{}},
@@ -228,11 +227,10 @@ var mirrorPairsWithTypes = []mirrorPair{
 	// Also not name-equal, and for a sharper reason: the SDK's AuditInput is the
 	// REQUEST shape, so the report's input block needed its own mirror.
 	{"AuditInput", "AuditReportInput", AuditInput{}, pinchtabaudit.AuditReportInput{}},
-}
-
-// mirrorPairsWithoutTypes are compared on name + tag only, because their field types
-// are package-qualified mirrors of the structs above.
-var mirrorPairsWithoutTypes = []mirrorPair{
+	// The container shapes: their fields reference the mirrors above, which is what
+	// normaliseMirrorType exists for. AuditReport.Input is the sharpest case — it is
+	// internal AuditInput against SDK AuditReportInput, so stripping the qualifier
+	// alone is not enough and the rename derived from this table is load-bearing.
 	{"BrowserPageData", "BrowserPageData", BrowserPageData{}, pinchtabaudit.BrowserPageData{}},
 	{"PageResult", "PageResult", PageResult{}, pinchtabaudit.PageResult{}},
 	{"PageAudit", "PageAudit", PageAudit{}, pinchtabaudit.PageAudit{}},
@@ -250,41 +248,143 @@ var unmirroredSharedNames = map[string]string{
 	"RunOptions": "an in-process options struct on both sides, never marshalled: internal carries no json tags at all and the SDK nests *PageOptions",
 }
 
-func mirrorShape(v any, withTypes bool) []string {
+// The two package qualifiers reflect prints in front of a mirrored field type.
+const (
+	internalQualifier = "audit"
+	sdkQualifier      = "pinchtabaudit"
+)
+
+// qualifierPattern matches one package qualifier and the type name it qualifies.
+// The leading \b is what keeps "audit" from matching inside "pinchtabaudit".
+func qualifierPattern(qualifier string) *regexp.Regexp {
+	return regexp.MustCompile(`\b` + regexp.QuoteMeta(qualifier) + `\.([A-Za-z_][A-Za-z0-9_]*)`)
+}
+
+var (
+	internalQualifierRE = qualifierPattern(internalQualifier)
+	sdkQualifierRE      = qualifierPattern(sdkQualifier)
+)
+
+// sdkToInternalNames maps each SDK type name to the internal name it mirrors. It is
+// derived from mirrorPairs rather than written out again, so the two non-name-equal
+// mirrors are recorded in exactly one place — the table that already carries both
+// names.
+func sdkToInternalNames() map[string]string {
+	out := make(map[string]string, len(mirrorPairs))
+	for _, pair := range mirrorPairs {
+		out[pair.sdkName] = pair.internalName
+	}
+	return out
+}
+
+// normaliseMirrorType removes one package qualifier from a printed type and renames
+// the type it qualified. Nothing else is touched: time.Time and map[string]any pass
+// through verbatim, so the normaliser cannot equate two genuinely different types.
+func normaliseMirrorType(typ string, re *regexp.Regexp, rename map[string]string) string {
+	return re.ReplaceAllStringFunc(typ, func(match string) string {
+		name := match[strings.IndexByte(match, '.')+1:]
+		if renamed, ok := rename[name]; ok {
+			return renamed
+		}
+		return name
+	})
+}
+
+func mirrorShape(v any, re *regexp.Regexp, rename map[string]string) []string {
 	rt := reflect.TypeOf(v)
 	var out []string
 	for i := 0; i < rt.NumField(); i++ {
 		f := rt.Field(i)
-		if withTypes {
-			out = append(out, f.Name+" "+f.Type.String()+" "+f.Tag.Get("json"))
-			continue
-		}
-		out = append(out, f.Name+" "+f.Tag.Get("json"))
+		out = append(out, f.Name+" "+normaliseMirrorType(f.Type.String(), re, rename)+" "+f.Tag.Get("json"))
 	}
 	return out
 }
 
 func TestAuditPayloadTypesMatchTheirSDKMirrors(t *testing.T) {
-	for _, tier := range []struct {
-		name      string
-		pairs     []mirrorPair
-		withTypes bool
+	rename := sdkToInternalNames()
+	for _, pair := range mirrorPairs {
+		t.Run(pair.internalName, func(t *testing.T) {
+			got := mirrorShape(pair.internal, internalQualifierRE, nil)
+			want := mirrorShape(pair.sdk, sdkQualifierRE, rename)
+			if len(got) == 0 {
+				t.Fatalf("%s has no fields; the guard would pass vacuously", pair.internalName)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("%s diverges from its SDK mirror %s\n internal: %v\n      sdk: %v",
+					pair.internalName, pair.sdkName, got, want)
+			}
+		})
+	}
+}
+
+// The normaliser is the whole reason one tier can cover every pair, so its narrowness
+// is the property to pin: it must collapse the mirrored qualifier and nothing else.
+// The floor below keeps the verbatim half of that claim load-bearing — without a real
+// field typed time.Time and one typed map[string]any, it would be a claim over
+// nothing.
+func TestMirrorTypeNormaliserTouchesOnlyTheMirroredQualifier(t *testing.T) {
+	rename := sdkToInternalNames()
+	cases := []struct {
+		typ  string
+		re   *regexp.Regexp
+		want string
 	}{
-		{"name+type+tag", mirrorPairsWithTypes, true},
-		{"name+tag", mirrorPairsWithoutTypes, false},
-	} {
-		for _, pair := range tier.pairs {
-			t.Run(tier.name+"/"+pair.internalName, func(t *testing.T) {
-				got := mirrorShape(pair.internal, tier.withTypes)
-				want := mirrorShape(pair.sdk, tier.withTypes)
-				if len(got) == 0 {
-					t.Fatalf("%s has no fields; the guard would pass vacuously", pair.internalName)
-				}
-				if !reflect.DeepEqual(got, want) {
-					t.Errorf("%s diverges from its SDK mirror %s\n internal: %v\n      sdk: %v",
-						pair.internalName, pair.sdkName, got, want)
-				}
-			})
+		{"int", sdkQualifierRE, "int"},
+		{"[]string", sdkQualifierRE, "[]string"},
+		{"time.Time", sdkQualifierRE, "time.Time"},
+		{"map[string]interface {}", sdkQualifierRE, "map[string]interface {}"},
+		{"[]uint8", sdkQualifierRE, "[]uint8"},
+		{"pinchtabaudit.PageResult", sdkQualifierRE, "PageResult"},
+		{"[]pinchtabaudit.ConsoleLogEntry", sdkQualifierRE, "[]ConsoleLogEntry"},
+		{"*pinchtabaudit.VisualDiffResult", sdkQualifierRE, "*VisualDiffResult"},
+		{"pinchtabaudit.TimingMetrics", sdkQualifierRE, "BrowserTimingMetrics"},
+		{"pinchtabaudit.AuditReportInput", sdkQualifierRE, "AuditInput"},
+		{"audit.BrowserPageData", internalQualifierRE, "BrowserPageData"},
+		{"time.Time", internalQualifierRE, "time.Time"},
+		// The SDK qualifier ends in the internal one; stripping the internal
+		// qualifier must leave an SDK-qualified type alone.
+		{"pinchtabaudit.PageResult", internalQualifierRE, "pinchtabaudit.PageResult"},
+	}
+	for _, tc := range cases {
+		if got := normaliseMirrorType(tc.typ, tc.re, rename); got != tc.want {
+			t.Errorf("normaliseMirrorType(%q) = %q, want %q", tc.typ, got, tc.want)
+		}
+	}
+
+	verbatim := map[string]bool{"time.Time": false, "map[string]interface {}": false}
+	for _, pair := range mirrorPairs {
+		rt := reflect.TypeOf(pair.sdk)
+		for i := 0; i < rt.NumField(); i++ {
+			typ := rt.Field(i).Type.String()
+			if _, tracked := verbatim[typ]; tracked {
+				verbatim[typ] = true
+			}
+		}
+	}
+	for typ, found := range verbatim {
+		if !found {
+			t.Errorf("no mirrored field is typed %s, so comparing it verbatim is a claim over nothing", typ)
+		}
+	}
+}
+
+// The rename half of the normaliser is derived from mirrorPairs. If every pair were
+// name-equal the map would be an identity no-op that could be deleted without any
+// test noticing — and AuditReport.Input, internal AuditInput against SDK
+// AuditReportInput, is exactly the field that needs it.
+func TestMirrorRenamesAreDerivedAndNotAnIdentityMap(t *testing.T) {
+	renamed := map[string]string{}
+	for sdk, internal := range sdkToInternalNames() {
+		if sdk != internal {
+			renamed[sdk] = internal
+		}
+	}
+	if len(renamed) == 0 {
+		t.Fatal("no pair is non-name-equal, so the rename map is an identity no-op; drop it or the pair table lost a mirror")
+	}
+	for sdk, internal := range renamed {
+		if normaliseMirrorType(sdkQualifier+"."+sdk, sdkQualifierRE, sdkToInternalNames()) != internal {
+			t.Errorf("rename %s -> %s is not applied by the normaliser", sdk, internal)
 		}
 	}
 }
@@ -299,7 +399,7 @@ func TestEverySharedAuditTypeNameIsClaimedOrExcused(t *testing.T) {
 
 	claimedInternal := map[string]bool{}
 	claimedSDK := map[string]bool{}
-	for _, pair := range append(append([]mirrorPair{}, mirrorPairsWithTypes...), mirrorPairsWithoutTypes...) {
+	for _, pair := range mirrorPairs {
 		if !internalNames[pair.internalName] {
 			t.Errorf("pair names internal type %q, which internal/audit does not declare", pair.internalName)
 		}
@@ -322,7 +422,7 @@ func TestEverySharedAuditTypeNameIsClaimedOrExcused(t *testing.T) {
 		if unmirroredSharedNames[name] != "" {
 			continue
 		}
-		t.Errorf("%s is exported by both internal/audit and pkg/pinchtabaudit but is in no comparison tier "+
+		t.Errorf("%s is exported by both internal/audit and pkg/pinchtabaudit but is in no mirror pair "+
 			"and has no reason in unmirroredSharedNames; add it to one", name)
 	}
 	if shared == 0 {
