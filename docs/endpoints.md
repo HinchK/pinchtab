@@ -153,6 +153,8 @@ GET  /snapshot
 GET  /tabs/{id}/snapshot
 GET  /text
 GET  /tabs/{id}/text
+GET  /visible
+GET  /tabs/{id}/visible
 POST /find
 POST /tabs/{id}/find
 POST /evaluate
@@ -162,6 +164,8 @@ POST /tabs/{id}/evaluate
 `/evaluate` is intentionally separate from selector frame scope. `GET/POST /frame` only affects selector-based `/snapshot` and `/action` calls, not arbitrary JavaScript evaluation.
 
 `GET /action` decodes a subset of the action fields and refuses, with `400` naming the field, any parameter it cannot express rather than silently dropping it — so a modifier chord, a drag, `waitNav` or `humanize` must be sent as `POST /action` with a JSON body.
+
+`GET /visible` (and `pinchtab visible <ref>`) answers CSS rendered-ness — `display`, `visibility`, `opacity`, and a laid-out box with non-zero size. Scroll position is not an input: an element far below the fold, or scrolled past, still reports `visible: true`. On-screen-ness is the response's `onScreen` field, which shares the capture snapshot's viewport-intersection predicate (see [reference/capture.md](reference/capture.md)); `onScreen` is omitted when the element could not be measured — absent means unknown, never "no".
 
 Action kinds currently include:
 
