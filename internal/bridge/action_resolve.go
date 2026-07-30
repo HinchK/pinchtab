@@ -466,10 +466,10 @@ func ResolveTextToNodeID(ctx context.Context, text string) (int64, error) {
 }
 
 func ResolveTextToNodeIDInFrame(ctx context.Context, frameID, text string) (int64, error) {
-	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindText, Value: text}, 0, false)
+	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindText, Value: text}, 0, false, false)
 }
 
-const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
+const resolveSelectorAtFn = `function(kind, value, index, fromEnd, positional) {
 	const root = this;
 	` + jsNormalizeHelper + `
 	const needle = normalize(value);
@@ -507,7 +507,9 @@ const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
 	// hands back an element no action can operate on.
 	const nonRendered = new Set(["script", "style", "noscript", "template"]);
 	// At equal subtree size a control outranks a plain wrapper carrying the same
-	// label, so text: lands on the <button> rather than the <div> around it.
+	// label, so a bare text: lands on the <button> rather than the <div> beside it.
+	// This ranking is the BARE text: selector's rule only — a positional wrapper
+	// indexes the document, like css: and xpath:.
 	const semanticWeight = (el) => {
 		const tag = (el.tagName || "").toLowerCase();
 		if (tag === "button" || tag === "a" || tag === "input") return 0.25;
@@ -515,15 +517,31 @@ const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
 		if (role === "button" || role === "link" || role === "textbox") return 0.2;
 		return 0;
 	};
-	// Leaf-most wins: the fewest descendants is the most specific match. The sort
-	// is stable, so equally-weighted candidates keep document order and the index
-	// first/last/nth asks for stays meaningful.
-	const smallestFirst = (matches) => {
+	// Leaf-most wins: the fewest descendants is the most specific match. This
+	// REDUCES the match set, so it is shared by both paths — a wrapper chooses
+	// among matches and must never change which matches exist. What survives stays
+	// in document order, which is the order first:/last:/nth: index.
+	const smallestMatches = (matches) => {
 		const minSize = Math.min(...matches.map((item) => item.size));
 		return matches
 			.filter((item) => item.size === minSize)
-			.sort((a, b) => semanticWeight(b.el) - semanticWeight(a.el))
 			.map((item) => item.el);
+	};
+	// The bare text: selector's own rule, applied to the document-ordered set. It
+	// has to pick the maximum weight EXPLICITLY: reading element zero of a
+	// weight-sorted list is what made nth:1 resolve earlier in the document than
+	// nth:0. Ties keep the first, so equal weights still mean document order.
+	const bestRanked = (items) => {
+		let best = items[0];
+		let bestWeight = semanticWeight(best);
+		for (const el of items) {
+			const weight = semanticWeight(el);
+			if (weight > bestWeight) {
+				best = el;
+				bestWeight = weight;
+			}
+		}
+		return best;
 	};
 	const textCandidates = (query) => {
 		if (!query) return [];
@@ -533,7 +551,7 @@ const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
 			.filter((el) => !nonRendered.has((el.tagName || "").toLowerCase()));
 		const measured = elements.map((el) => ({ el, text: normalize(el.textContent || ""), size: el.getElementsByTagName("*").length }));
 		const exact = measured.filter((item) => item.text && item.text.includes(query));
-		if (exact.length) return smallestFirst(exact);
+		if (exact.length) return smallestMatches(exact);
 		const tokens = query.split(" ").filter(Boolean);
 		if (!tokens.length) return [];
 		const fuzzy = measured.filter((item) => {
@@ -543,7 +561,7 @@ const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
 			return hits / tokens.length >= 0.7;
 		});
 		if (!fuzzy.length) return [];
-		return smallestFirst(fuzzy);
+		return smallestMatches(fuzzy);
 	};
 
 	try {
@@ -560,8 +578,11 @@ const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
 			}
 			return pick(items);
 		}
-		case "text":
-			return pick(textCandidates(needle));
+		case "text": {
+			const items = unique(textCandidates(needle));
+			if (!items.length) return null;
+			return positional ? pick(items) : bestRanked(items);
+		}
 		default:
 			return null;
 		}
@@ -578,7 +599,11 @@ const textLookupDeadline = 3 * time.Second
 // resolveSelectorAt is the single entry point for every css/xpath/text
 // resolution. scopeLabel names the scope in errors; call runs the resolver
 // against whichever root the caller resolved.
-func resolveSelectorAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool, scopeLabel string, call func(context.Context, []map[string]any) (int64, error)) (int64, error) {
+// positional says a first:/last:/nth: wrapper asked for this resolution. Plain
+// text: and first:text: arrive with the same index and direction — 0 and forward —
+// so the two cannot be told apart from the pair alone, and they must be: a bare
+// text: ranks by control-likeness while a wrapper indexes the document.
+func resolveSelectorAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool, positional bool, scopeLabel string, call func(context.Context, []map[string]any) (int64, error)) (int64, error) {
 	switch sel.Kind {
 	case selector.KindCSS, selector.KindXPath, selector.KindText:
 	default:
@@ -597,6 +622,7 @@ func resolveSelectorAt(ctx context.Context, sel selector.Selector, index int, fr
 		{"value": sel.Value},
 		{"value": index},
 		{"value": fromEnd},
+		{"value": positional},
 	})
 	if err != nil {
 		if lookupCtx.Err() != nil && ctx.Err() == nil {
@@ -607,8 +633,8 @@ func resolveSelectorAt(ctx context.Context, sel selector.Selector, index int, fr
 	return nid, nil
 }
 
-func resolveSelectorAtInFrame(ctx context.Context, frameID string, sel selector.Selector, index int, fromEnd bool) (int64, error) {
-	return resolveSelectorAt(ctx, sel, index, fromEnd, "", func(ctx context.Context, args []map[string]any) (int64, error) {
+func resolveSelectorAtInFrame(ctx context.Context, frameID string, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveSelectorAt(ctx, sel, index, fromEnd, positional, "", func(ctx context.Context, args []map[string]any) (int64, error) {
 		var backendNodeID int64
 		err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 			nid, err := resolveNodeInFrame(ctx, frameID, resolveSelectorAtFn, args)
@@ -622,8 +648,8 @@ func resolveSelectorAtInFrame(ctx context.Context, frameID string, sel selector.
 	})
 }
 
-func resolveSelectorAtWithinNode(ctx context.Context, scopeBackendNodeID int64, sel selector.Selector, index int, fromEnd bool) (int64, error) {
-	return resolveSelectorAt(ctx, sel, index, fromEnd, " inside topmost dialog", func(ctx context.Context, args []map[string]any) (int64, error) {
+func resolveSelectorAtWithinNode(ctx context.Context, scopeBackendNodeID int64, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveSelectorAt(ctx, sel, index, fromEnd, positional, " inside topmost dialog", func(ctx context.Context, args []map[string]any) (int64, error) {
 		return resolveNodeWithinBackendNode(ctx, scopeBackendNodeID, resolveSelectorAtFn, args)
 	})
 }
@@ -632,14 +658,14 @@ func resolveSelectorAtWithinNode(ctx context.Context, scopeBackendNodeID int64, 
 // first:/last:/nth: — does not depend on it, so the recursion below is written
 // once against this interface rather than once per scope kind.
 type resolveScope interface {
-	resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool) (int64, error)
+	resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error)
 	resolveRef(ctx context.Context, sel selector.Selector, refCache *RefCache) (int64, error)
 }
 
 type frameScope struct{ frameID string }
 
-func (s frameScope) resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool) (int64, error) {
-	return resolveSelectorAtInFrame(ctx, s.frameID, sel, index, fromEnd)
+func (s frameScope) resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveSelectorAtInFrame(ctx, s.frameID, sel, index, fromEnd, positional)
 }
 
 func (s frameScope) resolveRef(_ context.Context, sel selector.Selector, refCache *RefCache) (int64, error) {
@@ -653,8 +679,8 @@ func (s frameScope) resolveRef(_ context.Context, sel selector.Selector, refCach
 
 type nodeScope struct{ backendNodeID int64 }
 
-func (s nodeScope) resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool) (int64, error) {
-	return resolveSelectorAtWithinNode(ctx, s.backendNodeID, sel, index, fromEnd)
+func (s nodeScope) resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveSelectorAtWithinNode(ctx, s.backendNodeID, sel, index, fromEnd, positional)
 }
 
 // resolveRef differs from the frame scope only in containment. A cached ref still exists
@@ -700,18 +726,18 @@ func errHandlerLayerKind(kind selector.Kind) error {
 // case selector.KindFirst, selector.KindLast, selector.KindNth arm, and those arms
 // are still the narrow kind check. Keeping a second switch alive to hold an
 // unreachable error would be this duplication wearing a different hat.
-func resolveParsed(ctx context.Context, scope resolveScope, sel selector.Selector, refCache *RefCache, index int, fromEnd bool) (int64, error) {
+func resolveParsed(ctx context.Context, scope resolveScope, sel selector.Selector, refCache *RefCache, index int, fromEnd bool, positional bool) (int64, error) {
 	switch sel.Kind {
 	case selector.KindFirst:
-		return resolveNested(ctx, scope, sel.Value, refCache, 0, false)
+		return resolveNested(ctx, scope, sel.Value, refCache, 0, false, true)
 	case selector.KindLast:
-		return resolveNested(ctx, scope, sel.Value, refCache, 0, true)
+		return resolveNested(ctx, scope, sel.Value, refCache, 0, true, true)
 	case selector.KindNth:
 		nth, nestedRaw, err := selector.ParseNth(sel.Value)
 		if err != nil {
 			return 0, err
 		}
-		return resolveNested(ctx, scope, nestedRaw, refCache, nth, false)
+		return resolveNested(ctx, scope, nestedRaw, refCache, nth, false, true)
 	case selector.KindRef:
 		if fromEnd || index != 0 {
 			return 0, fmt.Errorf("ref selector cannot be used with last/nth")
@@ -720,12 +746,12 @@ func resolveParsed(ctx context.Context, scope resolveScope, sel selector.Selecto
 	case selector.KindSemantic:
 		return 0, errSemanticAtResolver()
 	default:
-		return scope.resolveAt(ctx, sel, index, fromEnd)
+		return scope.resolveAt(ctx, sel, index, fromEnd, positional)
 	}
 }
 
-func resolveNested(ctx context.Context, scope resolveScope, raw string, refCache *RefCache, index int, fromEnd bool) (int64, error) {
-	return resolveParsed(ctx, scope, selector.Parse(raw), refCache, index, fromEnd)
+func resolveNested(ctx context.Context, scope resolveScope, raw string, refCache *RefCache, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveParsed(ctx, scope, selector.Parse(raw), refCache, index, fromEnd, positional)
 }
 
 func ResolveXPathToNodeID(ctx context.Context, xpath string) (int64, error) {
@@ -742,14 +768,14 @@ func ResolveCSSToNodeIDInFrame(ctx context.Context, frameID, css string) (int64,
 	// shadow root, not just the light DOM (issue #591). For light-DOM pages this
 	// returns the same first match as document.querySelector, and it works for both
 	// the main frame (frameID == "") and sub-frames.
-	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindCSS, Value: css}, 0, false)
+	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindCSS, Value: css}, 0, false, false)
 }
 
 // XPath does not pierce shadow roots: document.evaluate cannot cross a shadow
 // boundary. It resolves through the shared walker for consistency and
 // isolated-world execution, not for shadow support.
 func ResolveXPathToNodeIDInFrame(ctx context.Context, frameID, xpath string) (int64, error) {
-	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindXPath, Value: xpath}, 0, false)
+	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindXPath, Value: xpath}, 0, false, false)
 }
 
 func ResolveFrameElementMetaInFrame(ctx context.Context, sel selector.Selector, frameID string) (FrameElementMeta, error) {
@@ -812,7 +838,7 @@ func ResolveUnifiedSelectorInFrame(ctx context.Context, sel selector.Selector, r
 		return 0, errHandlerLayerKind(sel.Kind)
 
 	case selector.KindFirst, selector.KindLast, selector.KindNth:
-		return resolveParsed(ctx, frameScope{frameID}, sel, refCache, 0, false)
+		return resolveParsed(ctx, frameScope{frameID}, sel, refCache, 0, false, false)
 
 	default:
 		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)
@@ -833,7 +859,7 @@ func ResolveUnifiedSelectorWithinNode(ctx context.Context, sel selector.Selector
 		return nodeScope{scopeBackendNodeID}.resolveRef(ctx, sel, refCache)
 
 	case selector.KindCSS, selector.KindXPath, selector.KindText:
-		return nodeScope{scopeBackendNodeID}.resolveAt(ctx, sel, 0, false)
+		return nodeScope{scopeBackendNodeID}.resolveAt(ctx, sel, 0, false, false)
 
 	case selector.KindSemantic:
 		return 0, errSemanticAtResolver()
@@ -843,7 +869,7 @@ func ResolveUnifiedSelectorWithinNode(ctx context.Context, sel selector.Selector
 		return 0, errHandlerLayerKind(sel.Kind)
 
 	case selector.KindFirst, selector.KindLast, selector.KindNth:
-		return resolveParsed(ctx, nodeScope{scopeBackendNodeID}, sel, refCache, 0, false)
+		return resolveParsed(ctx, nodeScope{scopeBackendNodeID}, sel, refCache, 0, false, false)
 
 	default:
 		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)

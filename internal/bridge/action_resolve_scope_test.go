@@ -29,14 +29,15 @@ type stubScope struct {
 }
 
 type stubAt struct {
-	kind    selector.Kind
-	value   string
-	index   int
-	fromEnd bool
+	kind       selector.Kind
+	value      string
+	index      int
+	fromEnd    bool
+	positional bool
 }
 
-func (s *stubScope) resolveAt(_ context.Context, sel selector.Selector, index int, fromEnd bool) (int64, error) {
-	s.atCalls = append(s.atCalls, stubAt{sel.Kind, sel.Value, index, fromEnd})
+func (s *stubScope) resolveAt(_ context.Context, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error) {
+	s.atCalls = append(s.atCalls, stubAt{sel.Kind, sel.Value, index, fromEnd, positional})
 	return s.nodeID, nil
 }
 
@@ -49,25 +50,31 @@ func (s *stubScope) resolveRef(_ context.Context, sel selector.Selector, _ *RefC
 }
 
 // Every wrapper form must reach the leaf with the same index/fromEnd it did when
-// each scope had its own copy of this grammar.
+// each scope had its own copy of this grammar — and must mark itself POSITIONAL,
+// which is what tells the resolver to index the document instead of the semantic
+// ranking. A bare selector must not: plain text: and first:text: arrive with the
+// same index and direction, so this flag is the only thing separating them.
 func TestResolveWrapperUnwrapsToTheSameLeafForEveryForm(t *testing.T) {
 	for _, tc := range []struct {
 		raw  string
 		want stubAt
 	}{
-		{"first:css:#a", stubAt{selector.KindCSS, "#a", 0, false}},
-		{"last:css:#a", stubAt{selector.KindCSS, "#a", 0, true}},
-		{"nth:2:css:#a", stubAt{selector.KindCSS, "#a", 2, false}},
-		{"first:text:Save", stubAt{selector.KindText, "Save", 0, false}},
+		{"first:css:#a", stubAt{selector.KindCSS, "#a", 0, false, true}},
+		{"last:css:#a", stubAt{selector.KindCSS, "#a", 0, true, true}},
+		{"nth:2:css:#a", stubAt{selector.KindCSS, "#a", 2, false, true}},
+		{"first:text:Save", stubAt{selector.KindText, "Save", 0, false, true}},
 		// Nesting collapses: the innermost wrapper decides.
-		{"first:last:css:#a", stubAt{selector.KindCSS, "#a", 0, true}},
-		{"nth:3:first:css:#a", stubAt{selector.KindCSS, "#a", 0, false}},
+		{"first:last:css:#a", stubAt{selector.KindCSS, "#a", 0, true, true}},
+		{"nth:3:first:css:#a", stubAt{selector.KindCSS, "#a", 0, false, true}},
+		// Unwrapped: same index and direction as first:, and NOT positional.
+		{"css:#a", stubAt{selector.KindCSS, "#a", 0, false, false}},
+		{"text:Save", stubAt{selector.KindText, "Save", 0, false, false}},
 	} {
 		t.Run(tc.raw, func(t *testing.T) {
 			scope := &stubScope{nodeID: 42}
 			sel := selector.Parse(tc.raw)
 
-			got, err := resolveParsed(context.Background(), scope, sel, nil, 0, false)
+			got, err := resolveParsed(context.Background(), scope, sel, nil, 0, false, false)
 			if err != nil {
 				t.Fatalf("resolveParsed(%q): %v", tc.raw, err)
 			}
@@ -88,7 +95,7 @@ func TestResolveWrapperRoutesRefsThroughTheScope(t *testing.T) {
 	outside := errors.New("outside")
 	scope := &stubScope{nodeID: 7, refErr: outside}
 
-	_, err := resolveParsed(context.Background(), scope, selector.Parse("first:ref:e0"), nil, 0, false)
+	_, err := resolveParsed(context.Background(), scope, selector.Parse("first:ref:e0"), nil, 0, false, false)
 
 	if !errors.Is(err, outside) {
 		t.Fatalf("err = %v, want the scope's own ref error", err)
@@ -115,7 +122,7 @@ func TestResolveWrapperRejectionsUnchanged(t *testing.T) {
 		t.Run(tc.raw, func(t *testing.T) {
 			scope := &stubScope{nodeID: 7}
 
-			_, err := resolveParsed(context.Background(), scope, selector.Parse(tc.raw), nil, 0, false)
+			_, err := resolveParsed(context.Background(), scope, selector.Parse(tc.raw), nil, 0, false, false)
 
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
@@ -417,9 +424,12 @@ func newScopedWrapperFixture(t *testing.T) context.Context {
 }
 
 // assertWrapperArmStartsFresh checks, through the AST rather than the call's text, that
-// every resolveParsed call inside the named entry point starts its wrapper at index 0
-// with fromEnd false. A wrapper must derive its own index from the grammar; inheriting
-// one from the entry point makes first: behave like last: on every page.
+// every resolveParsed call inside the named entry point starts its wrapper at index 0,
+// fromEnd false, positional false. A wrapper must derive its own index from the grammar;
+// inheriting one from the entry point makes first: behave like last: on every page. The
+// third value is the same shape of defect one step further: an entry point that starts
+// positional=true makes a BARE text: index the document, silently dropping the control
+// ranking that only the bare form carries.
 func assertWrapperArmStartsFresh(t *testing.T, src, entrySignature string) {
 	t.Helper()
 
@@ -452,13 +462,15 @@ func assertWrapperArmStartsFresh(t *testing.T, src, entrySignature string) {
 			return true
 		}
 		calls++
-		if len(call.Args) < 2 {
-			t.Errorf("%s calls resolveParsed with %d arguments; the starting index and fromEnd are the last two", name, len(call.Args))
+		if len(call.Args) < 3 {
+			t.Errorf("%s calls resolveParsed with %d arguments; the starting index, fromEnd and positional are the last three", name, len(call.Args))
 			return true
 		}
-		index, fromEnd := exprText(call.Args[len(call.Args)-2]), exprText(call.Args[len(call.Args)-1])
-		if index != "0" || fromEnd != "false" {
-			t.Errorf("%s starts its wrapper arm at index %s, fromEnd %s, want 0 and false — a wrapper must derive its own index from the grammar, not inherit one from the entry point", name, index, fromEnd)
+		index := exprText(call.Args[len(call.Args)-3])
+		fromEnd := exprText(call.Args[len(call.Args)-2])
+		positional := exprText(call.Args[len(call.Args)-1])
+		if index != "0" || fromEnd != "false" || positional != "false" {
+			t.Errorf("%s starts its wrapper arm at index %s, fromEnd %s, positional %s, want 0, false and false — a wrapper derives its own index from the grammar, and only a wrapper may claim to be positional", name, index, fromEnd, positional)
 		}
 		return true
 	})

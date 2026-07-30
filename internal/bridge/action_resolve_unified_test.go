@@ -170,12 +170,13 @@ func TestTextSelectorNeverResolvesNonRenderedSourceText(t *testing.T) {
 func TestTextSelectorPrefersControlOverPlainElementOfEqualSize(t *testing.T) {
 	ctx := newSelectorFixture(t)
 
+	// The first: row is gone on purpose, not adjusted: positional wrappers index
+	// the document now, so first:text: is #decoy. The control preference this test
+	// is named for lives on the BARE text: selector, which is the row that stays.
 	want := resolve(t, ctx, "css:#inner")
-	for _, raw := range []string{"text:Archive record", "first:text:Archive record"} {
-		if got := resolve(t, ctx, raw); got != want {
-			t.Errorf("%s resolved to %s, want button#inner (%s)",
-				raw, describeNode(t, ctx, got), describeNode(t, ctx, want))
-		}
+	if got := resolve(t, ctx, "text:Archive record"); got != want {
+		t.Errorf("text:Archive record resolved to %s, want button#inner (%s)",
+			describeNode(t, ctx, got), describeNode(t, ctx, want))
 	}
 
 	// The wrapper is a candidate the size rule must have already discarded.
@@ -199,7 +200,7 @@ func TestResolveSelectorAtBoundsTextLookupsOnly(t *testing.T) {
 	} {
 		var deadline time.Time
 		var hasDeadline bool
-		_, err := resolveSelectorAt(context.Background(), selector.Selector{Kind: tc.kind, Value: "x"}, 0, false, "",
+		_, err := resolveSelectorAt(context.Background(), selector.Selector{Kind: tc.kind, Value: "x"}, 0, false, false, "",
 			func(ctx context.Context, _ []map[string]any) (int64, error) {
 				deadline, hasDeadline = ctx.Deadline()
 				return 7, nil
@@ -221,7 +222,7 @@ func TestResolveSelectorAtBoundsTextLookupsOnly(t *testing.T) {
 // browser with a kind the resolver's switch does not implement.
 func TestResolveSelectorAtRejectsUnwrappableKinds(t *testing.T) {
 	called := false
-	_, err := resolveSelectorAt(context.Background(), selector.Selector{Kind: selector.KindSemantic, Value: "Save"}, 0, false, "",
+	_, err := resolveSelectorAt(context.Background(), selector.Selector{Kind: selector.KindSemantic, Value: "Save"}, 0, false, false, "",
 		func(context.Context, []map[string]any) (int64, error) {
 			called = true
 			return 0, nil
@@ -251,5 +252,75 @@ func TestXPathDoesNotPierceShadowRoots(t *testing.T) {
 	if want := resolve(t, ctx, "css:#real"); light != want {
 		t.Errorf("xpath light-DOM lookup resolved to %s, want button#real (%s)",
 			describeNode(t, ctx, light), describeNode(t, ctx, want))
+	}
+}
+
+// The decided grammar, on the fixture where the two orders disagree: #decoy is a
+// weight-0 div that PRECEDES the weight-0.25 #inner button, and the two tie on
+// subtree size. Before this, nth:1 resolved to an element earlier in the document
+// than nth:0, because pick() indexed a weight-sorted list.
+func TestPositionalWrappersOverTextIndexDocumentOrder(t *testing.T) {
+	ctx := newSelectorFixture(t)
+
+	first := resolve(t, ctx, "css:#decoy")
+	last := resolve(t, ctx, "css:#inner")
+
+	for _, tc := range []struct {
+		raw  string
+		want int64
+		what string
+	}{
+		{"first:text:Archive record", first, "div#decoy, the document-first candidate"},
+		{"nth:0:text:Archive record", first, "div#decoy, the document-first candidate"},
+		{"nth:1:text:Archive record", last, "button#inner, the candidate AFTER nth:0"},
+		{"last:text:Archive record", last, "button#inner, the document-last candidate"},
+	} {
+		if got := resolve(t, ctx, tc.raw); got != tc.want {
+			t.Errorf("%s resolved to %s, want %s", tc.raw, describeNode(t, ctx, got), tc.what)
+		}
+	}
+
+	// The defect stated as an ordering property rather than as two node ids: an
+	// index must never walk backwards through the document.
+	if resolve(t, ctx, "nth:0:text:Archive record") == resolve(t, ctx, "nth:1:text:Archive record") {
+		t.Fatal("nth:0 and nth:1 resolved to the same node; the fixture no longer has two candidates")
+	}
+	if resolve(t, ctx, "first:text:Archive record") != resolve(t, ctx, "nth:0:text:Archive record") {
+		t.Error("first:text: and nth:0:text: must be the same candidate")
+	}
+
+	// The decision itself: a bare text: may differ from all three, and here it
+	// does. Leaving this implicit is how option B ships by accident.
+	plain := resolve(t, ctx, "text:Archive record")
+	if plain == first {
+		t.Error("text:Archive record resolved to the document-first div; the control ranking on the bare selector is gone")
+	}
+	if plain != last {
+		t.Errorf("text:Archive record resolved to %s, want button#inner — the bare selector still ranks by control-likeness",
+			describeNode(t, ctx, plain))
+	}
+}
+
+// The change must not read as a general reordering: css: and xpath: indexed
+// document order before and still do, on the same two elements.
+func TestPositionalWrappersOverCSSAndXPathStillIndexDocumentOrder(t *testing.T) {
+	ctx := newSelectorFixture(t)
+
+	decoy := resolve(t, ctx, "css:#decoy")
+	inner := resolve(t, ctx, "css:#inner")
+
+	for _, tc := range []struct {
+		raw  string
+		want int64
+	}{
+		{"first:css:#decoy,#inner", decoy},
+		{"last:css:#decoy,#inner", inner},
+		{"nth:1:css:#decoy,#inner", inner},
+		{`first:xpath://*[@id="decoy" or @id="inner"]`, decoy},
+		{`last:xpath://*[@id="decoy" or @id="inner"]`, inner},
+	} {
+		if got := resolve(t, ctx, tc.raw); got != tc.want {
+			t.Errorf("%s resolved to %s, want %s", tc.raw, describeNode(t, ctx, got), describeNode(t, ctx, tc.want))
+		}
 	}
 }

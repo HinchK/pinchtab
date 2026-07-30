@@ -604,3 +604,41 @@ func TestNoActionToolIsSentATypedArgumentItDoesNotDeclare(t *testing.T) {
 	}
 	t.Logf("checked %d undeclared (tool, probe) pairs across %d action tools and %d probes", checked, len(actionToolTargets), len(probes))
 }
+
+// A wrapper index used to mean document order for css:/xpath: and semantic rank
+// for text:, so nth:1 could resolve earlier in the page than nth:0. The rule is
+// one rule now, and a schema that offers first/last/nth without stating it leaves
+// an agent to infer the grammar from trial and error. Derived over the schemas:
+// any tool that gains a wrapper-accepting selector inherits the requirement.
+func TestSelectorSchemasThatOfferWrappersStateWhatAnIndexMeans(t *testing.T) {
+	checked := 0
+	for _, tool := range allTools() {
+		raw, err := json.Marshal(tool.InputSchema)
+		if err != nil {
+			t.Fatalf("marshal %s schema: %v", tool.Name, err)
+		}
+		var schema struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("unmarshal %s schema: %v", tool.Name, err)
+		}
+		for name, property := range schema.Properties {
+			if !strings.Contains(property.Description, "first/last/nth") {
+				continue
+			}
+			checked++
+			if !strings.Contains(property.Description, "document order") {
+				t.Errorf("%s.%s offers first/last/nth without saying an index follows document order: %q", tool.Name, name, property.Description)
+			}
+			if !strings.Contains(property.Description, "text:X and first:text:X can differ") {
+				t.Errorf("%s.%s does not warn that a bare text: selector ranks rather than indexes: %q", tool.Name, name, property.Description)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no schema offers first/last/nth, so this guard checked nothing")
+	}
+}

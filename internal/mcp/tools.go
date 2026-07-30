@@ -2,6 +2,13 @@ package mcp
 
 import "github.com/mark3labs/mcp-go/mcp"
 
+// positionalWrapperGrammar states what an index means, for every tool whose
+// selector accepts first/last/nth. It is one constant because the rule is one
+// rule: a client that reads it in a click description must not learn something
+// different from the snapshot description. Indices used to follow an internal
+// ranking for text:, which made nth:1 resolve earlier in the page than nth:0.
+const positionalWrapperGrammar = " first/last/nth index matches in document order for every kind, so nth:0 is the first match in the page. A bare text: selector instead picks the most control-like smallest match, so text:X and first:text:X can differ."
+
 // allTools returns every MCP tool exposed by the PinchTab MCP server.
 func allTools() []mcp.Tool {
 	return []mcp.Tool{
@@ -41,7 +48,7 @@ func allTools() []mcp.Tool {
 			mcp.WithBoolean("compact", mcp.Description("Compact format (most token-efficient)")),
 			mcp.WithString("format", mcp.Description("Output format: 'compact' or 'text'")),
 			mcp.WithBoolean("diff", mcp.Description("Only changes since last snapshot")),
-			mcp.WithString("selector", mcp.Description("Unified selector to scope the snapshot (ref, CSS, XPath, text, find, role, label, placeholder, alt, title, testid, first/last/nth). Selectors resolve in the current frame scope; use pinchtab_frame for iframe content.")),
+			mcp.WithString("selector", mcp.Description("Unified selector to scope the snapshot (ref, CSS, XPath, text, find, role, label, placeholder, alt, title, testid, first/last/nth). Selectors resolve in the current frame scope; use pinchtab_frame for iframe content."+positionalWrapperGrammar)),
 			mcp.WithNumber("maxTokens", mcp.Description("Maximum estimated tokens in response (e.g. 300)")),
 			mcp.WithNumber("depth", mcp.Description("Maximum tree depth (e.g. 3)")),
 			mcp.WithBoolean("noAnimations", mcp.Description("Disable animations before capturing the snapshot")),
@@ -96,7 +103,7 @@ func allTools() []mcp.Tool {
 
 		mcp.NewTool("pinchtab_click",
 			mcp.WithDescription("Click an element. Prefer selector from pinchtab_find.best_ref (e.g. 'e5') to avoid extra snapshots."),
-			mcp.WithString("selector", mcp.Description("Unified selector: ref (e.g. 'e5'), CSS, XPath, text, find, role, label, placeholder, alt, title, testid, or first/last/nth. Non-ref selectors resolve in the current frame scope.")),
+			mcp.WithString("selector", mcp.Description("Unified selector: ref (e.g. 'e5'), CSS, XPath, text, find, role, label, placeholder, alt, title, testid, or first/last/nth. Non-ref selectors resolve in the current frame scope."+positionalWrapperGrammar)),
 			mcp.WithString("ref", mcp.Description("(deprecated) Element ref from snapshot — use 'selector' instead")),
 			mcp.WithString("query", mcp.Description("Alias for semantic targeting when selector is omitted (example: 'login button' -> find:login button)")),
 			mcp.WithString("dialogAction", mcp.Description("Optional one-shot dialog handling for this click: 'accept' or 'dismiss'")),

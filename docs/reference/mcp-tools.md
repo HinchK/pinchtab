@@ -17,6 +17,8 @@ Selector forms include:
 - `label:Email`, `placeholder:Search`, `alt:Logo`, `title:Close`, `testid:submit`
 - `first:button`, `last:button`, `nth:2:button`
 
+Positional wrappers index the candidates in **document order** for every selector kind, so `nth:0:` is the first match in the page and `nth:1:` always comes after it. A bare `text:` selector is the one form that does not index: it picks the most control-like match among the smallest ones, so `text:Save` prefers a `<button>` over a `<div>` carrying the same label — which means `text:X` and `first:text:X` can resolve to different elements. A wrapper only ever chooses among the matches a bare selector would find; it never changes which matches exist.
+
 Structured semantic locators are matched by the semantic engine; CSS, XPath, refs, the existing `text:` action selector, and bare CSS/text wrappers stay browser-side.
 
 ## Navigation
