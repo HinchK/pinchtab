@@ -24,15 +24,7 @@ func CurrentConfigPath() string {
 }
 
 func GetValue(path string) (string, error) {
-	fc, _, err := config.LoadFileConfig()
-	if err != nil {
-		return "", fmt.Errorf("load config: %w", err)
-	}
-	value, err := config.GetConfigValue(fc, path)
-	if err != nil {
-		return "", err
-	}
-	return value, nil
+	return config.EffectiveConfigValue(path)
 }
 
 func PrepareSetValue(path, value string) (*PreparedChange, error) {

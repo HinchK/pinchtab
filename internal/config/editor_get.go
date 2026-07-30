@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/pinchtab/pinchtab/internal/safelog"
 )
 
 // GetConfigValue reads a dotted-path field from FileConfig and returns its string representation.
@@ -552,4 +554,35 @@ func getAutoSolverCredentialsField(c *AutoSolverCredentialsConf, field string) (
 		}
 	}
 	return "", fmt.Errorf("unknown field autoSolver.credentials.%s", field)
+}
+
+// EffectiveConfigValue answers with the value in effect for a dotted path: the file
+// value when the file sets one, otherwise the value the runtime resolves. Keys whose
+// effective value is derived from another key, or whose default is applied by a
+// consumer rather than stored in the config struct, are only visible this way.
+func EffectiveConfigValue(path string) (string, error) {
+	fc, _, err := LoadFileConfig()
+	if err != nil {
+		return "", fmt.Errorf("load config: %w", err)
+	}
+	value, err := GetConfigValue(fc, path)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(value) != "" {
+		return value, nil
+	}
+	return resolvedConfigValue(path)
+}
+
+func resolvedConfigValue(path string) (string, error) {
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		return "", fmt.Errorf("load config: %w", err)
+	}
+	resolved := FileConfigFromRuntime(cfg)
+	if strings.TrimSpace(resolved.Server.LogLevel) == "" {
+		resolved.Server.LogLevel = safelog.LevelName(safelog.DefaultLevel)
+	}
+	return GetConfigValue(&resolved, path)
 }

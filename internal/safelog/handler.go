@@ -16,6 +16,12 @@ import (
 // DefaultLevel is what a run records with no level set.
 const DefaultLevel = slog.LevelInfo
 
+// LevelName renders a level the way the config file and --log-level spell it, so a
+// surface reporting the level in effect does not spell the default itself.
+func LevelName(level slog.Level) string {
+	return strings.ToLower(level.String())
+}
+
 const (
 	MaxStringValueBytes = 2 * 1024
 	MaxRecordTextBytes  = 8 * 1024

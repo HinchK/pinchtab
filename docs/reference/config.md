@@ -99,12 +99,18 @@ pinchtab config validate
 
 ### `pinchtab config get`
 
-Reads a single dotted-path value from the file config.
+Reads a single dotted-path value and reports the **value in effect**: what the file
+sets, and otherwise the value the runtime resolves — a shipped default, or a value
+derived from another key. `profiles.baseDir` is the clearest case: leave it out of the
+file and `config get` reports `<server.stateDir>/profiles`, the directory profiles are
+actually kept in, rather than nothing. A key that is genuinely unset — a secret nobody
+configured, an optional override such as `browser.binary` — still answers blank.
 
 ```bash
 pinchtab config get server.port
 pinchtab config get instanceDefaults.mode
 pinchtab config get security.attach.allowHosts
+pinchtab config get profiles.baseDir      # derived from server.stateDir when unset
 ```
 
 ### `pinchtab config set`
@@ -715,5 +721,5 @@ Valid enum values:
 ## Notes
 
 - `config show` reports effective runtime values, not just raw file contents.
-- `config get`, `set`, and `patch` operate on the file config model, not transient runtime overrides.
+- `config get` reports the value in effect, including shipped defaults and values derived from another key. `config set` and `patch` write the file config model and do not carry transient runtime overrides.
 - the dashboard config API treats `server.token` as write-only; use the CLI or file editing to manage it.
