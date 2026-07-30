@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
@@ -379,5 +380,93 @@ func TestHandleSetCookiesRefusesWhenTheTabHasNoURLToDefaultTo(t *testing.T) {
 	}
 	if len(b.set) != 0 {
 		t.Errorf("browser was asked to store %+v with no URL", b.set)
+	}
+}
+
+// enforceURLDomainPolicy has exactly two production call sites, both in cookies.go, and
+// only the GET one was pinned: idpi_domain_block_test.go's
+// TestRefusedCookieURLBlockNamesTheAllowlist drives HandleGetCookies with a refused URL,
+// but its subject is the REMEDY WORDING — it pins that call site only incidentally,
+// because a missing block leaves no blocked response to decode. The three tests below own
+// the POST site and assert ENFORCEMENT instead: the cookie is not stored. Neither test
+// covers the other's site, so neither may be deleted believing it does.
+type policyCookieBridge struct {
+	cookieJarBridge
+	tabState bridge.TabPolicyState
+}
+
+func (b *policyCookieBridge) GetTabPolicyState(string) (bridge.TabPolicyState, bool) {
+	return b.tabState, true
+}
+
+// The cached tab state is ALLOWED and fresh on purpose: the drifted-tab check runs before
+// the URL policy, and a refused tab would refuse first — leaving these tests green with
+// the URL policy deleted, which is the trap this whole card exists to close.
+func newPolicyCookieBridge(currentURL string) *policyCookieBridge {
+	b := &policyCookieBridge{tabState: bridge.TabPolicyState{
+		CurrentURL: "https://example.com/app",
+		UpdatedAt:  time.Now(),
+	}}
+	b.currentURL = currentURL
+	return b
+}
+
+func postCookiesUnderPolicy(t *testing.T, b *policyCookieBridge, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := New(b, idpiBlockingConfig(), nil, nil, nil)
+	w := httptest.NewRecorder()
+	h.HandleSetCookies(w, httptest.NewRequest("POST", "/cookies", bytes.NewReader([]byte(body))))
+	return w
+}
+
+func TestSetCookiesRefusesAURLTheDomainPolicyBlocks(t *testing.T) {
+	b := newPolicyCookieBridge("https://example.com/app")
+	w := postCookiesUnderPolicy(t, b, `{"url":"https://www.iana.org/help","cookies":[{"name":"session","value":"abc"}]}`)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 for a URL outside the allowlist: %s", w.Code, w.Body.String())
+	}
+	if len(b.set) != 0 {
+		t.Errorf("the browser was asked to store %+v for a domain this instance may not touch", b.set)
+	}
+}
+
+// The value the policy checks can arrive implicitly: with url absent it is the tab's
+// current URL, so the check has to run on the RESOLVED value. Moving it above the
+// defaulting step hands the policy an empty string, which it allows, and the cookie is
+// written for whatever domain the tab happens to be on.
+func TestSetCookiesEnforcesTheDomainPolicyOnTheDefaultedURL(t *testing.T) {
+	b := newPolicyCookieBridge("https://www.iana.org/help")
+	w := postCookiesUnderPolicy(t, b, `{"cookies":[{"name":"session","value":"abc"}]}`)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; the defaulted URL is outside the allowlist: %s", w.Code, w.Body.String())
+	}
+	if len(b.set) != 0 {
+		t.Errorf("the browser was asked to store %+v for the refused domain the tab defaulted to", b.set)
+	}
+}
+
+// The other half of the pair: a guard that refuses everything would satisfy both tests
+// above, and would break cookie injection entirely.
+func TestSetCookiesStoresACookieForAnAllowedURL(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{name: "url stated", body: `{"url":"https://example.com/app","cookies":[{"name":"session","value":"abc"}]}`},
+		{name: "url defaulted from the tab", body: `{"cookies":[{"name":"session","value":"abc"}]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newPolicyCookieBridge("https://example.com/app")
+			w := postCookiesUnderPolicy(t, b, tc.body)
+
+			if w.Code != 200 {
+				t.Fatalf("status = %d, want 200 for an allowed URL: %s", w.Code, w.Body.String())
+			}
+			if len(b.set) != 1 {
+				t.Fatalf("browser saw %d cookies, want the one that was allowed", len(b.set))
+			}
+			if b.set[0].URL != "https://example.com/app" {
+				t.Errorf("stored against %q, want the allowed URL", b.set[0].URL)
+			}
+		})
 	}
 }
