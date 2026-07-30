@@ -39,13 +39,33 @@ func (a *chromeActionAdapter) TabContext(tabID string) (context.Context, string,
 }
 
 func (a *chromeActionAdapter) ExecuteAction(ctx context.Context, kind string, req ghostchrome.ActionRequest) (map[string]any, error) {
-	return a.BridgeAPI.ExecuteAction(ctx, kind, bridge.ActionRequest{
-		TabID: req.TabID,
-		Kind:  req.Kind,
-		Ref:   req.Ref,
-		Text:  req.Text,
-		Value: req.Value,
-	})
+	return a.BridgeAPI.ExecuteAction(ctx, kind, bridgeActionRequest(req))
+}
+
+// The two conversions are named and paired so the field lists sit side by side: every field
+// of the static subset must appear in both, which is what a census can check. HasText and
+// HasXY were each dropped from a hand-written literal, and a dropped presence bit turns a
+// legitimate clear into a refused request.
+func bridgeActionRequest(req ghostchrome.ActionRequest) bridge.ActionRequest {
+	return bridge.ActionRequest{
+		TabID:   req.TabID,
+		Kind:    req.Kind,
+		Ref:     req.Ref,
+		Text:    req.Text,
+		Value:   req.Value,
+		HasText: req.HasText,
+	}
+}
+
+func staticActionRequest(req bridge.ActionRequest) ghostchrome.ActionRequest {
+	return ghostchrome.ActionRequest{
+		TabID:   req.TabID,
+		Kind:    req.Kind,
+		Ref:     req.Ref,
+		Text:    req.Text,
+		Value:   req.Value,
+		HasText: req.HasText,
+	}
 }
 
 type BridgeAdapter struct {
@@ -113,13 +133,7 @@ func (a *BridgeAdapter) TabContext(tabID string) (*bridge.TabHandle, string, err
 }
 
 func (a *BridgeAdapter) ExecuteAction(ctx context.Context, kind string, req bridge.ActionRequest) (map[string]any, error) {
-	return a.proxy.ExecuteAction(ctx, kind, ghostchrome.ActionRequest{
-		TabID: req.TabID,
-		Kind:  req.Kind,
-		Ref:   req.Ref,
-		Text:  req.Text,
-		Value: req.Value,
-	}, func(ctx context.Context) (map[string]any, error) {
+	return a.proxy.ExecuteAction(ctx, kind, staticActionRequest(req), func(ctx context.Context) (map[string]any, error) {
 		return a.BridgeAPI.ExecuteAction(ctx, kind, req)
 	})
 }

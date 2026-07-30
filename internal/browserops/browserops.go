@@ -35,6 +35,10 @@ type StaticActionRequest struct {
 	Ref   string
 	Text  string
 	Value string
+	// HasText carries the presence bit that separates "clear this field" from "no text
+	// ever arrived". Without it a legitimate clear crossing this subset arrives as
+	// Text:"" with nothing to say it was supplied, and the bridge refuses the fill.
+	HasText bool
 }
 
 type Capability string
