@@ -6,8 +6,9 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 // The property the fix delivers, proven deterministically rather than sampled by
@@ -77,66 +78,43 @@ func (r *cleanupRecorder) Cleanup(f func())      { f() }
 // own RemoveAll succeeded, and a browser still flushing its cache makes that fail on
 // an unrelated card's gate. The rule is checked over the whole module, because the
 // next browser test is as likely to be written in a package that has none today.
+// The subject is the tests themselves, so the enumeration comes from srccensus.TestTree
+// rather than a walk written here: the nested-checkout exclusion is the part a bespoke walk
+// silently loses, and it has one owner.
 func TestNoBrowserProfileIsPointedAtATestTempDir(t *testing.T) {
-	root := moduleRoot(t)
 	sites := 0
 
-	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if skipCensusDir(path, root, d.Name()) {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-
-		file, parseErr := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	for _, file := range srccensus.TestTree(t, "../..", moduleTestFileFloor) {
+		parsed, parseErr := parser.ParseFile(token.NewFileSet(), file.Path, file.Text, 0)
 		if parseErr != nil {
-			return nil
+			continue
 		}
-		rel, _ := filepath.Rel(root, path)
-		ast.Inspect(file, func(n ast.Node) bool {
+		ast.Inspect(parsed, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
 			if !ok || !isSelectorCall(call.Fun, "chromedp", "UserDataDir") || len(call.Args) != 1 {
 				return true
 			}
 			sites++
 			if inner, ok := call.Args[0].(*ast.CallExpr); ok && isMethodCall(inner.Fun, "TempDir") {
-				t.Errorf("%s hands a Chrome profile to t.TempDir; use testbrowser.ProfileDir(t) — t.TempDir fails the test when the browser is still flushing its cache", rel)
+				t.Errorf("%s hands a Chrome profile to t.TempDir; use testbrowser.ProfileDir(t) — t.TempDir fails the test when the browser is still flushing its cache", file.Name)
 			}
 			return true
 		})
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk %s: %v", root, err)
 	}
-	if sites < 20 {
+
+	if sites < userDataDirSiteFloor {
 		t.Fatalf("found only %d chromedp.UserDataDir call sites; the census matched almost nothing and would pass vacuously", sites)
 	}
 }
 
-// skipCensusDir decides which directories the census must not descend into. A name list
-// alone is not enough: a git worktree created inside the repo carries a .git FILE under an
-// arbitrary name, so it looks like an ordinary directory while holding a second copy of
-// every source file. The census would then report those copies as fresh violations, against
-// module-relative paths that will vanish with the worktree — and on a shared tree that reds
-// this package for whoever runs it next. The repo root carries .git too, so it is exempt.
-func skipCensusDir(path, root, name string) bool {
-	if name == ".git" || name == "node_modules" || name == "dist" {
-		return true
-	}
-	if path == root {
-		return false
-	}
-	_, err := os.Stat(filepath.Join(path, ".git"))
-	return err == nil
-}
+// Two floors, because they fail for different reasons: the TestTree floor catches a walk that
+// stopped seeing files at all, and the site floor catches a rule that stopped matching what
+// it polices. Both are set well under the real counts so ordinary growth or deletion does not
+// trip them.
+const (
+	moduleTestFileFloor  = 200
+	userDataDirSiteFloor = 20
+)
 
 func isSelectorCall(fun ast.Expr, pkg, name string) bool {
 	sel, ok := fun.(*ast.SelectorExpr)
@@ -150,71 +128,4 @@ func isSelectorCall(fun ast.Expr, pkg, name string) bool {
 func isMethodCall(fun ast.Expr, name string) bool {
 	sel, ok := fun.(*ast.SelectorExpr)
 	return ok && sel.Sel.Name == name
-}
-
-func moduleRoot(t *testing.T) string {
-	t.Helper()
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("no go.mod above the test's working directory; the census cannot find the module root")
-		}
-		dir = parent
-	}
-}
-
-// The census walks from the module root, so anything that puts a SECOND copy of the tree
-// inside the repo becomes a second set of findings. A git worktree does exactly that under
-// an arbitrary name, carrying a .git FILE rather than a directory, so a name list cannot see
-// it — and the violations it reports name paths that vanish with the worktree, which sends
-// the reader to fix a file that was never the problem.
-func TestCensusSkipsDirectoriesThatCarryTheirOwnGitMarker(t *testing.T) {
-	root := t.TempDir()
-
-	worktreeFile := filepath.Join(root, "wt-anything")
-	if err := os.MkdirAll(worktreeFile, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(worktreeFile, ".git"), []byte("gitdir: /elsewhere\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	worktreeDir := filepath.Join(root, "clone-anything")
-	if err := os.MkdirAll(filepath.Join(worktreeDir, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	ordinary := filepath.Join(root, "internal")
-	if err := os.MkdirAll(ordinary, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	// The repo root carries .git too and must never be skipped, or the census covers nothing.
-	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, tc := range []struct {
-		name string
-		path string
-		want bool
-	}{
-		{name: "a nested worktree, .git as a file", path: worktreeFile, want: true},
-		{name: "a nested clone, .git as a directory", path: worktreeDir, want: true},
-		{name: "an ordinary source directory", path: ordinary, want: false},
-		{name: "the module root itself", path: root, want: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := skipCensusDir(tc.path, root, filepath.Base(tc.path)); got != tc.want {
-				t.Errorf("skipCensusDir(%s) = %v, want %v", tc.name, got, tc.want)
-			}
-		})
-	}
 }

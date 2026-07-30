@@ -135,6 +135,29 @@ var treeSkipDirs = map[string]bool{".git": true, "node_modules": true, "dist": t
 // misses the worktree, which is the case that actually occurs.
 func Tree(t testing.TB, root string, minFiles int) []SourceFile {
 	t.Helper()
+	return tree(t, root, minFiles, "non-test", func(path string) bool {
+		return strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go")
+	})
+}
+
+// TestTree enumerates every _test.go file under root, for a census whose SUBJECT is the
+// tests themselves — a rule about how tests must be written cannot be checked over the
+// files Tree returns, since it excludes exactly them.
+//
+// It shares Tree's walk so the EXCLUSIONS are inherited rather than re-derived. That is the
+// whole reason it exists here rather than as a bespoke WalkDir in the package that needs it:
+// a hand-rolled walk written to see test files loses the nested-checkout skip, and then a
+// worktree's copies of the very test files the rule polices are reported as violations
+// against paths that vanish.
+func TestTree(t testing.TB, root string, minFiles int) []SourceFile {
+	t.Helper()
+	return tree(t, root, minFiles, "test", func(path string) bool {
+		return strings.HasSuffix(path, "_test.go")
+	})
+}
+
+func tree(t testing.TB, root string, minFiles int, kind string, include func(path string) bool) []SourceFile {
+	t.Helper()
 
 	abs, err := filepath.Abs(root)
 	if err != nil {
@@ -155,7 +178,7 @@ func Tree(t testing.TB, root string, minFiles int) []SourceFile {
 			}
 			return nil
 		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		if !include(path) {
 			return nil
 		}
 		rel, relErr := filepath.Rel(abs, path)

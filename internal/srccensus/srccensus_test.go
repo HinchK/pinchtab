@@ -391,3 +391,41 @@ func TestTreeCarriesEachFilesTextAndAModuleRelativeName(t *testing.T) {
 		t.Errorf("second file = %+v, want a slash-separated relative name and its text", files[1])
 	}
 }
+
+// TestTree exists because a rule ABOUT tests cannot be checked over the files Tree returns —
+// it excludes exactly them. The point of it living here rather than as a bespoke walk in the
+// package that needs it is that the exclusions are inherited, so both halves are asserted:
+// the file class it selects, and the nested checkout it still skips.
+func TestTestTreeSelectsTestFilesAndInheritsTheExclusions(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"keep_test.go":                      "package p\n",
+		"nested/also_test.go":               "package p\n",
+		"production.go":                     "package p\n",
+		"notes.txt":                         "text\n",
+		"scratch-copy/.git":                 "gitdir: /elsewhere\n",
+		"scratch-copy/leaked_test.go":       "package p\n",
+		"node_modules/dep/vendored_test.go": "package p\n",
+	})
+
+	var names []string
+	for _, file := range TestTree(t, root, 2) {
+		names = append(names, file.Name)
+	}
+
+	want := []string{"keep_test.go", "nested/also_test.go"}
+	if strings.Join(names, ",") != strings.Join(want, ",") {
+		t.Errorf("TestTree = %v, want exactly %v — production sources and non-Go files are not its subject, and a nested checkout's copies are not module source", names, want)
+	}
+}
+
+// The floor message has to name the class it counted, or a census that walked the wrong file
+// class reads as a census that found too little.
+func TestTestTreeFloorNamesTheFileClassItCounted(t *testing.T) {
+	root := writeTree(t, map[string]string{"only_test.go": "package p\n"})
+
+	got := mustFatal(t, func(tb testing.TB) { TestTree(tb, root, 5) })
+
+	if !strings.Contains(got, "test files") {
+		t.Errorf("floor failure said %q, want it to name the file class counted", got)
+	}
+}
