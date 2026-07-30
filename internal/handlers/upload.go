@@ -18,12 +18,8 @@ import (
 )
 
 type uploadRequest struct {
-	Selector string   `json:"selector"`
-	Files    []string `json:"files"`
-	// FileNames names the entries of Files by index, so a page sees the file
-	// the caller actually sent rather than a synthetic one. Optional and
-	// index-aligned: a short or absent list leaves the remaining files on the
-	// content-sniffed name, which is all a caller posting bare blobs can offer.
+	Selector  string   `json:"selector"`
+	Files     []string `json:"files"`
 	FileNames []string `json:"fileNames"`
 	Paths     []string `json:"paths"`
 }

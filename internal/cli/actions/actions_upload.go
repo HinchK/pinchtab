@@ -23,10 +23,6 @@ func Upload(client *http.Client, base, token string, args []string, selector, ta
 			cli.Fatal("Failed to read %s: %v", path, err)
 		}
 		files = append(files, base64.StdEncoding.EncodeToString(data))
-		// The page reads file.name from the name the server stages under, so the
-		// name the user typed has to travel with the bytes. Without it every
-		// upload arrives as upload-<i>.bin and any form gating on the extension
-		// rejects it — and the CLI is holding the real name right here.
 		fileNames = append(fileNames, filepath.Base(path))
 	}
 
