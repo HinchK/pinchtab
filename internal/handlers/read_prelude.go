@@ -72,6 +72,9 @@ func (h *Handlers) resolveBinaryReadContext(w http.ResponseWriter, r *http.Reque
 		WriteTabContextError(w, err, 404)
 		return "", nil, nil, false
 	}
+	if h.refuseIfDialogBlocked(w, resolvedTabID) {
+		return "", nil, nil, false
+	}
 	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
 		return "", nil, nil, false
 	}

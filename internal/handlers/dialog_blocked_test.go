@@ -80,6 +80,17 @@ func TestDialogBlockedIsTheSameContractOnReadsAndActions(t *testing.T) {
 			body := bytes.NewReader([]byte(`{"kind":"click","tabId":"tab1","nodeId":42}`))
 			h.HandleAction(w, httptest.NewRequest("POST", "/action", body))
 		}},
+		// The visual exports ride resolveBinaryReadContext, the sibling prelude —
+		// these rows are what stop the two preludes diverging on the guard again.
+		{"screenshot", func(h *Handlers, w *httptest.ResponseRecorder) {
+			h.HandleScreenshot(w, httptest.NewRequest("GET", "/screenshot?tabId=tab1", nil))
+		}},
+		{"pdf", func(h *Handlers, w *httptest.ResponseRecorder) {
+			h.HandlePDF(w, httptest.NewRequest("GET", "/pdf?tabId=tab1", nil))
+		}},
+		{"annotate", func(h *Handlers, w *httptest.ResponseRecorder) {
+			h.HandleAnnotate(w, httptest.NewRequest("GET", "/annotate?tabId=tab1", nil))
+		}},
 	}
 
 	for _, dialog := range dialogs {
@@ -116,12 +127,32 @@ func TestBusyTabWithAPendingDialogIsDialogBlockedNotUnresponsive(t *testing.T) {
 }
 
 func TestReadsAreNotDialogBlockedWithoutAPendingDialog(t *testing.T) {
-	mb := &mockBridge{}
-	h := New(mb, &config.RuntimeConfig{ActionTimeout: time.Second}, nil, nil, nil)
+	for _, path := range []struct {
+		name string
+		call func(h *Handlers, w *httptest.ResponseRecorder)
+	}{
+		{"url", func(h *Handlers, w *httptest.ResponseRecorder) {
+			h.HandleURL(w, httptest.NewRequest("GET", "/url?tabId=tab1", nil))
+		}},
+		{"screenshot", func(h *Handlers, w *httptest.ResponseRecorder) {
+			h.HandleScreenshot(w, httptest.NewRequest("GET", "/screenshot?tabId=tab1", nil))
+		}},
+		{"pdf", func(h *Handlers, w *httptest.ResponseRecorder) {
+			h.HandlePDF(w, httptest.NewRequest("GET", "/pdf?tabId=tab1", nil))
+		}},
+		{"annotate", func(h *Handlers, w *httptest.ResponseRecorder) {
+			h.HandleAnnotate(w, httptest.NewRequest("GET", "/annotate?tabId=tab1", nil))
+		}},
+	} {
+		t.Run(path.name, func(t *testing.T) {
+			mb := &mockBridge{}
+			h := New(mb, &config.RuntimeConfig{ActionTimeout: time.Second}, nil, nil, nil)
 
-	w := httptest.NewRecorder()
-	h.HandleURL(w, httptest.NewRequest("GET", "/url?tabId=tab1", nil))
-	if w.Code == http.StatusConflict {
-		t.Fatalf("read refused as dialog-blocked with no dialog pending: %s", w.Body.String())
+			w := httptest.NewRecorder()
+			path.call(h, w)
+			if w.Code == http.StatusConflict {
+				t.Fatalf("refused as dialog-blocked with no dialog pending: %s", w.Body.String())
+			}
+		})
 	}
 }
