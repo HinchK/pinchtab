@@ -32,19 +32,19 @@ Structured semantic locators are matched by the semantic engine; CSS, XPath, ref
 
 ## Interaction
 
-All element-action tools accept the unified `selector` and the legacy aliases `ref` (deprecated) and `query` (semantic shorthand).
+All element-action tools accept the unified `selector` and the legacy aliases `ref` (deprecated) and `query` (semantic shorthand). Every one of them also accepts `nodeId` (a backend node ID from a snapshot) as an alternative target. Coordinates (`x`/`y`) are accepted only by `pinchtab_click`, `pinchtab_hover` and `pinchtab_scroll` — the other kinds have no coordinate behaviour.
 
 | Tool | Key Parameters | Notes |
 | --- | --- | --- |
 | `pinchtab_click` | `selector`, `ref`, `query`, `tabId`, `x`, `y`, `nodeId`, `dialogAction`, `dialogText`, `waitNav`, `mode`, `snap` | Click element by selector or coordinate; `mode` accepts `dom` or `dispatch` as a broad low-level escape hatch for click delivery; `mode` and `humanize` are mutually exclusive; `dialogAction` handles a dialog opened by the click; `waitNav=true` waits for navigation; `snap=true` returns a snapshot |
-| `pinchtab_type` | `selector`, `ref`, `query`, `text` required, `tabId` | Sends key events at the targeted input |
-| `pinchtab_press` | `key` required, `tabId` | Press a key such as `Enter` |
+| `pinchtab_type` | `selector`, `ref`, `query`, `nodeId`, `text` required, `tabId` | Sends key events at the targeted input; target with `selector` or `nodeId` |
+| `pinchtab_press` | `key` required, `nodeId`, `tabId` | Press a key such as `Enter`; `nodeId` focuses that node first, otherwise the key goes to the focused element |
 | `pinchtab_hover` | `selector`, `ref`, `query`, `tabId`, `x`, `y`, `nodeId` | Hover an element or coordinate |
 | `pinchtab_focus` | `selector`, `ref`, `query`, `tabId`, `nodeId` | Focus element |
-| `pinchtab_select` | `selector`, `ref`, `query`, `value` required, `tabId`, `snap` | Select `<option>` by value or visible text |
-| `pinchtab_scroll` | `selector`, `ref`, `query`, `pixels`, `deltaX`, `deltaY`, `direction`, `steps`, `x`, `y`, `tabId` | Omit `selector` to scroll the page; element + `pixels` uses wheel semantics; `direction` accepts `up`/`down` |
-| `pinchtab_scroll_into_view` | `selector`, `ref`, `query`, `tabId` | Scrolls the target into view and returns geometry for stable follow-up actions |
-| `pinchtab_fill` | `selector`, `ref`, `query`, `value` required, `tabId`, `snap` | Direct fill via JS dispatch instead of keystrokes |
+| `pinchtab_select` | `selector`, `ref`, `query`, `nodeId`, `value` required, `tabId`, `snap` | Select `<option>` by value or visible text; target with `selector` or `nodeId` |
+| `pinchtab_scroll` | `selector`, `ref`, `query`, `nodeId`, `pixels`, `deltaX`, `deltaY`, `direction`, `steps`, `x`, `y`, `tabId` | Omit every target to scroll the page; element + `pixels` uses wheel semantics; `direction` accepts `up`/`down` |
+| `pinchtab_scroll_into_view` | `selector`, `ref`, `query`, `nodeId`, `tabId` | Scrolls the target into view and returns geometry for stable follow-up actions; target with `selector` or `nodeId` |
+| `pinchtab_fill` | `selector`, `ref`, `query`, `nodeId`, `value` required, `tabId`, `snap` | Direct fill via JS dispatch instead of keystrokes; target with `selector` or `nodeId` |
 
 ## Keyboard
 

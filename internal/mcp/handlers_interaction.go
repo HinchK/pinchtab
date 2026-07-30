@@ -15,6 +15,12 @@ import (
 // also has mode, so only click can hit the mutual-exclusion rule.
 var humanizeAction = map[string]bool{"click": true, "hover": true}
 
+// xyAction is the set of kinds that can be targeted by coordinate, mirroring the
+// tools that declare x/y. The bridge honours x/y only for these kinds — the text
+// and form actions target by nodeId or selector — so reading it for every kind
+// forwarded an inert, undiscoverable and unvalidated pair, hasXY included.
+var xyAction = map[string]bool{"click": true, "hover": true, "scroll": true}
+
 func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		payload := map[string]any{"kind": kind}
@@ -23,7 +29,10 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			payload["tabId"] = tabID
 		}
 
-		x, y, hasXY := resolveXY(r)
+		x, y, hasXY := 0.0, 0.0, false
+		if xyAction[kind] {
+			x, y, hasXY = resolveXY(r)
+		}
 		if hasXY {
 			payload["x"] = x
 			payload["y"] = y
@@ -94,7 +103,7 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			}
 
 		case "type":
-			if _, err := resolveSelector(true); err != nil {
+			if _, err := resolveSelector(!hasNodeID); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			text := firstNonEmptyString(r, "text", "value")
@@ -111,7 +120,7 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			payload["key"] = key
 
 		case "select":
-			if _, err := resolveSelector(true); err != nil {
+			if _, err := resolveSelector(!hasNodeID); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			value := firstNonEmptyString(r, "value", "option")
@@ -171,12 +180,12 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			}
 
 		case "scrollintoview":
-			if _, err := resolveSelector(true); err != nil {
+			if _, err := resolveSelector(!hasNodeID); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 
 		case "fill":
-			if _, err := resolveSelector(true); err != nil {
+			if _, err := resolveSelector(!hasNodeID); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
 			value := firstNonEmptyString(r, "value", "text")

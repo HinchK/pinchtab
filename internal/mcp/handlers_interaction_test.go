@@ -341,3 +341,128 @@ func TestHandleFocus(t *testing.T) {
 		t.Errorf("expected focus, got %s", text)
 	}
 }
+
+// actionToolTargets is the per-tool matrix this card decided: every action tool
+// declares nodeId, because the bridge honours req.NodeID for every one of the nine
+// kinds. requiredArgs are the tool's own non-target requirements, and
+// selectorOptionalWithNodeID marks the tools whose MCP layer used to demand a
+// selector even though the bridge does not.
+var actionToolTargets = []struct {
+	tool                       string
+	requiredArgs               map[string]any
+	selectorOptionalWithNodeID bool
+}{
+	{tool: "pinchtab_click", selectorOptionalWithNodeID: true},
+	{tool: "pinchtab_hover", selectorOptionalWithNodeID: true},
+	{tool: "pinchtab_focus", selectorOptionalWithNodeID: true},
+	{tool: "pinchtab_type", requiredArgs: map[string]any{"text": "hi"}, selectorOptionalWithNodeID: true},
+	{tool: "pinchtab_fill", requiredArgs: map[string]any{"value": "v"}, selectorOptionalWithNodeID: true},
+	{tool: "pinchtab_select", requiredArgs: map[string]any{"value": "v"}, selectorOptionalWithNodeID: true},
+	{tool: "pinchtab_scroll_into_view", selectorOptionalWithNodeID: true},
+	{tool: "pinchtab_scroll"},
+	{tool: "pinchtab_press", requiredArgs: map[string]any{"key": "Enter"}},
+}
+
+func actionArgs(tool string, extra map[string]any) map[string]any {
+	args := map[string]any{}
+	for _, entry := range actionToolTargets {
+		if entry.tool != tool {
+			continue
+		}
+		for name, value := range entry.requiredArgs {
+			args[name] = value
+		}
+	}
+	for name, value := range extra {
+		args[name] = value
+	}
+	return args
+}
+
+// nodeId was read before the switch on kind, so all nine tools forwarded it, but
+// only click, hover and focus declared it. On the other six that meant no
+// discovery and — because validateTypedArgs keys its type map per tool — no
+// validation either, so a malformed value was dropped in silence.
+func TestEveryActionToolAcceptsAndValidatesNodeID(t *testing.T) {
+	for _, tc := range actionToolTargets {
+		t.Run(tc.tool, func(t *testing.T) {
+			srv, _ := upstreamRecorder(t)
+			result := callTool(t, tc.tool, actionArgs(tc.tool, map[string]any{"selector": "#a", "nodeId": float64(42)}), srv)
+			if result.IsError {
+				t.Fatalf("a valid nodeId was rejected: %s", resultText(t, result))
+			}
+			body, _ := resultJSON(t, result)["body"].(map[string]any)
+			if got, ok := body["nodeId"]; !ok || got != float64(42) {
+				t.Errorf("outbound nodeId = %v (present: %v), want 42 — the bridge honours it for this kind", got, ok)
+			}
+
+			srv2, paths := upstreamRecorder(t)
+			malformed := callTool(t, tc.tool, actionArgs(tc.tool, map[string]any{"selector": "#a", "nodeId": "abc"}), srv2)
+			if !malformed.IsError {
+				t.Fatalf("nodeId \"abc\" was accepted and silently dropped; upstream saw %v", *paths)
+			}
+			if text := resultText(t, malformed); !strings.Contains(text, "nodeId") {
+				t.Errorf("rejection %q does not name nodeId, so the caller cannot correct it", text)
+			}
+			if len(*paths) != 0 {
+				t.Errorf("upstream was called %v despite the malformed argument", *paths)
+			}
+		})
+	}
+}
+
+// The MCP layer required a selector on type, fill, select and scroll_into_view
+// even though the bridge resolves those kinds from NodeID alone. Declaring nodeId
+// there without relaxing this would advertise an argument that cannot be used.
+func TestNodeIDAloneSatisfiesTheTargetRequirement(t *testing.T) {
+	for _, tc := range actionToolTargets {
+		if !tc.selectorOptionalWithNodeID {
+			continue
+		}
+		t.Run(tc.tool, func(t *testing.T) {
+			srv, _ := upstreamRecorder(t)
+			result := callTool(t, tc.tool, actionArgs(tc.tool, map[string]any{"nodeId": float64(42)}), srv)
+			if result.IsError {
+				t.Fatalf("nodeId alone was rejected: %s", resultText(t, result))
+			}
+			body, _ := resultJSON(t, result)["body"].(map[string]any)
+			if _, ok := body["selector"]; ok {
+				t.Errorf("outbound body carries a selector the caller never sent: %v", body)
+			}
+			if got := body["nodeId"]; got != float64(42) {
+				t.Errorf("outbound nodeId = %v, want 42", got)
+			}
+
+			srv2, paths := upstreamRecorder(t)
+			neither := callTool(t, tc.tool, actionArgs(tc.tool, nil), srv2)
+			if !neither.IsError {
+				t.Fatalf("a call with no target at all was accepted; upstream saw %v", *paths)
+			}
+			if text := resultText(t, neither); !strings.Contains(text, "selector") {
+				t.Errorf("the no-target rejection %q should still name selector", text)
+			}
+		})
+	}
+}
+
+// x/y had the same shape as nodeId — read before the switch, so forwarded for all
+// nine kinds with hasXY set — but the opposite correct answer: the bridge honours
+// coordinates only for the pointer kinds, so the fix is to stop reading it
+// elsewhere rather than to declare it everywhere.
+func TestCoordinatesReachTheWireOnlyForTheToolsThatDeclareThem(t *testing.T) {
+	for _, tc := range actionToolTargets {
+		t.Run(tc.tool, func(t *testing.T) {
+			_, declared := schemaArgTypesOnce()[tc.tool]["x"]
+			srv, _ := upstreamRecorder(t)
+			result := callTool(t, tc.tool, actionArgs(tc.tool, map[string]any{"selector": "#a", "x": float64(11), "y": float64(22)}), srv)
+			if result.IsError {
+				t.Fatalf("coordinates were rejected: %s", resultText(t, result))
+			}
+			body, _ := resultJSON(t, result)["body"].(map[string]any)
+			_, forwarded := body["hasXY"]
+			if declared != forwarded {
+				t.Errorf("%s declares x/y = %v but forwards them = %v (body %v)", tc.tool, declared, forwarded, body)
+			}
+		})
+	}
+}

@@ -224,10 +224,13 @@ func TestEveryHandlerHasASchemaAndEverySchemaAHandler(t *testing.T) {
 // see it either — it derives from the schemas, so an undeclared argument keeps the
 // silent-coercion-drop this package otherwise rejects.
 //
-// Name-level, not per-tool, and deliberately so: a per-tool assertion needs a
-// tool-to-handler-source mapping that is declared nowhere and would be brittle
-// enough to invite deletion. Name-level needs no mapping and still catches the
-// class.
+// NAME-LEVEL, not per-tool: an argument passes as soon as ONE tool declares it,
+// so this census cannot see an argument read for a kind whose own tool omits it —
+// which is how nodeId and x/y were each read for all nine action tools while
+// three declared them. TestNoActionToolIsSentATypedArgumentItDoesNotDeclare covers
+// that per-tool half behaviourally, for the action family. The two are not one
+// check: this one spans every handler in the package and catches a name declared
+// nowhere at all; that one is narrower in scope and stricter within it.
 //
 // optString is deliberately NOT scanned. A string argument read without a
 // declaration is undiscoverable but not a correctness hazard: there is no
@@ -377,4 +380,93 @@ func TestOnlyPointerToolsDeclareHumanize(t *testing.T) {
 			t.Errorf("handler forwards humanize for %q but pinchtab_%s does not declare it", kind, kind)
 		}
 	}
+}
+
+// The per-tool half the name-level census above cannot see. A typed argument read
+// for a kind whose tool does not declare it is undiscoverable AND unvalidated,
+// because validateTypedArgs keys its type map per tool — the name being declared
+// somewhere else does not help the tool being called. handleAction reads its
+// arguments before switching on kind, so this is where that goes wrong.
+//
+// Behavioural rather than structural: reachability is observed as an effect on the
+// wire (the argument, or anything derived from it, in the outbound body) or as an
+// extra upstream request. That needs no tool-to-handler-source mapping and cannot
+// go stale as the handler moves code around. Its blind spot is an undeclared read
+// with no observable effect at all, which by construction changes nothing.
+func TestNoActionToolIsSentATypedArgumentItDoesNotDeclare(t *testing.T) {
+	// Arguments the handler only reads as a set; sending one alone proves nothing.
+	groups := [][]string{{"x", "y"}}
+	grouped := map[string]bool{}
+	for _, group := range groups {
+		for _, name := range group {
+			grouped[name] = true
+		}
+	}
+	for _, tc := range actionToolTargets {
+		for name := range schemaArgTypesOnce()[tc.tool] {
+			if !grouped[name] {
+				groups = append(groups, []string{name})
+				grouped[name] = true
+			}
+		}
+	}
+
+	// The declared type of each name, taken from whichever action tool declares it,
+	// so the probe value is one the accessor would actually read.
+	typeOf := map[string]string{}
+	for _, tc := range actionToolTargets {
+		for name, kind := range schemaArgTypesOnce()[tc.tool] {
+			typeOf[name] = kind
+		}
+	}
+
+	const sentinel = 424242.0
+	checked := 0
+	for _, tc := range actionToolTargets {
+		declared := schemaArgTypesOnce()[tc.tool]
+		for _, group := range groups {
+			kinds := map[string]int{}
+			for _, name := range group {
+				kinds[declared[name]]++
+			}
+			if len(kinds) != 1 {
+				t.Errorf("%s declares %v inconsistently (%v); the group must be all-or-nothing", tc.tool, group, kinds)
+				continue
+			}
+			if _, isDeclared := declared[group[0]]; isDeclared {
+				continue
+			}
+
+			args := actionArgs(tc.tool, map[string]any{"selector": "#a"})
+			for _, name := range group {
+				if typeOf[name] == "boolean" {
+					args[name] = true
+					continue
+				}
+				args[name] = sentinel
+			}
+			checked++
+
+			srv, paths := upstreamRecorder(t)
+			result := callTool(t, tc.tool, args, srv)
+			if result.IsError {
+				t.Fatalf("%s rejected undeclared %v outright (%s); this guard expects it to be ignored", tc.tool, group, resultText(t, result))
+			}
+			body, _ := resultJSON(t, result)["body"].(map[string]any)
+			for field, value := range body {
+				if value == sentinel || value == true || field == "hasXY" {
+					t.Errorf("pinchtab_%s: %v is reachable for kind %q but the tool does not declare it — outbound body carries %s=%v, so it is undiscoverable and validateTypedArgs cannot type-check it",
+						strings.TrimPrefix(tc.tool, "pinchtab_"), group, tc.tool, field, value)
+					break
+				}
+			}
+			if len(*paths) != 1 {
+				t.Errorf("%s made %v upstream requests with undeclared %v; the argument changed behaviour it cannot be validated for", tc.tool, *paths, group)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no undeclared (tool, argument) pair exercised — this guard is checking nothing")
+	}
+	t.Logf("checked %d undeclared (tool, typed argument) pairs across %d action tools", checked, len(actionToolTargets))
 }
