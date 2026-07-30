@@ -51,11 +51,25 @@ func TestRotatedIdentitySendsClientHintsThatAgreeWithTheUserAgent(t *testing.T) 
 	})
 
 	// Each load fetches its OWN path and reads back the headers recorded for that path, so a
-	// row cannot be handed a request it did not cause. The slot this replaces was written by
-	// every request the server saw, and Chrome fetches /favicon.ico after each load — from
-	// the browser process, which bypasses Network.setUserAgentOverride, so those carry the
-	// default HeadlessChrome UA. Under load that fetch could land between a row's navigation
-	// and its read, and the row asserted on it.
+	// row cannot be handed a request it did not cause.
+	//
+	// MEASURED, by logging every request this fixture causes: five arrive, only three of them
+	// the test's own. Chrome fetches /favicon.ico after each navigation, and those two land
+	// between the rows — at a position that moves from run to run. The slot this replaces was
+	// written by every one of them, so a row could read a request it never made.
+	//
+	// The favicons carry the override in effect when they are SENT — they were seen with the
+	// windows/edge UA, not a default one — so they are NOT exempt from
+	// Network.setUserAgentOverride. What the old capture could hand a row was therefore the
+	// PREVIOUS row's persona. Said explicitly because the opposite is easy to assume, and a
+	// reader who believes favicons bypass the override will reason wrongly about what any
+	// capture like this can see.
+	//
+	// The reported failure named the browser's own HeadlessChrome default, which can only come
+	// from a request issued before ANY override — here, the baseline navigation. That exact
+	// ordering was not reproduced, and this comment does not invent one. The structural fact is
+	// enough and is what the fix rests on: three unrelated writers, and a capture with no way to
+	// say which request it read.
 	load := func(path string) http.Header {
 		t.Helper()
 		if err := chromedp.Run(ctx, chromedp.Navigate(server.URL+path)); err != nil {
