@@ -50,9 +50,12 @@ func dispatchDaemonCommand(subcommand string, jsonOut bool) int {
 		return 0
 	}
 
-	if err := requireDaemonInstalled(subcommand); err != nil {
-		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, err.Error()))
-		return 1
+	policy, declared := daemonNotInstalledPolicies[subcommand]
+	if !declared {
+		return printDaemonUsage(subcommand)
+	}
+	if handled, code := applyDaemonNotInstalledPolicy(subcommand, policy); handled {
+		return code
 	}
 
 	manager, err := daemonCurrentManager()
@@ -73,11 +76,15 @@ func dispatchDaemonCommand(subcommand string, jsonOut bool) int {
 	case "uninstall":
 		handleDaemonUninstall(manager)
 	default:
-		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("unknown daemon command: %s", subcommand)))
-		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.MutedStyle, "Usage: pinchtab daemon <status|install|start|restart|stop|uninstall>"))
-		return 2
+		return printDaemonUsage(subcommand)
 	}
 	return 0
+}
+
+func printDaemonUsage(subcommand string) int {
+	fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("unknown daemon command: %s", subcommand)))
+	fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.MutedStyle, "Usage: pinchtab daemon <status|install|start|restart|stop|uninstall>"))
+	return 2
 }
 
 func isDaemonStatusSubcommand(subcommand string) bool {
@@ -88,18 +95,77 @@ func isDaemonStatusSubcommand(subcommand string) bool {
 	return false
 }
 
-func requireDaemonInstalled(subcommand string) error {
-	if subcommand != "start" && subcommand != "restart" {
-		return nil
+// daemonNotInstalledPolicy is what one lifecycle verb does when the service is not
+// installed. Every verb DECLARES its answer: the previous guard skipped the check for
+// anything that was not start or restart, so stop and uninstall bypassed it by
+// construction and affirmed work they had not done. A verb missing from the table below
+// is not silently unguarded — it does not dispatch at all.
+type daemonNotInstalledPolicy int
+
+const (
+	// daemonRefuse: exit 1 with the install remedy, touching no manager.
+	daemonRefuse daemonNotInstalledPolicy = iota
+	// daemonNoOp: exit 0 saying plainly that there was nothing to do.
+	daemonNoOp
+	// daemonProceed: the not-installed state is this verb's normal input.
+	daemonProceed
+)
+
+// The contract is idempotent for stop and uninstall, and that is not a fresh choice —
+// it is the one the manager layer already made. launchdManager.Stop swallows the
+// not-loaded error and Uninstall swallows os.ErrNotExist on removing the plist, both
+// deliberately, so refusing here would contradict the layer below and break the
+// provisioning chain `daemon stop && daemon install && daemon start`, which never
+// reaches install if stop exits 1.
+var daemonNotInstalledPolicies = map[string]daemonNotInstalledPolicy{
+	"install":   daemonProceed,
+	"start":     daemonRefuse,
+	"restart":   daemonRefuse,
+	"stop":      daemonNoOp,
+	"uninstall": daemonNoOp,
+}
+
+// daemonNothingToDo is the honest wording for a no-op verb. It states the observed fact
+// and what did not happen, where "  [ok] Pinchtab daemon stopped." asserted an action
+// that was never performed — which an operator, or a provisioning script reading exit 0
+// plus that sentence, takes as confirmation.
+var daemonNothingToDo = map[string]string{
+	"stop":      "Background service is not installed; nothing to stop.",
+	"uninstall": "Background service is not installed; nothing to uninstall.",
+}
+
+// applyDaemonNotInstalledPolicy asks the installation question ONCE and lets the verb's
+// policy decide the wording and the exit code. It reports handled=true when the verb is
+// finished and must not reach a manager.
+func applyDaemonNotInstalledPolicy(subcommand string, policy daemonNotInstalledPolicy) (bool, int) {
+	if policy == daemonProceed {
+		return false, 0
 	}
+
 	installed, err := daemonInstallationStatus()
 	if err != nil {
-		return fmt.Errorf("cannot determine whether the background service is installed; refusing to %s: %w", subcommand, err)
+		if policy == daemonRefuse {
+			fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle,
+				fmt.Sprintf("cannot determine whether the background service is installed; refusing to %s: %v", subcommand, err)))
+			return true, 1
+		}
+		// Could-not-read is not absence, and must never be rendered as one: "nothing to
+		// stop" built from an unknown is a false statement. The managers already tolerate
+		// a service that is not there, so the honest move is to attempt the operation and
+		// report whatever they say.
+		return false, 0
 	}
 	if installed {
-		return nil
+		return false, 0
 	}
-	return fmt.Errorf("background service is not installed; install it first with: pinchtab daemon install")
+
+	if policy == daemonRefuse {
+		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle,
+			"background service is not installed; install it first with: pinchtab daemon install"))
+		return true, 1
+	}
+	fmt.Println(cli.StyleStdout(cli.SuccessStyle, "  [ok] ") + daemonNothingToDo[subcommand])
+	return true, 0
 }
 
 func handleDaemonInstall(manager daemon.Manager) {

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -139,7 +140,11 @@ func TestDaemonActionsReachManager(t *testing.T) {
 	}{
 		{sub: "start", installed: true, want: []string{"Start"}},
 		{sub: "restart", installed: true, want: []string{"Restart"}},
-		{sub: "stop", installed: false, want: []string{"Stop"}},
+		// installed:true on purpose. This case used to read installed:false and expect
+		// the manager to be called, which encoded the defect: stop reached the manager
+		// with nothing installed and then affirmed it had stopped something.
+		{sub: "stop", installed: true, want: []string{"Stop"}},
+		{sub: "uninstall", installed: true, want: []string{"Uninstall"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.sub, func(t *testing.T) {
@@ -240,6 +245,148 @@ func TestPrintDaemonOverviewIncludesStatusAndHints(t *testing.T) {
 	} {
 		if !strings.Contains(output, needle) {
 			t.Fatalf("expected output to contain %q\n%s", needle, output)
+		}
+	}
+}
+
+// The no-op verbs must not affirm work they did not do. "  [ok] Pinchtab daemon
+// stopped." is an affirmative statement, and an operator — or a provisioning script
+// reading exit 0 beside it — takes it as confirmation that a service was stopped.
+// Exit 0 stays: the manager layer already swallows not-loaded and os.ErrNotExist
+// deliberately, and `daemon stop && daemon install && daemon start` never reaches
+// install if stop refuses.
+func TestDaemonStopAndUninstallReportAnHonestNoOpWhenNotInstalled(t *testing.T) {
+	for _, tc := range []struct {
+		sub     string
+		claim   string
+		nothing string
+	}{
+		{sub: "stop", claim: "stopped", nothing: "nothing to stop"},
+		{sub: "uninstall", claim: "uninstalled", nothing: "nothing to uninstall"},
+	} {
+		t.Run(tc.sub, func(t *testing.T) {
+			manager, constructed := stubDaemonSeams(t, false, nil)
+
+			var code int
+			output := captureStdout(t, func() {
+				code = dispatchDaemonCommand(tc.sub, false)
+			})
+
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0 — the contract is idempotent", code)
+			}
+			if strings.Contains(output, tc.claim) {
+				t.Errorf("output claims the service was %s when nothing was installed: %q", tc.claim, output)
+			}
+			if !strings.Contains(strings.ToLower(output), tc.nothing) {
+				t.Errorf("output %q does not say there was %s", output, tc.nothing)
+			}
+			if !strings.Contains(strings.ToLower(output), "not installed") {
+				t.Errorf("output %q does not state the observed fact", output)
+			}
+			if len(manager.calls) != 0 {
+				t.Errorf("manager was asked to act with nothing installed: %v", manager.calls)
+			}
+			if *constructed != 0 {
+				t.Errorf("manager constructed %d times, want 0", *constructed)
+			}
+		})
+	}
+}
+
+// Could-not-read is not absence. Rendering an unknown as "nothing to stop" is a false
+// statement built from a failed probe, so the no-op verbs must never say it when the
+// status query itself failed. The managers already tolerate a missing service, so the
+// honest behaviour is to attempt the operation and report what they say.
+func TestDaemonStopAndUninstallDoNotClaimNothingToDoWhenTheStateIsUnknown(t *testing.T) {
+	for _, tc := range []struct{ sub, want string }{
+		{sub: "stop", want: "Stop"},
+		{sub: "uninstall", want: "Uninstall"},
+	} {
+		t.Run(tc.sub, func(t *testing.T) {
+			manager, _ := stubDaemonSeams(t, false, errors.New("permission denied"))
+
+			var code int
+			output := captureStdout(t, func() {
+				code = dispatchDaemonCommand(tc.sub, false)
+			})
+
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0", code)
+			}
+			for _, forbidden := range []string{"nothing to", "not installed"} {
+				if strings.Contains(strings.ToLower(output), forbidden) {
+					t.Errorf("output %q claims %q from a state that could not be read", output, forbidden)
+				}
+			}
+			if strings.Join(manager.calls, ",") != tc.want {
+				t.Errorf("manager calls = %v, want [%s] — an unknown state must be attempted, not assumed absent", manager.calls, tc.want)
+			}
+		})
+	}
+}
+
+// The absence assertion: the no-op wording must not become unconditional. With a service
+// actually installed, stop still reports the real stopped message from the manager.
+func TestDaemonStopStillReportsTheRealResultWhenInstalled(t *testing.T) {
+	manager, _ := stubDaemonSeams(t, true, nil)
+
+	var code int
+	output := captureStdout(t, func() {
+		code = dispatchDaemonCommand("stop", false)
+	})
+
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0", code)
+	}
+	if !strings.Contains(output, "Pinchtab daemon stopped.") {
+		t.Errorf("output %q is not the manager's real result", output)
+	}
+	if strings.Contains(strings.ToLower(output), "nothing to stop") {
+		t.Errorf("the no-op wording is unconditional: %q", output)
+	}
+	if strings.Join(manager.calls, ",") != "Stop" {
+		t.Errorf("manager calls = %v, want [Stop]", manager.calls)
+	}
+}
+
+// The guard used to be a two-name allowlist, so every verb that was not start or restart
+// inherited "no check" by construction. A verb must now DECLARE its not-installed
+// behaviour — which is not the same as being forced to refuse — and one that does not
+// declare cannot dispatch at all, so the omission is loud rather than silent.
+func TestEveryDispatchedDaemonVerbDeclaresItsNotInstalledPolicy(t *testing.T) {
+	raw, err := os.ReadFile("cmd_daemon.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+
+	body := src[strings.Index(src, "func dispatchDaemonCommand("):]
+	body = body[:strings.Index(body, "\nfunc ")]
+
+	var verbs []string
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, `case "`) {
+			continue
+		}
+		verbs = append(verbs, strings.TrimSuffix(strings.TrimPrefix(line, `case "`), `":`))
+	}
+	if len(verbs) == 0 {
+		t.Fatal("found no dispatched verbs; this census would pass vacuously")
+	}
+
+	for _, verb := range verbs {
+		if _, declared := daemonNotInstalledPolicies[verb]; !declared {
+			t.Errorf("dispatchDaemonCommand handles %q but it declares no not-installed policy, so it inherits no guard", verb)
+		}
+	}
+	for verb, policy := range daemonNotInstalledPolicies {
+		if policy == daemonNoOp && daemonNothingToDo[verb] == "" {
+			t.Errorf("%q is a no-op verb with no honest wording, so it would print an empty claim", verb)
+		}
+		if policy != daemonNoOp && daemonNothingToDo[verb] != "" {
+			t.Errorf("%q is not a no-op verb but carries no-op wording", verb)
 		}
 	}
 }
