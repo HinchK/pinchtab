@@ -52,6 +52,12 @@ const maxUniqueNameAttempts = 512
 //
 // The caller owns the base name, including its timestamp format, so this closes the
 // collision without renaming anything a user might already be globbing for.
+//
+// SCOPE, recorded so it is not mistaken for complete: every auto-naming writer in this
+// package routes through here, but the five CLI sites in internal/cli/actions still build
+// a name and write it unconditionally. They are deferred to PIN-158 rather than given a
+// copy of this loop — a second owner of the rule is the drift worth avoiding, and sharing
+// it means moving this primitive down to a leaf package the CLI can import.
 func createUniqueFile(dir, base, ext string) (*os.File, string, error) {
 	for attempt := 0; attempt < maxUniqueNameAttempts; attempt++ {
 		name := base + ext
