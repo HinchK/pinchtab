@@ -1,6 +1,7 @@
 package fileout
 
 import (
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -196,30 +197,46 @@ func TestReservePathDelegatesToTheThreePartForm(t *testing.T) {
 // two copies of the close-and-remove pair is how the rule drifted out of one of them
 // before. Behavioural tests cannot see the difference — a copy passes them — so this is
 // a structural check on the delegation itself.
+//
+// The declaration is located anywhere in the package and each banned call is judged by
+// whether it lies INSIDE that declaration, so moving ReservePath to a sibling file keeps
+// the rule rather than reporting the function missing. Non-vacuity rests on the delegation
+// assertion, not on a match count: a ReservePath that stops calling ReserveUnique reds by
+// name here rather than fataling as an empty scan.
+//
+// There is deliberately no ban on Close: a method call resolves as "<receiver>.Close", so a
+// ban naming Close alone is blind to every real spelling of it, and the only handle
+// ReservePath could close is one CreateUnique gave it — which is banned below.
 func TestReservePathHoldsNoSecondImplementation(t *testing.T) {
-	raw, err := os.ReadFile("fileout.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	const declaration = "func ReservePath("
-	start := strings.Index(string(raw), declaration)
-	if start < 0 {
-		t.Fatalf("%s not found; this guard is pinned to a function that no longer exists", declaration)
-	}
-	body := string(raw)[start:]
-	if end := strings.Index(body, "\n}\n"); end >= 0 {
-		body = body[:end]
+	pkg := srccensus.Load(t, ".", fileoutSourceFileFloor)
+
+	fn, ok := pkg.Func("ReservePath")
+	if !ok {
+		t.Fatalf("ReservePath is not declared anywhere in %s; this guard is pinned to a function that no longer exists — re-point it at whatever replaced it rather than deleting it", pkg.Dir())
 	}
 
-	if !strings.Contains(body, "ReserveUnique(dir, base, ext)") {
-		t.Error("ReservePath no longer delegates to ReserveUnique")
+	delegates := false
+	for _, site := range pkg.CallsAllowingNone("ReserveUnique") {
+		if pkg.Contains(fn, site) {
+			delegates = true
+		}
 	}
-	for _, reimplemented := range []string{"CreateUnique(", "os.Remove(", ".Close()"} {
-		if strings.Contains(body, reimplemented) {
-			t.Errorf("ReservePath contains %q; the reserve-and-close sequence has one implementation and this is meant to be a shape over it", reimplemented)
+	if !delegates {
+		t.Errorf("%s (%s:%d) no longer calls ReserveUnique; the reserve-and-close sequence has one implementation and this is meant to be a shape over it", fn.Name, fn.File, fn.Line)
+	}
+
+	for _, banned := range []string{"CreateUnique", "os.Remove"} {
+		for _, site := range pkg.CallsAllowingNone(banned) {
+			if pkg.Contains(fn, site) {
+				t.Errorf("%s lies inside ReservePath; that is a second copy of the reserve-and-close sequence, which is how its removal went missing before — delegate to ReserveUnique instead", site)
+			}
 		}
 	}
 }
+
+// The package holds one production file today; the floor exists so a scan that stopped
+// reading it fails instead of passing over nothing.
+const fileoutSourceFileFloor = 1
 
 // TestWriteUniqueRemovesTheFileItCreatedWhenTheWriteFails pins the removal through
 // the creator seam: the stub creates a REAL file and hands back a closed handle, so

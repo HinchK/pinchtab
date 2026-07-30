@@ -13,6 +13,7 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/bridge/observe"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 // Two saves in immediate succession must land on different paths with both files intact.
@@ -139,34 +140,44 @@ func TestRecordingsOutputPathReservesEachPath(t *testing.T) {
 	}
 }
 
-// The reservation rule — create exclusively, close, remove the placeholder if the close
-// fails — belongs to internal/fileout, which pins the removal itself through an injected
-// creator. This site owes only proof that it ROUTES there and keeps no second copy of
-// the sequence: a local create-then-close is how the removal came to be missing here.
-func TestRecordingsOutputPathReservesThroughFileout(t *testing.T) {
-	raw, err := os.ReadFile("record_handlers.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	const declaration = "func (h *Handlers) recordingsOutputPath("
-	start := strings.Index(string(raw), declaration)
-	if start < 0 {
-		t.Fatalf("%s not found in record_handlers.go; this guard is pinned to a function that no longer exists", declaration)
-	}
-	body := string(raw)[start:]
-	if end := strings.Index(body, "\n}\n"); end >= 0 {
-		body = body[:end]
+// Reservation is fileout's rule — create exclusively, close, remove the placeholder when
+// the close fails — and this package owes only proof that it ROUTES there.
+//
+// The scope is the PACKAGE, not one file. The guard this replaces opened record_handlers.go
+// by name, so network_export.go reserved with no guard at all: the exact sequence the
+// reservation fix removed could be reinstated there today with a green suite. Deriving the
+// scope covers both sites and every future one for free.
+//
+// The ban is on the CALL, not on tokens. fileout.CreateUnique hands back an OPEN handle, and
+// closing it to reserve a name is the hand-rolled sequence whose removal-on-failed-close went
+// missing here; everything in this package reserves through ReserveUnique or writes through
+// WriteUnique instead. Banning ".Close()" over a whole package would red on eleven correct
+// calls across five files — network_export.go closes the export file it wrote, twice — and a
+// census that reds on correct code gets loosened or deleted, which is how the gap came back
+// the first time.
+func TestEveryReservationInThisPackageRoutesThroughFileout(t *testing.T) {
+	pkg := srccensus.Load(t, ".", handlersSourceFileFloor)
+
+	for _, site := range pkg.CallsAllowingNone("fileout.CreateUnique") {
+		t.Errorf("%s hands back an OPEN handle, and closing it to reserve a name is the copy whose removal-on-failed-close went missing — call fileout.ReserveUnique, or fileout.WriteUnique to write in one step", site)
 	}
 
-	if !strings.Contains(body, "fileout.ReserveUnique(") {
-		t.Error("recordingsOutputPath no longer reserves through fileout.ReserveUnique, so the removal on a failed close is not inherited")
-	}
-	for _, reimplemented := range []string{"createUniqueFile(", ".Close()", "os.Remove("} {
-		if strings.Contains(body, reimplemented) {
-			t.Errorf("recordingsOutputPath contains %q; the reserve-and-close sequence has one owner in internal/fileout, and a local copy is how its removal went missing", reimplemented)
-		}
+	routed := append(
+		pkg.CallsAllowingNone("fileout.ReserveUnique"),
+		pkg.CallsAllowingNone("fileout.WriteUnique")...,
+	)
+	if len(routed) < reservationRouteFloor {
+		t.Fatalf("found %d fileout reservation calls in %s, want at least %d; the routing this guard defends is gone, so the ban above now guards air — re-point it at whatever replaced it rather than deleting it", len(routed), pkg.Dir(), reservationRouteFloor)
 	}
 }
+
+const (
+	// Well under the real count, so ordinary growth or deletion does not trip it while a
+	// scan that stopped seeing most of the package still fails.
+	handlersSourceFileFloor = 90
+	// One per production reserver: record_handlers, network_export and binary_export.
+	reservationRouteFloor = 3
+)
 
 // stubExportEncoder is the smallest ExportEncoder writeExportFile will accept, so the
 // naming and overwrite policy can be driven without a browser.

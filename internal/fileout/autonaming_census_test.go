@@ -40,8 +40,12 @@ var timestampLayouts = []string{"150405", "15-04-05", "15_04_05", "15.04.05"}
 // earlier output. Package-qualified, so one map serves the whole module and a reader can
 // see which package each decision belongs to. Every entry is a boundary decision, which
 // is why each carries its reason rather than just a path.
+//
+// The KEYS are checked in both directions; a reason's TEXT is only printed. It is
+// documentation for the next reader, not a check, so it rots silently unless someone
+// updating a site updates it here too — this entry credited a helper deleted a card ago.
 var autoNamingSites = map[string]string{
-	"internal/handlers/binary_export.go": "exportTimestamp only builds the base name; fileout reserves the path",
+	"internal/handlers/binary_export.go": "exportTimestamp only builds the base name; fileout.WriteUnique reserves the path and writes it",
 	"internal/handlers/record_handlers.go": "the recording base name is reserved by " +
 		"fileout.ReserveUnique before it is returned",
 	"internal/cli/actions/actions_capture.go":    "writeOutputFile with autoNamed",
