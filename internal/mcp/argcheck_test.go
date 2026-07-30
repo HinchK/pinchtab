@@ -405,6 +405,43 @@ func (p argumentProbe) label() string { return strings.Join(p.args, "+") }
 
 // combinationProbes are the probes whose arguments the handler only reads as a set.
 // Everything else is derived as a singleton from the tools' own declarations.
+//
+// THE BOUNDARY, and it is deliberate. Each probe is sent alone or with the companions
+// listed here, so the guard cannot see a leak that fires ONLY alongside an argument it
+// does not pair with — pixels gated on direction reaches every tool while both halves
+// of this test stay green, because the control only asks whether pixels can ever have
+// an effect (it can, on scroll, alone) and the sweep never sends direction with it.
+// The singleton form of the same leak reds immediately; the mutations recorded on the
+// card bracket that difference on both sides.
+//
+// Enumerating the gap is combinatorial: the escape is per (probe, companion) PAIR, not
+// per argument, so it grows with every typed argument added. The cheap alternative —
+// one maximal probe per tool with every typed argument set at once — was considered and
+// declined, because it does not catch this class either: the companion is frequently a
+// STRING (direction here, mode elsewhere), and this guard never probes strings by
+// design, since nothing is coerced and so nothing is silently dropped. Extending the
+// maximal probe to strings needs a plausible value per string argument, which is a new
+// hand-maintained map — the staleness this guard is built to avoid, in a different
+// denomination.
+//
+// THE PRECONDITION is what makes that acceptable rather than ignored. A leak of this
+// shape needs a typed argument read BEFORE the kind switch in handleAction that is
+// neither declared by every action tool nor gated by a kind set. All three current
+// pre-switch reads are covered by one of those, measured rather than assumed:
+//
+//	x, y    gated by xyAction, whose members are exactly the three action tools that
+//	        declare x/y (click, hover, scroll); the other six never reach the read
+//	nodeId  ungated, but declared by all nine action tools, so there is no tool it
+//	        can leak to
+//	tabId   read pre-switch and declared on every action tool, but as a string, which
+//	        this guard's alphabet excludes for the reason above
+//
+// Every other typed argument is read inside its own case, where kind gating prevents a
+// cross-tool leak by construction. So a reviewer's trigger is specific: a FOURTH
+// pre-switch typed read, with neither mechanism, is what would make this gap reachable.
+// Until then it is a hole in front of a shape the file does not contain, and this is
+// where the chain of cards over this guard stops — not for lack of a next step, but
+// because the next step costs more than the hazard.
 var combinationProbes = []argumentProbe{
 	{args: []string{"x", "y"}},
 	{args: []string{"steps"}, companions: map[string]any{"direction": "down"}},
