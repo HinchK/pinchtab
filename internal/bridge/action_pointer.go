@@ -19,6 +19,8 @@ var mouseDownByCoordinateAction = MouseDownByCoordinate
 var mouseUpByCoordinateAction = MouseUpByCoordinate
 var clickByCoordinateAction = ClickByCoordinate
 var clickElementAction = ClickElement
+var hoverElementAction = HoverElement
+var hoverCoordinateAction = Hover
 var clickByNodeIDAction = ClickByNodeID
 var jsClickByBackendNodeAction = JSClickByBackendNode
 var dispatchClickByBackendNodeAction = JSDispatchClickByBackendNode
@@ -425,6 +427,9 @@ func (b *Bridge) actionDoubleClick(ctx context.Context, req ActionRequest) (resu
 }
 
 func (b *Bridge) actionHover(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	if b.effectiveHumanize(req) {
+		return b.actionHumanizedHover(ctx, req)
+	}
 	if req.NodeID > 0 {
 		return map[string]any{"hovered": true}, HoverByNodeID(ctx, req.NodeID)
 	}
@@ -439,6 +444,28 @@ func (b *Bridge) actionHover(ctx context.Context, req ActionRequest) (map[string
 		return map[string]any{"hovered": true}, HoverByCoordinate(ctx, req.X, req.Y)
 	}
 	return nil, fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")
+}
+
+func (b *Bridge) actionHumanizedHover(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	var err error
+	switch {
+	case req.NodeID > 0:
+		err = hoverElementAction(ctx, cdp.BackendNodeID(req.NodeID))
+	case req.Selector != "":
+		node, nodeErr := firstNodeBySelector(ctx, req.Selector)
+		if nodeErr != nil {
+			return nil, nodeErr
+		}
+		err = hoverElementAction(ctx, node.BackendNodeID)
+	case req.HasXY:
+		err = hoverCoordinateAction(ctx, req.X, req.Y)
+	default:
+		return nil, fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"hovered": true, "human": true}, nil
 }
 
 func (b *Bridge) rememberPointerPosition(tabID string, x, y float64) {

@@ -101,9 +101,7 @@ var gatedByDeclaringSet = map[string]string{
 // postedButUnread records keys a tool forwards that its action does not read — the same
 // class as this card's defect, found by this census and filed separately rather than fixed
 // here. Each entry names the card, and it reds again the moment the action starts reading.
-var postedButUnread = map[string]string{
-	"hover/humanize": "PIN-186: pinchtab_hover forwards humanize but actionHover has no humanized variant, so the flag is ignored",
-}
+var postedButUnread = map[string]string{}
 
 // declaringSets are the per-kind argument gates this handler uses, read from the package
 // itself so the census follows them: a key inside `if humanizeAction[kind]` belongs to the

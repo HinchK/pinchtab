@@ -127,3 +127,122 @@ func TestClickElement_ScrollsBeforeReadingBoxModel(t *testing.T) {
 		t.Fatalf("calls = %v, want [scroll box]", calls)
 	}
 }
+
+func TestHover_TrailIsBestEffort(t *testing.T) {
+	origSettle := settleHoverAction
+	t.Cleanup(func() { settleHoverAction = origSettle })
+
+	SetHumanRandSeed(7)
+
+	var settled [][2]float64
+	settleHoverAction = func(ctx context.Context, x, y float64) error {
+		settled = append(settled, [2]float64{x, y})
+		return nil
+	}
+
+	// No browser attached, so every trail dispatch fails; the hover must still land.
+	if err := Hover(context.Background(), 40, 60); err != nil {
+		t.Fatalf("Hover with a failing trail returned %v, want nil", err)
+	}
+	if len(settled) != 1 || settled[0] != [2]float64{40, 60} {
+		t.Fatalf("settled hovers = %v, want one at (40,60)", settled)
+	}
+}
+
+func TestHover_CancelledContextStopsBeforeSettling(t *testing.T) {
+	origSettle := settleHoverAction
+	t.Cleanup(func() { settleHoverAction = origSettle })
+
+	SetHumanRandSeed(7)
+
+	settleHoverAction = func(ctx context.Context, x, y float64) error {
+		t.Fatal("cancelled hover should not reach the settle dispatch")
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Hover(ctx, 40, 60); !errors.Is(err, context.Canceled) {
+		t.Fatalf("Hover error = %v, want context.Canceled", err)
+	}
+}
+
+func TestHoverElement_ReusesTheClickTargetPoint(t *testing.T) {
+	origScroll := scrollIntoViewIfNeededAction
+	origBoxModel := boxModelForBackendNodeAction
+	origHover := hoverCoordinateHumanAction
+	origClick := clickCoordinateHumanAction
+	t.Cleanup(func() {
+		scrollIntoViewIfNeededAction = origScroll
+		boxModelForBackendNodeAction = origBoxModel
+		hoverCoordinateHumanAction = origHover
+		clickCoordinateHumanAction = origClick
+	})
+
+	var calls []string
+	scrollIntoViewIfNeededAction = func(ctx context.Context, backendNodeID cdp.BackendNodeID) error {
+		calls = append(calls, "scroll")
+		return errors.New("scroll failed but should be best-effort")
+	}
+	boxModelForBackendNodeAction = func(ctx context.Context, backendNodeID cdp.BackendNodeID) (*dom.BoxModel, error) {
+		if backendNodeID != 99 {
+			t.Fatalf("box backendNodeID = %d, want 99", backendNodeID)
+		}
+		calls = append(calls, "box")
+		return &dom.BoxModel{Content: []float64{100, 200, 300, 200, 300, 260, 100, 260}}, nil
+	}
+
+	var hoverX, hoverY float64
+	hoverCoordinateHumanAction = func(ctx context.Context, x, y float64) error {
+		calls = append(calls, "hover")
+		hoverX, hoverY = x, y
+		return nil
+	}
+	var clickX, clickY float64
+	clickCoordinateHumanAction = func(ctx context.Context, x, y float64) error {
+		clickX, clickY = x, y
+		return nil
+	}
+
+	SetHumanRandSeed(11)
+	if err := HoverElement(context.Background(), 99); err != nil {
+		t.Fatalf("HoverElement returned %v", err)
+	}
+	hoverCalls := append([]string(nil), calls...)
+
+	SetHumanRandSeed(11)
+	if err := ClickElement(context.Background(), 99); err != nil {
+		t.Fatalf("ClickElement returned %v", err)
+	}
+
+	if hoverX != clickX || hoverY != clickY {
+		t.Fatalf("hover point (%v,%v) != click point (%v,%v); the two humanized paths must aim at the same box-model point", hoverX, hoverY, clickX, clickY)
+	}
+	if hoverX < 100 || hoverX > 300 || hoverY < 200 || hoverY > 260 {
+		t.Fatalf("hover point (%v,%v) is outside the box model", hoverX, hoverY)
+	}
+	if len(hoverCalls) != 3 || hoverCalls[0] != "scroll" || hoverCalls[1] != "box" || hoverCalls[2] != "hover" {
+		t.Fatalf("calls = %v, want [scroll box hover]", hoverCalls)
+	}
+}
+
+func TestHoverElement_PropagatesBoxModelFailure(t *testing.T) {
+	origBoxModel := boxModelForBackendNodeAction
+	origHover := hoverCoordinateHumanAction
+	t.Cleanup(func() {
+		boxModelForBackendNodeAction = origBoxModel
+		hoverCoordinateHumanAction = origHover
+	})
+
+	boxModelForBackendNodeAction = func(ctx context.Context, backendNodeID cdp.BackendNodeID) (*dom.BoxModel, error) {
+		return &dom.BoxModel{Content: []float64{1, 2}}, nil
+	}
+	hoverCoordinateHumanAction = func(ctx context.Context, x, y float64) error {
+		t.Fatal("hover should not run without a usable box model")
+		return nil
+	}
+
+	if err := HoverElement(context.Background(), 99); err == nil {
+		t.Fatal("expected an error for a short box model")
+	}
+}
