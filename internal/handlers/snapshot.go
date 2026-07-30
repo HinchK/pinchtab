@@ -243,19 +243,19 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		timestamp := time.Now().Format("20060102-150405")
-		var filename string
+		timestamp := exportTimestamp()
+		var ext string
 		var content []byte
 
 		switch format {
 		case "text":
-			filename = fmt.Sprintf("snapshot-%s.txt", timestamp)
+			ext = ".txt"
 			textContent := fmt.Sprintf("# %s\n# %s\n# %d nodes\n# %s\n\n%s",
 				title, url, len(flat), time.Now().Format(time.RFC3339),
 				bridge.FormatSnapshotText(flat))
 			content = []byte(textContent)
 		case "yaml":
-			filename = fmt.Sprintf("snapshot-%s.yaml", timestamp)
+			ext = ".yaml"
 			data := map[string]any{
 				"url":       url,
 				"title":     title,
@@ -283,7 +283,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		default:
-			filename = fmt.Sprintf("snapshot-%s.json", timestamp)
+			ext = ".json"
 			data := map[string]any{
 				"url":       url,
 				"title":     title,
@@ -312,7 +312,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		filePath := filepath.Join(snapshotDir, filename)
+		var filePath string
 		if outputPath != "" {
 			safe, err := httpx.SafeCreatePath(h.Config.StateDir, outputPath)
 			if err != nil {
@@ -330,10 +330,19 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 				httpx.Error(w, 500, fmt.Errorf("create output dir: %w", err))
 				return
 			}
-		}
-		if err := os.WriteFile(filePath, content, 0600); err != nil {
-			httpx.Error(w, 500, fmt.Errorf("write snapshot: %w", err))
-			return
+			// A caller-named path keeps overwriting: this fix is about generated
+			// default names, and a caller who names a file is entitled to replace it.
+			if err := os.WriteFile(filePath, content, 0600); err != nil {
+				httpx.Error(w, 500, fmt.Errorf("write snapshot: %w", err))
+				return
+			}
+		} else {
+			var err error
+			filePath, err = writeUniqueFile(snapshotDir, "snapshot-"+timestamp, ext, content)
+			if err != nil {
+				httpx.Error(w, 500, fmt.Errorf("write snapshot: %w", err))
+				return
+			}
 		}
 
 		httpx.JSON(w, 200, map[string]any{

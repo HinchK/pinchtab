@@ -310,9 +310,23 @@ func (h *Handlers) writeExportFile(
 	encodeAll func(emit func(observe.ExportEntry) error) error,
 ) error {
 	userPath := r.URL.Query().Get("path")
-	if userPath == "" {
-		ts := time.Now().Format("20060102-150405")
-		userPath = fmt.Sprintf("network-%s%s", ts, enc.FileExtension())
+	autoNamed := userPath == ""
+	if autoNamed {
+		// Reserve the generated name before resolveExportFile derives the tmp path from
+		// it. Two auto-named exports in the same second used to rename onto one file —
+		// and share one <path>.tmp while writing, so the loser was corrupt as well as
+		// lost. The reservation is a 0-byte file the final rename replaces. A caller
+		// ?path= is untouched and keeps overwriting.
+		exportDir := filepath.Join(h.Config.StateDir, "exports")
+		if err := os.MkdirAll(exportDir, 0750); err != nil {
+			return fmt.Errorf("create dir: %w", err)
+		}
+		reserved, reservedPath, err := createUniqueFile(exportDir, "network-"+exportTimestamp(), enc.FileExtension())
+		if err != nil {
+			return fmt.Errorf("reserve export name: %w", err)
+		}
+		_ = reserved.Close()
+		userPath = filepath.Base(reservedPath)
 	}
 
 	absPath, tmpPath, f, _, err := h.resolveExportFile(userPath)
