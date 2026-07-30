@@ -136,6 +136,14 @@ const capturePairFixtureHTML = `<body style="margin:0;height:4000px">
 
 const capturePairTabID = "tab-capture-visible"
 
+// captureBoundsParam is the query key that turns the bounds pass off. The two wire tests
+// below build their queries from it, and TestTheBoundsQueryKeyIsOneTheHandlerReads checks
+// production reads this exact spelling — a browserless check on purpose: these tests skip
+// where local Chrome cannot screenshot, and a test that drives a key the handler ignores
+// then reads as a pass instead of asserting anything. That is how "&bounds=false" survived
+// here while the handler was looking for "withBounds".
+const captureBoundsParam = "withBounds"
+
 type captureFixture struct {
 	handlers *Handlers
 }
@@ -221,7 +229,7 @@ func nodeByName(t *testing.T, nodes []map[string]any, name string) map[string]an
 // at all, so a client could not tell "measured, off-screen" from "never
 // measured". Both buttons are measured here, so both must state their answer.
 func TestCaptureSerialisesMeasuredVisibleFalse(t *testing.T) {
-	nodes := newCaptureFixture(t).capture(t, "&bounds=true")
+	nodes := newCaptureFixture(t).capture(t, "&"+captureBoundsParam+"=true")
 
 	offScreen := nodeByName(t, nodes, "TopBtn")
 	value, ok := offScreen["visible"]
@@ -249,7 +257,7 @@ func TestCaptureSerialisesMeasuredVisibleFalse(t *testing.T) {
 // bounds=false measures nothing, so no node may claim a visibility it was never
 // asked to compute.
 func TestCaptureWithoutBoundsPublishesNoVisibleKey(t *testing.T) {
-	nodes := newCaptureFixture(t).capture(t, "&bounds=false")
+	nodes := newCaptureFixture(t).capture(t, "&"+captureBoundsParam+"=false")
 
 	for i, node := range nodes {
 		if _, ok := node["visible"]; ok {
@@ -258,6 +266,20 @@ func TestCaptureWithoutBoundsPublishesNoVisibleKey(t *testing.T) {
 		if _, ok := node["boundingBox"]; ok {
 			t.Errorf("node %d (%v) published boundingBox with bounds=false: %v", i, node["ref"], node)
 		}
+	}
+}
+
+// A skipped test asserts nothing, so the query key the two tests above depend on is pinned
+// where no browser is involved: the handler must read this exact parameter, or bounds are
+// computed regardless of what the query says and the unmeasured case is never exercised.
+func TestTheBoundsQueryKeyIsOneTheHandlerReads(t *testing.T) {
+	src, err := os.ReadFile("capture.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	needle := `q.Get("` + captureBoundsParam + `")`
+	if !strings.Contains(string(src), needle) {
+		t.Fatalf("capture.go does not read %s; the wire tests would drive a parameter the handler ignores, measure bounds anyway, and their unmeasured case would never run", needle)
 	}
 }
 
