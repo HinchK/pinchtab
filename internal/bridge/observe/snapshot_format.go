@@ -2,6 +2,25 @@ package observe
 
 import "strings"
 
+// checkedAnnotations render all THREE states, not just the checked one. A bare
+// node and an unchecked one must not look alike: absent means the control has no
+// checkedness, false means it is off, and an agent reading a radio group needs to
+// tell those apart at a glance. The compact forms stay three characters so a
+// five-option group costs fifteen.
+var checkedAnnotations = map[CheckedState]string{
+	CheckedTrue:  " [checked]",
+	CheckedFalse: " [unchecked]",
+	CheckedMixed: " [mixed]",
+}
+
+// [~] is NOT available here: the compact diff renderer already uses it for
+// "changed", and the same token meaning two things on one line is unreadable.
+var checkedCompactAnnotations = map[CheckedState]string{
+	CheckedTrue:  " [x]",
+	CheckedFalse: " [ ]",
+	CheckedMixed: " [/]",
+}
+
 func FormatSnapshotText(nodes []A11yNode) string {
 	var b strings.Builder
 	for _, n := range nodes {
@@ -23,6 +42,9 @@ func FormatSnapshotText(nodes []A11yNode) string {
 		}
 		if n.Focused {
 			b.WriteString(" [focused]")
+		}
+		if annotation, ok := checkedAnnotations[n.Checked]; ok {
+			b.WriteString(annotation)
 		}
 		if n.Disabled {
 			b.WriteString(" [disabled]")
@@ -53,6 +75,9 @@ func FormatSnapshotCompact(nodes []A11yNode) string {
 		}
 		if n.Focused {
 			b.WriteString(" *")
+		}
+		if annotation, ok := checkedCompactAnnotations[n.Checked]; ok {
+			b.WriteString(annotation)
 		}
 		if n.Disabled {
 			b.WriteString(" -")
@@ -96,6 +121,9 @@ func FormatSnapshotCompactDiff(nodes []A11yNode, added, changed, removed []A11yN
 		if n.Focused {
 			b.WriteString(" *")
 		}
+		if annotation, ok := checkedCompactAnnotations[n.Checked]; ok {
+			b.WriteString(annotation)
+		}
 		if n.Disabled {
 			b.WriteString(" -")
 		}
@@ -128,10 +156,10 @@ func TruncateToTokens(nodes []A11yNode, maxTokens int, format string) ([]A11yNod
 		var nodeTokens int
 		switch format {
 		case "compact":
-			size := len(n.Ref) + 1 + len(n.Role) + len(n.Name) + len(n.Value) + 8
+			size := len(n.Ref) + 1 + len(n.Role) + len(n.Name) + len(n.Value) + 8 + len(checkedCompactAnnotations[n.Checked])
 			nodeTokens = size / 4
 		case "text":
-			size := n.Depth*2 + len(n.Ref) + 1 + len(n.Role) + len(n.Name) + len(n.Value) + 8
+			size := n.Depth*2 + len(n.Ref) + 1 + len(n.Role) + len(n.Name) + len(n.Value) + 8 + len(checkedAnnotations[n.Checked])
 			nodeTokens = size / 4
 		default:
 			size := len(n.Ref) + len(n.Role) + len(n.Name) + len(n.Value) + 60

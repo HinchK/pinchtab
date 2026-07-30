@@ -28,10 +28,39 @@ func IsSensitiveAutocomplete(value string) bool {
 	return false
 }
 
+// CheckedState is the tri-state checkedness of a checkable control, taken
+// verbatim from the accessibility tree's own "checked" property. It is a
+// three-value string rather than a bool because "mixed" is a real state — a
+// native indeterminate checkbox and aria-checked="mixed" both report it — and
+// because ABSENT must never read as unchecked: the empty value means this node
+// has no checkedness, not that it is off. A bool could not say all three things.
+type CheckedState string
+
+const (
+	CheckedTrue  CheckedState = "true"
+	CheckedFalse CheckedState = "false"
+	CheckedMixed CheckedState = "mixed"
+)
+
+// checkedStateFromAX accepts only the three states the accessibility tree
+// defines. Anything else — including an empty value — leaves the field absent,
+// so an unrecognised reading is reported as "no answer" rather than as "off".
+func checkedStateFromAX(value string) (CheckedState, bool) {
+	switch CheckedState(value) {
+	case CheckedTrue, CheckedFalse, CheckedMixed:
+		return CheckedState(value), true
+	}
+	return "", false
+}
+
 // A11yNode is one snapshot node. Visible is a pointer because nil (absent on
 // the wire) means the bounds pass never measured this node, which is a
 // different statement from a measured false: it is set exactly when
 // BoundingBox is.
+//
+// Checked is empty for every node that has no checkedness. Only a checkable
+// control gets it, because only such a control carries the accessibility
+// property it is read from.
 type A11yNode struct {
 	Ref            string       `json:"ref"`
 	Role           string       `json:"role"`
@@ -47,6 +76,7 @@ type A11yNode struct {
 	Tag            string       `json:"tag,omitempty"`
 	Disabled       bool         `json:"disabled,omitempty"`
 	Focused        bool         `json:"focused,omitempty"`
+	Checked        CheckedState `json:"checked,omitempty"`
 	Hidden         bool         `json:"hidden,omitempty"`
 	NodeID         int64        `json:"nodeId,omitempty"`
 	FrameID        string       `json:"frameId,omitempty"`
@@ -471,6 +501,19 @@ func BuildSnapshot(nodes []RawAXNode, filter string, maxDepth int) ([]A11yNode, 
 			if prop.Name == "focused" && prop.Value.String() == "true" {
 				entry.Focused = true
 			}
+			// The accessibility tree already answers this for checkboxes, radios,
+			// menuitemcheckbox/radio and any custom role carrying aria-checked, and
+			// it answers "mixed" for a native indeterminate box too. Reading it here
+			// costs nothing: no DOM access and no extra round trip. The other route
+			// — evaluating aria-checked in the page, as /checked and the check action
+			// do — would add a page call to every snapshot and would have to run in
+			// the best-effort DOM pass, where a failure produces an absent field that
+			// every consumer reads as unchecked.
+			if prop.Name == "checked" {
+				if state, ok := checkedStateFromAX(prop.Value.String()); ok {
+					entry.Checked = state
+				}
+			}
 			// Unconditional by design: this pass has no DOM access, and the DOM
 			// enrichment that knows whether the field is empty is best-effort. If
 			// it never runs, this mask is what keeps a password out of the
@@ -617,7 +660,7 @@ func DiffSnapshot(prev, curr []A11yNode) (added, changed, removed []A11yNode) {
 		old, existed := prevMap[key]
 		if !existed {
 			added = append(added, n)
-		} else if old.Value != n.Value || old.Focused != n.Focused || old.Disabled != n.Disabled {
+		} else if old.Value != n.Value || old.Focused != n.Focused || old.Disabled != n.Disabled || old.Checked != n.Checked {
 			changed = append(changed, n)
 		}
 	}
