@@ -248,6 +248,20 @@ var unmirroredSharedNames = map[string]string{
 	"RunOptions": "an in-process options struct on both sides, never marshalled: internal carries no json tags at all and the SDK nests *PageOptions",
 }
 
+// unmirroredSDKNames are SDK-exported structs that are not payload mirrors, and the
+// list is one-sided on purpose. The shared-name census below cannot see a mirror added
+// under a name internal/audit does not share — and that is not hypothetical: two of
+// the pairs above are exactly that shape, so a third one added later would be claimed
+// by nothing and reported by nothing. The SDK is the public surface, so this side is
+// the one worth enumerating; internal/audit legitimately exports many types the SDK
+// never mirrors.
+var unmirroredSDKNames = map[string]string{
+	"Client":      "the SDK's HTTP client, not a payload shape: it carries a base URL, a token and an *http.Client, none of which crosses the wire",
+	"AuditInput":  "the REQUEST shape a caller sends; the report's input block is internal AuditInput paired with AuditReportInput",
+	"PageOptions": "*bool per collector so nil means keep the server default, a deliberately different wire contract",
+	"RunOptions":  "an in-process options struct, never marshalled",
+}
+
 // The two package qualifiers reflect prints in front of a mirrored field type.
 const (
 	internalQualifier = "audit"
@@ -440,6 +454,43 @@ func TestEverySharedAuditTypeNameIsClaimedOrExcused(t *testing.T) {
 		if claimedInternal[name] && claimedSDK[name] {
 			t.Errorf("%q is both excused in unmirroredSharedNames and compared as a pair; keep one, or deleting the pair will read as covered", name)
 		}
+	}
+}
+
+// The axis the shared-name census structurally cannot cover: a mirror added to the SDK
+// under a name internal/audit does not share is in no pair, is not a shared name, and
+// so is reported by nobody. Two of the pairs above are already non-name-equal, which is
+// what makes this the realistic shape rather than a contrived one. Enumerating the SDK
+// side closes it — a new SDK struct must be paired or excused however it is named.
+func TestEverySDKStructIsMirroredOrExcused(t *testing.T) {
+	sdkNames := exportedStructNames(t, filepath.Join("..", "..", "pkg", "pinchtabaudit"))
+
+	claimed := map[string]bool{}
+	for _, pair := range mirrorPairs {
+		claimed[pair.sdkName] = true
+	}
+
+	for name := range sdkNames {
+		if claimed[name] || unmirroredSDKNames[name] != "" {
+			continue
+		}
+		t.Errorf("pkg/pinchtabaudit exports %s, which no mirror pair claims and unmirroredSDKNames does not excuse. "+
+			"If it mirrors an internal type — under any name — add the pair; if it is not a payload shape, record why", name)
+	}
+
+	// An excuse for a type the SDK no longer exports, or for one a pair also claims,
+	// is the blanket-rationale failure this guard's lineage keeps closing: it reads as
+	// covered from either table, so deleting the pair later looks safe.
+	for name := range unmirroredSDKNames {
+		if !sdkNames[name] {
+			t.Errorf("unmirroredSDKNames excuses %q, which pkg/pinchtabaudit no longer exports", name)
+		}
+		if claimed[name] {
+			t.Errorf("%q is both excused and compared as a pair; keep one", name)
+		}
+	}
+	if len(sdkNames) == 0 {
+		t.Fatal("no SDK structs found; this census would pass vacuously")
 	}
 }
 
