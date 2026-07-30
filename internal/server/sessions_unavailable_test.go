@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/session"
 )
 
@@ -102,6 +103,32 @@ func TestTheTwoUnavailableModesDoNotShareARemedy(t *testing.T) {
 	if strings.Contains(bridgeRemedy, "sessions.agent.enabled") {
 		t.Errorf("the bridge remedy prescribes a config edit, which is the unescapable loop this fixes: %q", bridgeRemedy)
 	}
+
+	for mode, remedy := range map[string]string{"bridge": bridgeRemedy, "disabled": disabledRemedy} {
+		if field, prescribed := configSetFieldIn(remedy); prescribed {
+			if err := config.SetConfigValue(&config.FileConfig{}, field, "true"); err != nil {
+				t.Errorf("the %s remedy says to run `pinchtab config set %s`, and the config editor answers %v — a remedy that cannot run is the dead end this family's codes exist to remove", mode, field, err)
+			}
+		}
+	}
+}
+
+// configSetFieldIn reports the field a remedy tells the reader to `pinchtab config set`.
+// A remedy naming a key the editor does not know sends the reader round the same loop as
+// the bare 404 did, and only the editor can say which keys those are — this family's own
+// disabled remedy shipped as `config set sessions.agent.enabled`, which answers "unknown
+// field" because the editor knows sessions.dashboard.* and no sessions.agent.* field.
+func configSetFieldIn(remedy string) (string, bool) {
+	const prefix = "config set "
+	at := strings.Index(remedy, prefix)
+	if at < 0 {
+		return "", false
+	}
+	field := strings.Fields(remedy[at+len(prefix):])
+	if len(field) == 0 {
+		return "", false
+	}
+	return field[0], true
 }
 
 // An unknown path must stay a bare 404 saying nothing about sessions — in both modes. This

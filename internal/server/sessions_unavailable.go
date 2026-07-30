@@ -25,8 +25,12 @@ const (
 	msgSessionsUnavailableInBridgeMode = "agent sessions are unavailable in bridge mode"
 	remedySessionsUnavailableInBridge  = "run the full server instead: pinchtab server"
 
-	msgSessionsDisabled    = "agent sessions are not enabled on this server"
-	remedySessionsDisabled = "pinchtab config set sessions.agent.enabled true && pinchtab server restart"
+	msgSessionsDisabled = "agent sessions are not enabled on this server"
+	// The config editor knows sessions.dashboard.* and no sessions.agent.* field, so
+	// "pinchtab config set sessions.agent.enabled true" answers "unknown field" — the same
+	// dead end this family's remedy existed to remove, one state over. The file edit works,
+	// and it is what the shared CLI hint already tells a reader.
+	remedySessionsDisabled = "set sessions.agent.enabled = true in config.json, then restart the server"
 )
 
 // registerSessionsUnavailable answers the whole session family with one coded refusal.
