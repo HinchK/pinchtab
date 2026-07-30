@@ -1304,3 +1304,36 @@ func TestTrySemanticSurvivesANilIntentFromTheEngine(t *testing.T) {
 		t.Errorf("attempt status = %q, want %q", entry.Status, StatusFailed)
 	}
 }
+
+// Solve is the exported entry point and reads the intent BEFORE any solving
+// starts, so the (nil, nil) engine reaches it earlier than it reaches
+// trySemantic. The trySemantic test above walked past this because it calls the
+// unexported step directly.
+func TestSolveSurvivesANilIntentFromTheEngine(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.MaxAttempts = 1
+	semantic := &mockSemantic{
+		detectSeq: []*Intent{nil},
+		action:    &SuggestedAction{Action: ActionClick, Selector: "#anything"},
+	}
+
+	as := New(cfg, semantic, nil)
+	page := &mockPage{title: "Verify your identity", url: "https://example.com/gate"}
+
+	result, err := as.Solve(context.Background(), page, &mockExecutor{})
+	if err != nil {
+		t.Fatalf("Solve returned an error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("Solve returned no result")
+	}
+	// An engine that read nothing must not be recorded as reporting a normal
+	// page: IntentNormal is the one value that short-circuits Solve as solved,
+	// which would turn "we know nothing" into "there is no challenge".
+	if result.Intent != IntentUnknown {
+		t.Errorf("result.Intent = %q, want %q for an engine that reported nothing", result.Intent, IntentUnknown)
+	}
+	if result.Solved {
+		t.Error("a nil intent cannot be a solved page; the engine reported nothing")
+	}
+}

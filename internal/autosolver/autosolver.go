@@ -67,9 +67,15 @@ func (as *AutoSolver) Solve(ctx context.Context, page Page, executor ActionExecu
 			"err", err, "url", page.URL())
 		intent = &Intent{Type: IntentUnknown, Confidence: 0}
 	}
-	result.Intent = intent.Type
+	// A SemanticEngine may report (nil, nil): no error, no reading. That is the
+	// same "we know nothing" the error branch above substitutes for, so it gets
+	// the same substitution here rather than a nil check at every later read.
+	if intent == nil {
+		intent = &Intent{Type: IntentUnknown, Confidence: 0}
+	}
+	result.Intent = intentTypeOf(intent)
 
-	if intent.Type == IntentNormal {
+	if intentTypeOf(intent) == IntentNormal {
 		result.Solved = true
 		result.TotalDuration = time.Since(start)
 		slog.Info("autosolver_done",
@@ -81,7 +87,7 @@ func (as *AutoSolver) Solve(ctx context.Context, page Page, executor ActionExecu
 	}
 
 	slog.Info("autosolver: challenge detected",
-		"type", intent.Type,
+		"type", intentTypeOf(intent),
 		"confidence", intent.Confidence,
 		"url", page.URL())
 
