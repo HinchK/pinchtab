@@ -13,7 +13,6 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/bridge/observe"
 	"github.com/pinchtab/pinchtab/internal/config"
-	"github.com/pinchtab/pinchtab/internal/fileout"
 )
 
 // Two saves in immediate succession must land on different paths with both files intact.
@@ -112,54 +111,6 @@ func assertFileHolds(t *testing.T, path string, want []byte) {
 	}
 }
 
-// The suffix ladder is bounded, and running out is an error rather than a silent
-// overwrite: a directory with this many same-second names is a runaway caller.
-func TestCreateUniqueFileRefusesRatherThanOverwriteWhenTheLadderIsExhausted(t *testing.T) {
-	dir := t.TempDir()
-	base, ext := "cap-fixed", ".png"
-
-	occupy := func(name string) {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("held"), 0600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	occupy(base + ext)
-	for i := 1; i < fileout.MaxUniqueNameAttempts; i++ {
-		occupy(fmt.Sprintf("%s-%d%s", base, i, ext))
-	}
-
-	if _, _, err := createUniqueFile(dir, base, ext); err == nil {
-		t.Fatal("createUniqueFile succeeded with every name taken; it must refuse rather than overwrite")
-	}
-	// Nothing it touched may have changed.
-	assertFileHolds(t, filepath.Join(dir, base+ext), []byte("held"))
-}
-
-// createUniqueFile returns an OPEN handle on purpose: a stat-then-write leaves a window
-// where a concurrent caller takes the name between the check and the write.
-func TestCreateUniqueFileReservesTheNameItReturns(t *testing.T) {
-	dir := t.TempDir()
-
-	first, firstPath, err := createUniqueFile(dir, "rec_fixed", ".gif")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = first.Close() }()
-
-	second, secondPath, err := createUniqueFile(dir, "rec_fixed", ".gif")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = second.Close() }()
-
-	if firstPath == secondPath {
-		t.Fatalf("the second reservation returned the same path %q, so the first was not held", firstPath)
-	}
-	if _, err := os.Stat(firstPath); err != nil {
-		t.Errorf("the first reservation does not exist on disk: %v", err)
-	}
-}
-
 // AC6, recording: recordingsOutputPath's own comment claimed the path was unique while
 // nothing checked — two stops in the same second returned one path and the encoder that
 // finished second overwrote the first recording. The path is now reserved, so a second
@@ -184,6 +135,35 @@ func TestRecordingsOutputPathReservesEachPath(t *testing.T) {
 	for _, path := range []string{first, second} {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("%q was returned but not reserved on disk: %v", path, err)
+		}
+	}
+}
+
+// The reservation rule — create exclusively, close, remove the placeholder if the close
+// fails — belongs to internal/fileout, which pins the removal itself through an injected
+// creator. This site owes only proof that it ROUTES there and keeps no second copy of
+// the sequence: a local create-then-close is how the removal came to be missing here.
+func TestRecordingsOutputPathReservesThroughFileout(t *testing.T) {
+	raw, err := os.ReadFile("record_handlers.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const declaration = "func (h *Handlers) recordingsOutputPath("
+	start := strings.Index(string(raw), declaration)
+	if start < 0 {
+		t.Fatalf("%s not found in record_handlers.go; this guard is pinned to a function that no longer exists", declaration)
+	}
+	body := string(raw)[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+
+	if !strings.Contains(body, "fileout.ReserveUnique(") {
+		t.Error("recordingsOutputPath no longer reserves through fileout.ReserveUnique, so the removal on a failed close is not inherited")
+	}
+	for _, reimplemented := range []string{"createUniqueFile(", ".Close()", "os.Remove("} {
+		if strings.Contains(body, reimplemented) {
+			t.Errorf("recordingsOutputPath contains %q; the reserve-and-close sequence has one owner in internal/fileout, and a local copy is how its removal went missing", reimplemented)
 		}
 	}
 }
@@ -324,7 +304,7 @@ func TestNoHandlerAutoNamesAFileItThenOverwrites(t *testing.T) {
 	// file -> why its timestamp is not an overwrite risk.
 	accounted := map[string]string{
 		"binary_export.go":   "exportTimestamp only builds the base name; createUniqueFile reserves the path",
-		"record_handlers.go": "the recording base name is reserved by createUniqueFile before it is returned",
+		"record_handlers.go": "the recording base name is reserved by fileout.ReserveUnique before it is returned",
 	}
 
 	var scanned int
@@ -342,7 +322,7 @@ func TestNoHandlerAutoNamesAFileItThenOverwrites(t *testing.T) {
 			continue
 		}
 		if accounted[name] == "" {
-			t.Errorf("%s builds a name from a second-resolution timestamp and is not accounted for; route it through createUniqueFile or record why it cannot collide", name)
+			t.Errorf("%s builds a name from a second-resolution timestamp and is not accounted for; route it through fileout (WriteUnique or ReserveUnique) or record why it cannot collide", name)
 		}
 	}
 	if scanned < 2 {

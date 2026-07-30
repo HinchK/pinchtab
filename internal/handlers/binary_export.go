@@ -37,18 +37,16 @@ func writeRawImage(w http.ResponseWriter, buf []byte, contentType, logLabel stri
 
 // The no-overwrite rule itself lives in internal/fileout, a leaf both this package and
 // internal/cli/actions can import — the CLI sites had the same defect and a second copy
-// of the loop is the drift worth avoiding. These two keep the names every call site in
-// this package already uses, and delegate.
-func createUniqueFile(dir, base, ext string) (*os.File, string, error) {
-	return fileout.CreateUnique(dir, base, ext)
-}
-
+// of the loop is the drift worth avoiding. This keeps the name every call site in this
+// package already uses, and delegates. A caller that reserves a name without writing
+// the bytes calls fileout.ReserveUnique directly: routing that through a local handle
+// is what let this package lose the removal on a failed close.
 func writeUniqueFile(dir, base, ext string, buf []byte) (string, error) {
 	return fileout.WriteUnique(dir, base, ext, buf)
 }
 
 // exportTimestamp is the second-resolution stamp every auto-named export shares. It is
-// no longer load-bearing for uniqueness — createUniqueFile is — so it stays at second
+// no longer load-bearing for uniqueness — the exclusive create is — so it stays at second
 // granularity to keep filenames readable.
 func exportTimestamp() string {
 	return time.Now().Format("20060102-150405")

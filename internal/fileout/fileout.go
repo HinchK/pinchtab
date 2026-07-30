@@ -93,17 +93,27 @@ func WriteUniquePath(path string, buf []byte) (string, error) {
 	return WriteUnique(dir, base, ext, buf)
 }
 
-// ReservePath claims a path for a caller that will not write the bytes itself — one
-// moving an already-written file into place with os.Rename. The placeholder is created
-// exclusively and closed, and the rename then replaces it atomically on POSIX, so the
-// reservation is what stops a second process taking the name in between.
+// ReserveUnique claims a path for a caller that will not write the bytes itself — one
+// moving an already-written file into place with os.Rename, or handing the name to an
+// encoder that writes over the placeholder. The placeholder is created exclusively and
+// closed, and a rename then replaces it atomically on POSIX, so the reservation is what
+// stops a second process taking the name in between.
+//
+// A failed close removes the placeholder, for the reason WriteUnique removes a failed
+// write: the alternative is an error alongside a 0-byte file wearing the output's name.
 //
 // A reservation is a side effect: every path that then gives up must Remove the
 // returned path, or an abandoned run litters an empty file under a name that reads
 // like a real output.
-func ReservePath(path string) (string, error) {
-	dir, base, ext := splitPath(path)
-	f, reserved, err := CreateUnique(dir, base, ext)
+func ReserveUnique(dir, base, ext string) (string, error) {
+	return reserveUnique(dir, base, ext, CreateUnique)
+}
+
+// reserveUnique takes its creator as a parameter for the reason writeUnique does: a
+// close failure on a freshly created file needs a full or revoked filesystem, and an
+// unpinned removal is an unproven one.
+func reserveUnique(dir, base, ext string, create func(string, string, string) (*os.File, string, error)) (string, error) {
+	f, reserved, err := create(dir, base, ext)
 	if err != nil {
 		return "", err
 	}
@@ -112,6 +122,15 @@ func ReservePath(path string) (string, error) {
 		return "", err
 	}
 	return reserved, nil
+}
+
+// ReservePath is ReserveUnique for a caller holding a whole path rather than its three
+// parts. splitPath takes the extension with filepath.Ext, so a base carrying dots of
+// its own does not survive the round trip — a caller that knows its three parts should
+// pass them.
+func ReservePath(path string) (string, error) {
+	dir, base, ext := splitPath(path)
+	return ReserveUnique(dir, base, ext)
 }
 
 // splitPath cuts a path into the three parts CreateUnique numbers, so the suffix lands

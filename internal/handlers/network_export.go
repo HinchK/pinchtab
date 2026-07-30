@@ -13,6 +13,7 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/bridge/observe"
+	"github.com/pinchtab/pinchtab/internal/fileout"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
@@ -332,11 +333,10 @@ func (h *Handlers) writeExportFile(
 		if err := os.MkdirAll(exportDir, 0750); err != nil {
 			return fmt.Errorf("create dir: %w", err)
 		}
-		reserved, path, err := createUniqueFile(exportDir, "network-"+exportTimestamp(), enc.FileExtension())
+		path, err := fileout.ReserveUnique(exportDir, "network-"+exportTimestamp(), enc.FileExtension())
 		if err != nil {
 			return fmt.Errorf("reserve export name: %w", err)
 		}
-		_ = reserved.Close()
 		reservedPath = path
 		userPath = filepath.Base(reservedPath)
 	}

@@ -131,6 +131,96 @@ func assertContents(t *testing.T, path string, want []byte) {
 	}
 }
 
+// A reservation that cannot be closed must not survive: the caller gets an error and
+// would otherwise be left with a 0-byte file wearing the output's name — the same
+// defect the write path removes one layer down. Pinned through the creator seam,
+// because a real close failure needs a full or revoked filesystem.
+func TestReserveUniqueRemovesThePlaceholderWhenTheCloseFails(t *testing.T) {
+	dir := t.TempDir()
+	created := ""
+	closedHandle := func(dir, base, ext string) (*os.File, string, error) {
+		f, path, err := CreateUnique(dir, base, ext)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := f.Close(); err != nil {
+			return nil, "", err
+		}
+		created = path
+		return f, path, nil
+	}
+
+	path, err := reserveUnique(dir, "rec_20260101_000000", ".gif", closedHandle)
+	if err == nil {
+		t.Fatal("precondition: closing an already-closed handle must fail")
+	}
+	if path != "" {
+		t.Errorf("reserveUnique returned %q alongside its error; a failed reservation has no path to report", path)
+	}
+	if created == "" {
+		t.Fatal("the stub creator never ran, so this guard checked nothing")
+	}
+	if _, err := os.Stat(created); !os.IsNotExist(err) {
+		t.Errorf("%s survived a failed close (stat err = %v); the placeholder must be removed", created, err)
+	}
+}
+
+// ReservePath is a shape over ReserveUnique, not a second implementation: it must hand
+// back a real reservation, and the numbering must land before the extension exactly as
+// the three-part form does.
+func TestReservePathDelegatesToTheThreePartForm(t *testing.T) {
+	dir := t.TempDir()
+
+	first, err := ReservePath(filepath.Join(dir, "rec_20260101_000000.gif"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := ReservePath(filepath.Join(dir, "rec_20260101_000000.gif"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatalf("both reservations returned %q", first)
+	}
+	if want := filepath.Join(dir, "rec_20260101_000000-1.gif"); second != want {
+		t.Errorf("second reservation = %q, want %q", second, want)
+	}
+	for _, path := range []string{first, second} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("%q was returned but not reserved on disk: %v", path, err)
+		}
+	}
+}
+
+// The whole-path form is a SHAPE over the three-part one, not a second implementation:
+// two copies of the close-and-remove pair is how the rule drifted out of one of them
+// before. Behavioural tests cannot see the difference — a copy passes them — so this is
+// a structural check on the delegation itself.
+func TestReservePathHoldsNoSecondImplementation(t *testing.T) {
+	raw, err := os.ReadFile("fileout.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const declaration = "func ReservePath("
+	start := strings.Index(string(raw), declaration)
+	if start < 0 {
+		t.Fatalf("%s not found; this guard is pinned to a function that no longer exists", declaration)
+	}
+	body := string(raw)[start:]
+	if end := strings.Index(body, "\n}\n"); end >= 0 {
+		body = body[:end]
+	}
+
+	if !strings.Contains(body, "ReserveUnique(dir, base, ext)") {
+		t.Error("ReservePath no longer delegates to ReserveUnique")
+	}
+	for _, reimplemented := range []string{"CreateUnique(", "os.Remove(", ".Close()"} {
+		if strings.Contains(body, reimplemented) {
+			t.Errorf("ReservePath contains %q; the reserve-and-close sequence has one implementation and this is meant to be a shape over it", reimplemented)
+		}
+	}
+}
+
 // TestWriteUniqueRemovesTheFileItCreatedWhenTheWriteFails pins the removal through
 // the creator seam: the stub creates a REAL file and hands back a closed handle, so
 // the write fails for a reason the caller cannot control and the file it left is the

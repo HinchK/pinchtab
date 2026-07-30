@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
+	"github.com/pinchtab/pinchtab/internal/fileout"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/pinchtab/pinchtab/internal/session"
 )
@@ -157,25 +158,17 @@ func (h *Handlers) HandleRecordStop(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// recordingsOutputPath returns a unique output path inside the server-controlled
-// recordings directory. The caller never chooses the path — only the server does.
-//
-// "Unique" used to be an unbacked claim in this comment: the name came from a
-// second-resolution timestamp and nothing checked whether it existed, so two stops in
-// the same second returned one path and the encoder that finished second overwrote the
-// first recording. The path is now RESERVED by creating it exclusively; the encoder
-// writes over its own 0-byte placeholder afterwards.
+// recordingsOutputPath returns a reserved output path inside the server-controlled
+// recordings directory. The caller never chooses the path — only the server does. The
+// encoder writes over the 0-byte placeholder fileout leaves behind.
 func (h *Handlers) recordingsOutputPath() (string, error) {
 	dir := filepath.Join(h.Config.StateDir, "recordings")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("create recordings dir: %w", err)
 	}
 	base := "rec_" + time.Now().Format("20060102_150405")
-	f, path, err := createUniqueFile(dir, base, "."+h.recorder.activeFormat())
+	path, err := fileout.ReserveUnique(dir, base, "."+h.recorder.activeFormat())
 	if err != nil {
-		return "", fmt.Errorf("reserve recording path: %w", err)
-	}
-	if err := f.Close(); err != nil {
 		return "", fmt.Errorf("reserve recording path: %w", err)
 	}
 	return path, nil
