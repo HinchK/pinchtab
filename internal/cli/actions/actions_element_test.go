@@ -899,3 +899,76 @@ func TestScrollPositionalFormsAreUnchangedByThePixelFlags(t *testing.T) {
 		m.close()
 	}
 }
+
+// ActionSimple is exported and reachable without cobra's Args hook, so the CLI's
+// refusal of the both-specified form is a friendly early error, not the thing that
+// keeps this correct. The rule has to live in the builder: a positional wins
+// outright. Before it did, the flags were assigned first and the positional then
+// overwrote scrollY — so `800` with `--dx -100` built a diagonal scroll out of one
+// axis from each spelling, resolved by statement order rather than by any rule.
+func TestScrollPositionalWinsOverThePixelFlagsWithoutCobrasArgsHook(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		arg    string
+		flags  map[string]string
+		want   map[string]any
+		absent []string
+	}{
+		{
+			name:   "same axis",
+			arg:    "800",
+			flags:  map[string]string{"dy": "-300"},
+			want:   map[string]any{"scrollY": float64(800)},
+			absent: []string{"scrollX"},
+		},
+		{
+			name:   "other axis must not survive as half a diagonal",
+			arg:    "800",
+			flags:  map[string]string{"dx": "-100"},
+			want:   map[string]any{"scrollY": float64(800)},
+			absent: []string{"scrollX"},
+		},
+		{
+			name:   "a direction keyword also wins",
+			arg:    "left",
+			flags:  map[string]string{"dy": "-300"},
+			want:   map[string]any{"scrollX": float64(-800)},
+			absent: []string{"scrollY"},
+		},
+		{
+			name:   "a selector wins and carries no delta",
+			arg:    "e12",
+			flags:  map[string]string{"dy": "-300", "dx": "40"},
+			want:   map[string]any{"ref": "e12"},
+			absent: []string{"scrollX", "scrollY"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMockServer()
+			defer m.close()
+			cmd := newScrollCmd()
+			for flag, value := range tc.flags {
+				if err := cmd.Flags().Set(flag, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			ActionSimple(m.server.Client(), m.base(), "", "scroll", []string{tc.arg}, cmd)
+
+			var body map[string]any
+			if err := json.Unmarshal([]byte(m.lastBody), &body); err != nil {
+				t.Fatalf("decode body: %v (%s)", err, m.lastBody)
+			}
+			for key, want := range tc.want {
+				if body[key] != want {
+					t.Errorf("%s = %v, want %v (body %+v)", key, body[key], want, body)
+				}
+			}
+			for _, key := range tc.absent {
+				if _, present := body[key]; present {
+					t.Errorf("%s is present (%v); the positional is the whole argument, so no flag axis may survive alongside it (body %+v)", key, body[key], body)
+				}
+			}
+		})
+	}
+}

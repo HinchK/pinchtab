@@ -59,6 +59,23 @@ func TestScrollRefusesArgumentsItCannotHonour(t *testing.T) {
 			wantErr: "not both",
 		},
 		{
+			name:    "an explicit zero delta",
+			args:    nil,
+			flags:   map[string]string{"dy": "0"},
+			wantErr: "zero delta",
+		},
+		{
+			name:    "zero on both axes",
+			args:    nil,
+			flags:   map[string]string{"dy": "0", "dx": "0"},
+			wantErr: "zero delta",
+		},
+		{
+			name:  "an explicit zero on ONE axis is a real scroll",
+			args:  nil,
+			flags: map[string]string{"dy": "0", "dx": "500"},
+		},
+		{
 			name:  "a positional alone",
 			args:  []string{"800"},
 			flags: nil,

@@ -235,21 +235,27 @@ func ScrollDirectionKeywords() []string {
 	return keywords
 }
 
-// applyScrollTarget fills a scroll body from --dy/--dx, or from the single positional by
-// precedence: integer pixels, then direction keyword, then unified selector. Pixels and
-// directions would otherwise parse as CSS tag selectors ("up", "down"), so they are
-// intercepted before setSelectorBody.
+// applyScrollTarget fills a scroll body from the single positional — integer pixels, then
+// direction keyword, then unified selector — or from --dy/--dx when there is no positional.
+// Pixels and directions would otherwise parse as CSS tag selectors ("up", "down"), so they
+// are intercepted before setSelectorBody.
 //
 // A negative count is only reachable through the flags: cobra reads a leading minus on a
 // positional as bundled shorthand flags.
+//
+// The positional and the flags are two spellings of ONE argument, so a positional wins
+// outright instead of merging: assigning both would build a diagonal scroll out of a flag
+// axis and a positional axis that no caller asked for. The CLI refuses that combination
+// before it gets here, but this is exported and callable without cobra's Args hook, so the
+// rule lives here rather than on loan from another package.
 func applyScrollTarget(body map[string]any, args []string, cmd *cobra.Command) {
-	if deltaY, ok := readIntFlag(cmd, "dy"); ok {
-		body["scrollY"] = deltaY
-	}
-	if deltaX, ok := readIntFlag(cmd, "dx"); ok {
-		body["scrollX"] = deltaX
-	}
 	if len(args) == 0 {
+		if deltaY, ok := readIntFlag(cmd, "dy"); ok {
+			body["scrollY"] = deltaY
+		}
+		if deltaX, ok := readIntFlag(cmd, "dx"); ok {
+			body["scrollX"] = deltaX
+		}
 		return
 	}
 	if px, err := strconv.Atoi(args[0]); err == nil {
