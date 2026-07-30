@@ -175,6 +175,11 @@ report, err := client.EnrichWithBrowser(ctx,
     pinchtabaudit.AuditInput{SitemapURL: "https://example.com/sitemap.xml"}, nil)
 ```
 
+The module is pre-1.0. The exported Go types in `pkg/pinchtabaudit` may change name,
+shape or JSON tag in any release without notice, and no deprecation window is offered.
+Pin a module version if that matters to you. The HTTP API below is the stable contract:
+build against it if you need one.
+
 ## HTTP API
 
 The CLI is a thin client over two endpoints:
