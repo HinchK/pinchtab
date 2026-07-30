@@ -76,6 +76,9 @@ func TestNoGotestsumInvocationHidesTheOutputSummary(t *testing.T) {
 // --hide-summary=$SECTIONS, a value arriving from a workflow matrix input, or an
 // invocation inside a composite action are all unreachable by any grep or AST over this
 // repo. That is inherent to scanning source rather than argv, not a gap left unclosed.
+// One narrower shape is also out: --hide-summary="skipped, output", where the space after
+// the comma is part of a quoted value, reads as a value ending at the space because quotes
+// are removed before the value is cut. Named rather than fixed — see the stop rule.
 //
 // STOP RULE. Three rounds have gone on this one guard — flag order, then quotes and
 // continuations. The hazard is a person editing a CI flag, so redding on the spellings a
@@ -96,15 +99,61 @@ type logicalCommand struct {
 // the invocation floor cannot pass while the ban silently scans nothing.
 func scanGotestsumCommands(body string) (invocations int, offences []gotestsumOffence) {
 	for _, command := range logicalCommands(body) {
-		if !isGotestsumInvocation(command.text) {
-			continue
-		}
-		invocations++
-		if hidesOutputSummary(command.text) {
-			offences = append(offences, gotestsumOffence{line: command.line, command: command.text})
+		for _, segment := range shellSegments(command.text) {
+			if !isGotestsumInvocation(segment) {
+				continue
+			}
+			invocations++
+			if hidesOutputSummary(segment) {
+				offences = append(offences, gotestsumOffence{line: command.line, command: segment})
+			}
 		}
 	}
 	return invocations, offences
+}
+
+// shellSegments cuts a logical command at the separators that end one command and begin
+// another — ; && || | & — and leaves separators inside quotes alone, because the value of a
+// quoted mention is text rather than syntax.
+//
+// The ban is asked per SEGMENT, which is what keeps the echo/printf exclusion below from
+// swallowing the invocation beside it: a mention governs the segment it introduces and
+// nothing past the separator. Judging the whole command instead cost coverage the per-line
+// scan had — `echo running; gotestsum --hide-summary=output` read as a mention and was
+// neither banned nor counted.
+func shellSegments(command string) []string {
+	var segments []string
+	var current strings.Builder
+	quote := byte(0)
+	flush := func() {
+		if segment := strings.TrimSpace(current.String()); segment != "" {
+			segments = append(segments, segment)
+		}
+		current.Reset()
+	}
+
+	for i := 0; i < len(command); i++ {
+		c := command[i]
+		switch {
+		case quote != 0:
+			if c == quote {
+				quote = 0
+			}
+			current.WriteByte(c)
+		case c == '\'' || c == '"':
+			quote = c
+			current.WriteByte(c)
+		case c == ';' || c == '|' || c == '&':
+			if (c == '|' || c == '&') && i+1 < len(command) && command[i+1] == c {
+				i++
+			}
+			flush()
+		default:
+			current.WriteByte(c)
+		}
+	}
+	flush()
+	return segments
 }
 
 // logicalCommands joins trailing-backslash continuations into one command and reports the
@@ -173,9 +222,11 @@ func unquote(s string) string {
 	return strings.NewReplacer(`"`, "", `'`, "").Replace(s)
 }
 
-// isGotestsumInvocation asks whether the command RUNS the tool. A line that merely
+// isGotestsumInvocation asks whether the SEGMENT runs the tool. A segment that merely
 // mentions the flag — prose, or an echo explaining it — looks identical once quotes are
-// stripped, so an echoed mention is excluded explicitly.
+// stripped, so a mention is excluded explicitly. The exclusion is safe only because it is
+// asked of a segment: within one there is no separator, so an echo at the front does govern
+// everything after it.
 func isGotestsumInvocation(command string) bool {
 	normalised := unquote(command)
 	// Case-insensitive: scripts/test.sh invokes the tool through "$GOTESTSUM_BIN", which a
@@ -298,6 +349,10 @@ func TestTheGotestsumGuardReadsCommandsNotLines(t *testing.T) {
 `},
 		{"an echoed mention", false, 0, `echo "gotestsum --format=pkgname --hide-summary=output is banned"`},
 		{"a printf mention", false, 0, `printf 'run gotestsum --hide-summary=output to hide it\n'`},
+		{"a mention whose quoted text carries a pipe", false, 0, `echo "banned | gotestsum --hide-summary=output must never be added"`},
+		{"a real invocation after an echoed mention", true, 1, `echo "running tests"; gotestsum --format=pkgname --hide-summary=output -- ./...`},
+		{"a real invocation after &&", true, 1, `echo running && gotestsum --format=pkgname --hide-summary=output`},
+		{"a real invocation piped into tee", true, 1, `gotestsum --format=pkgname --hide-summary=output -- ./... | tee unit.log`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, offences := scanGotestsumCommands(tc.body)
@@ -329,6 +384,8 @@ func TestTheGotestsumGuardCountsBothRealInvocationShapes(t *testing.T) {
 		{"script through an uppercase variable", 1, `  if ! "$GOTESTSUM_BIN" --format=pkgname --hide-summary=skipped -- ./...; then`},
 		{"a mention is not an invocation", 0, `  echo "gotestsum --format=pkgname not found"`},
 		{"resolution helper without flags", 0, `  if command -v gotestsum >/dev/null 2>&1; then`},
+		{"an invocation following a mention still counts", 1, `  echo "running tests"; gotestsum --format=pkgname -- ./...`},
+		{"a mention and an invocation are counted once each", 1, `  echo "gotestsum runs next" && gotestsum --format=pkgname -- ./...`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			invocations, _ := scanGotestsumCommands(tc.body)
