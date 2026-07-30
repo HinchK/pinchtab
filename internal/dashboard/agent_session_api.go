@@ -32,16 +32,41 @@ func NewSessionAPI(store *session.Store, browsersAvailable []string) *SessionAPI
 	return &SessionAPI{store: store, browsersAvailable: browsersAvailable}
 }
 
-// RegisterHandlers registers session API routes.
+// RegisterHandlers registers session API routes. It walks session.RoutePatterns() rather
+// than naming the patterns here, so this registration and the unavailable-mode ones in the
+// server package cannot disagree about what the family contains. A pattern with no handler
+// panics: leaving it unrouted here is exactly the bare-404 state the shared list prevents.
 func (a *SessionAPI) RegisterHandlers(mux *http.ServeMux) {
 	if a == nil || a.store == nil || !a.store.Enabled() {
 		return
 	}
-	mux.HandleFunc("POST /sessions", a.handleCreate)
-	mux.HandleFunc("GET /sessions", a.handleList)
-	mux.HandleFunc("GET /sessions/me", a.handleMe)
-	mux.HandleFunc("GET /sessions/{id}", a.handleGet)
-	mux.HandleFunc("POST /sessions/{id}/revoke", a.handleRevoke)
+	a.registerPatterns(mux, session.RoutePatterns())
+}
+
+func (a *SessionAPI) registerPatterns(mux *http.ServeMux, patterns []string) {
+	for _, pattern := range patterns {
+		handler := a.handlerFor(pattern)
+		if handler == nil {
+			panic("dashboard: no session handler bound for " + pattern)
+		}
+		mux.HandleFunc(pattern, handler)
+	}
+}
+
+func (a *SessionAPI) handlerFor(pattern string) http.HandlerFunc {
+	switch pattern {
+	case "POST /sessions":
+		return a.handleCreate
+	case "GET /sessions":
+		return a.handleList
+	case "GET /sessions/me":
+		return a.handleMe
+	case "GET /sessions/{id}":
+		return a.handleGet
+	case "POST /sessions/{id}/revoke":
+		return a.handleRevoke
+	}
+	return nil
 }
 
 func (a *SessionAPI) handleCreate(w http.ResponseWriter, r *http.Request) {

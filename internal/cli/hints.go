@@ -43,12 +43,15 @@ const SessionCreateCommand = "export PINCHTAB_SESSION=$(pinchtab session create 
 // end-of-line yields exactly the command — it is the only place that command is
 // published, and its readers are agents.
 //
-// A THIRD state stays wrong and this does not fix it: a bridge has no agent
-// sessions at all, so the otherwise-clause cannot help there. The honest enabler
-// is exposing the capability in the health payload, which reports nothing about
-// it today.
+// The THIRD state is a bridge, where no config value mounts the family at all, so the
+// fallback must not name a config edit as the universal enabler: it is one of two
+// enablers, and the other is running a different process. The clause therefore attributes
+// each remedy to the mode it works in rather than prescribing one for both. The command
+// itself is unconditional — creating a session is what the caller wanted in every state,
+// and the server now answers each with its own code and remedy if it cannot.
 const NoSessionHint = "this tab is shared — no agent session is set. If agent sessions are enabled on this server, create one now; " +
-	"otherwise set sessions.agent.enabled = true in config.json and restart first. Either way the command is: " +
+	"otherwise a full server needs sessions.agent.enabled = true in config.json and a restart, and a bridge has no agent sessions at all. " +
+	"Either way the command is: " +
 	SessionCreateCommand
 
 // NextStepsRunningHints is the "Next steps" group shown when the server is up;

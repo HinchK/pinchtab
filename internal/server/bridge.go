@@ -80,6 +80,7 @@ func RunBridgeServer(cfg *config.RuntimeConfig, version string) {
 	}
 	h.RegisterRoutes(mux, doShutdown)
 	activity.RegisterHandlers(mux, actStore)
+	RegisterSessionsUnavailableInBridgeMode(mux)
 	cli.LogSecurityWarnings(cfg)
 
 	server = &http.Server{

@@ -171,6 +171,12 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 		ServerMetrics: handlers.SnapshotMetrics,
 	})
 	profMgr.RegisterHandlers(mux)
+	if !sessionStore.Enabled() {
+		// Without this the family is a bare mux 404, indistinguishable from a typo and
+		// from bridge mode — which is what made the CLI print a config remedy at users
+		// for whom no config could work.
+		RegisterSessionsDisabled(mux)
+	}
 
 	syncCtx, syncCancel := context.WithCancel(context.Background())
 	go func() {

@@ -28,6 +28,9 @@ By default, the bridge launches Chrome itself. Use --cdp-attach to attach the
 bridge to an already-running browser process (Chrome or CloakBrowser) via
 its remote debugging URL — the external process is never killed by PinchTab.
 
+Agent sessions are unavailable in bridge mode: the /sessions family is not served
+here and no config value mounts it. Run "pinchtab server" if you need them.
+
 Examples:
   pinchtab bridge
   pinchtab bridge --cdp-attach ws://127.0.0.1:9222/devtools/browser/<id>

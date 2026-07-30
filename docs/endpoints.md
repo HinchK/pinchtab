@@ -778,6 +778,8 @@ Scheduler routes are only present when `scheduler.enabled` is true.
 
 Create returns `sessionToken` — the plaintext token shown only once.
 
+Agent session routes are only present in full server mode with `sessions.agent.enabled` true. The family always answers, so the state is readable from the error code rather than from a bare 404: a bridge returns `sessions_unavailable_bridge_mode`, whose remedy is to run `pinchtab server`, and a full server with the setting off returns `sessions_disabled`, whose remedy is the config change. No config value mounts the family in bridge mode.
+
 Session-authenticated callers cannot reach dashboard/admin endpoint families such as config, dashboard agent listings, dashboard event streams, session management, profile management, instance management, or cache controls. They are intended for trusted automation in controlled environments, not for untrusted multi-tenant isolation.
 
 ## Feature Gates
