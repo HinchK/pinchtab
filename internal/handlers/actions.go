@@ -17,6 +17,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/pinchtab/pinchtab/internal/routes"
+	"github.com/pinchtab/pinchtab/internal/selector"
 	"github.com/pinchtab/pinchtab/internal/session"
 )
 
@@ -353,9 +354,22 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		h.errorWithCrashContext(w, destinationResolution.httpStatus(), err)
 		return
 	}
+	// Both ends of a drag come from one snapshot, so a stale destination gets the
+	// same refresh-and-recover the source does instead of an unconditional 404;
+	// only a destination that still cannot be found refuses, naming the
+	// destination. A destination that resolved is intent-cached like the source,
+	// so a later recovery refresh can descriptor-match it rather than trusting a
+	// positional ref against a new snapshot.
 	if destinationResolution.refMissing {
-		httpx.Error(w, 404, fmt.Errorf("drag destination %s not found - take a /snapshot first", req.ToSelector))
-		return
+		h.refreshRefCache(tCtx, resolvedTabID)
+		if err := h.refreshActionSecondaryTargets(tCtx, resolvedTabID, &req); err != nil {
+			httpx.Error(w, 404, err)
+			return
+		}
+	} else if req.ToSelector != "" && req.ToNodeID != 0 && h.Recovery != nil {
+		if toSel := selector.Parse(req.ToSelector); toSel.Kind == selector.KindRef {
+			h.cacheActionIntent(resolvedTabID, bridge.ActionRequest{Ref: toSel.Value})
+		}
 	}
 	refMissing := selectorResolution.refMissing
 	submitClick := bridge.IsSubmitClick(req.Kind, req)
