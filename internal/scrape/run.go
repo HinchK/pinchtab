@@ -318,8 +318,37 @@ func fromSeaportalGroups(groups []seaportal.PageGroup) []PageGroup {
 	return out
 }
 
-func summarize(pages []Page, recommendations []string) Summary {
-	s := Summary{ContentTypes: map[string]int{}, Recommendations: recommendations}
+// ThinContentChars is the post-enrichment thin-content threshold: a page whose final
+// extraction is shorter than this has little usable text.
+//
+// PinchTab OWNS this number. seaportal applies the same 160 at the pinned version, but
+// its constant is unexported AND inside another module's internal/ tree, so no import,
+// linkname or reflection can reach it — claiming to mirror it would be a promise this
+// code cannot keep. Owning it means a future upstream change becomes a visible decision
+// here rather than a silent divergence with nothing failing.
+const ThinContentChars = 160
+
+// forwardableRecommendations are the upstream recommendations that survive the browser
+// phase, matched on the stable noun in each.
+//
+// THE RULE, recorded where the choice is made, so the next upstream recommendation is
+// classified rather than guessed at: a recommendation derived from PAGE CONTENT must be
+// regenerated after enrichment, because the browser phase changes exactly that; one
+// derived from CRAWL SCOPE is forwarded, because the browser phase changes nothing about
+// which URLs were sampled. Both sitemap lines are scope; the errors and thin-content
+// lines are content, and both are regenerated below from the final pages.
+//
+// An unrecognised recommendation is FORWARDED, since dropping advice that is still true
+// is the worse failure. Classify a new one here when it appears.
+var forwardableRecommendations = []string{"sitemap"}
+
+// summarize rolls the FINAL pages up. Every field including the prose comes from this one
+// slice: the recommendations used to be carried in verbatim from the HTTP crawl, so the
+// numbers were post-render and the sentences pre-render inside one object — a run that
+// enriched every page still advised the reader to consider enrichment, and counted a page
+// as having little text while reporting its 2012 characters two lines above.
+func summarize(pages []Page, inherited []string) Summary {
+	s := Summary{ContentTypes: map[string]int{}}
 	for _, p := range pages {
 		if p.ContentType != "" {
 			s.ContentTypes[p.ContentType]++
@@ -336,7 +365,71 @@ func summarize(pages []Page, recommendations []string) Summary {
 	if len(s.ContentTypes) == 0 {
 		s.ContentTypes = nil
 	}
+	s.Recommendations = recommend(pages, s, inherited)
 	return s
+}
+
+// recommend keeps the crawl-scope advice the HTTP phase produced and regenerates the
+// page-content advice from the pages as they finally stand.
+func recommend(pages []Page, s Summary, inherited []string) []string {
+	var recs []string
+	if s.FailedPages > 0 {
+		recs = append(recs, fmt.Sprintf("%d of %d pages returned errors or 4xx/5xx responses", s.FailedPages, len(pages)))
+	}
+	if thin, unenriched := thinPages(pages); thin > 0 {
+		// The advice to enrich only survives while it is still actionable. A page the
+		// browser already rendered — or tried to and failed — has had that remedy
+		// applied, so repeating it sends the reader on a re-run that changes nothing.
+		line := fmt.Sprintf("%d pages have little extractable text (possible SPA/JS-only)", thin)
+		if unenriched > 0 {
+			line += "; consider PinchTab enrichment"
+		}
+		recs = append(recs, line)
+	}
+	for _, rec := range inherited {
+		if !regeneratedLocally(rec) {
+			recs = append(recs, rec)
+		}
+	}
+	return recs
+}
+
+// thinPages counts the pages whose FINAL content is thin, and how many of those never
+// had a browser attempt — the second number is what decides whether advising enrichment
+// is still useful. A failed page is not also thin: it has no content for a reason that
+// the errors line already reports.
+func thinPages(pages []Page) (thin, unenriched int) {
+	for _, p := range pages {
+		if p.Error != "" || p.StatusCode >= 400 {
+			continue
+		}
+		if contentChars(p) >= ThinContentChars {
+			continue
+		}
+		thin++
+		if p.Source != SourceBrowser && p.BrowserError == "" {
+			unenriched++
+		}
+	}
+	return thin, unenriched
+}
+
+// contentChars is a page's extracted length, read from CharCount in preview mode where
+// the body is deliberately withheld and Markdown is empty for every page.
+func contentChars(p Page) int {
+	if p.Markdown != "" {
+		return utf8.RuneCountInString(strings.TrimSpace(p.Markdown))
+	}
+	return p.CharCount
+}
+
+func regeneratedLocally(rec string) bool {
+	for _, forwardable := range forwardableRecommendations {
+		if strings.Contains(rec, forwardable) {
+			return false
+		}
+	}
+	return true
 }
 
 // clampConcurrency normalizes a requested concurrency into [1, MaxConcurrency].

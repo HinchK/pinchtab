@@ -2,6 +2,7 @@ package scrape
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -453,4 +454,262 @@ func firstLines(s string, n int) string {
 		lines = lines[:n]
 	}
 	return strings.Join(lines, "\n")
+}
+
+// The upstream crawl's own recommendations, which PinchTab used to forward verbatim.
+// They are written for a caller who has NOT yet run a browser, and PinchTab is a caller
+// who just did.
+const (
+	inheritedThinRec    = "2 pages have little extractable text (possible SPA/JS-only); consider PinchTab enrichment"
+	inheritedErrorsRec  = "1 of 4 pages returned errors or 4xx/5xx responses"
+	inheritedSitemapRec = "sitemap lists 400 URLs across 12 patterns but only 4 were sampled; sampling recommended"
+	inheritedCoverRec   = "only 4 of 400 sitemap URLs were sampled (1.0% coverage); raise --max-pages for broader coverage"
+)
+
+func crawlAdvising(recs []string, pages ...seaportal.PageObject) Crawler {
+	return func(context.Context) (*seaportal.ScrapeResult, error) {
+		return &seaportal.ScrapeResult{
+			Site:    seaportal.SiteInfo{BaseURL: "https://example.com", TotalURLsInSitemap: len(pages)},
+			Pages:   pages,
+			Summary: seaportal.ScrapeSummary{Recommendations: recs},
+			PageGroups: []seaportal.PageGroup{
+				{Pattern: "/*", TotalInSitemap: len(pages), Sampled: len(pages), Pages: pages},
+			},
+		}, nil
+	}
+}
+
+func recommendationNaming(t *testing.T, report Report, substr string) string {
+	t.Helper()
+	for _, rec := range report.Summary.Recommendations {
+		if strings.Contains(rec, substr) {
+			return rec
+		}
+	}
+	return ""
+}
+
+// The discriminating fixture: a JS-only page that extracts to nothing over HTTP and to
+// plenty after rendering, beside a page that is thin either way. The pre-render count is
+// 2 and the post-render count is 1, so a recommendation carried over from the HTTP phase
+// says 2 while the report's own per-page records say otherwise.
+func TestThinRecommendationCountsPagesAsTheyFinallyStand(t *testing.T) {
+	crawl := crawlAdvising([]string{inheritedThinRec},
+		seaportal.PageObject{URL: "https://example.com/", Status: 200, Markdown: longMarkdown, ContentType: "page"},
+		seaportal.PageObject{URL: "https://example.com/about", Status: 200, Markdown: longMarkdown, ContentType: "page"},
+		seaportal.PageObject{URL: "https://example.com/js", Status: 200, Markdown: "", ContentType: "page"},
+		seaportal.PageObject{URL: "https://example.com/thin", Status: 200, Markdown: "hi", ContentType: "page"},
+	)
+	render := func(url string) (string, error) {
+		if strings.HasSuffix(url, "/thin") {
+			return `<html><body><article><p>hi</p></article></body></html>`, nil
+		}
+		return renderedHTML, nil
+	}
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{}, crawl, render)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	js := report.Pages[2]
+	if js.Source != SourceBrowser || utf8.RuneCountInString(js.Markdown) < ThinContentChars {
+		t.Fatalf("the JS page was not filled by the browser, so this fixture cannot tell the two counts apart: source=%q chars=%d", js.Source, utf8.RuneCountInString(js.Markdown))
+	}
+
+	thinRec := recommendationNaming(t, report, "little extractable text")
+	if thinRec == "" {
+		t.Fatalf("the still-thin page produced no thin-content recommendation: %v", report.Summary.Recommendations)
+	}
+	if !strings.HasPrefix(thinRec, "1 pages") {
+		t.Errorf("thin count is pre-render: %q — the browser filled one of the two pages the HTTP phase called thin", thinRec)
+	}
+	if strings.Contains(thinRec, "consider PinchTab enrichment") {
+		t.Errorf("the report advises the enrichment it already performed: %q", thinRec)
+	}
+}
+
+// --enrich-all renders every page by definition, so advising enrichment can never be
+// actionable — a reader who follows it re-runs and gets the same sentence back.
+func TestEnrichAllNeverAdvisesEnrichment(t *testing.T) {
+	crawl := crawlAdvising([]string{inheritedThinRec},
+		seaportal.PageObject{URL: "https://example.com/", Status: 200, Markdown: longMarkdown},
+		seaportal.PageObject{URL: "https://example.com/thin", Status: 200, Markdown: "hi"},
+	)
+	render := func(url string) (string, error) {
+		if strings.HasSuffix(url, "/thin") {
+			return `<html><body><article><p>hi</p></article></body></html>`, nil
+		}
+		return renderedHTML, nil
+	}
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{EnrichAll: true}, crawl, render)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if report.Summary.BrowserPages == 0 {
+		t.Fatal("no page was browser-rendered, so --enrich-all is not being exercised")
+	}
+	for _, rec := range report.Summary.Recommendations {
+		if strings.Contains(rec, "consider PinchTab enrichment") {
+			t.Errorf("--enrich-all still advises enrichment: %q", rec)
+		}
+	}
+	if recommendationNaming(t, report, "little extractable text") == "" {
+		t.Error("the page that is thin even after rendering stopped being reported; that half is still worth saying")
+	}
+}
+
+// A page that is thin and was never offered to the browser keeps the advice, because
+// there the remedy has not been applied yet.
+func TestThinPagesTheBrowserNeverSawKeepTheEnrichmentAdvice(t *testing.T) {
+	crawl := crawlAdvising([]string{inheritedThinRec},
+		seaportal.PageObject{URL: "https://example.com/thin", Status: 200, Markdown: "hi"},
+	)
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{NoBrowser: true}, crawl, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	thinRec := recommendationNaming(t, report, "little extractable text")
+	if !strings.Contains(thinRec, "consider PinchTab enrichment") {
+		t.Errorf("with no browser phase the advice is still actionable and must survive: %q", thinRec)
+	}
+}
+
+// The second live instance of the same defect: the browser can recover a page that failed
+// over HTTP, and summarize already counts FailedPages from the final pages — so the
+// inherited errors line contradicts the report's own number.
+func TestErrorsRecommendationCountsPagesAsTheyFinallyStand(t *testing.T) {
+	crawl := crawlAdvising([]string{inheritedErrorsRec},
+		seaportal.PageObject{URL: "https://example.com/", Status: 200, Markdown: longMarkdown},
+		seaportal.PageObject{URL: "https://example.com/flaky", Status: 200, Error: "tls handshake failure"},
+	)
+	render := func(string) (string, error) { return renderedHTML, nil }
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{}, crawl, render)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	recovered := report.Pages[1]
+	if recovered.Error != "" || recovered.Source != SourceBrowser {
+		t.Fatalf("the browser did not recover the failed page, so this fixture proves nothing: error=%q source=%q", recovered.Error, recovered.Source)
+	}
+	if report.Summary.FailedPages != 0 {
+		t.Fatalf("FailedPages = %d, want 0 after recovery", report.Summary.FailedPages)
+	}
+	if rec := recommendationNaming(t, report, "returned errors"); rec != "" {
+		t.Errorf("the report says %q while its own failedPages is 0", rec)
+	}
+}
+
+func TestAGenuinelyFailedPageIsStillReported(t *testing.T) {
+	crawl := crawlAdvising(nil,
+		seaportal.PageObject{URL: "https://example.com/", Status: 200, Markdown: longMarkdown},
+		seaportal.PageObject{URL: "https://example.com/dead", Status: 200, Error: "tls handshake failure"},
+	)
+	render := func(string) (string, error) { return "", errors.New("tab crashed") }
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{}, crawl, render)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	rec := recommendationNaming(t, report, "returned errors")
+	if rec == "" {
+		t.Fatalf("a page that failed and stayed failed produced no recommendation: %v", report.Summary.Recommendations)
+	}
+	if !strings.HasPrefix(rec, "1 of 2 pages") {
+		t.Errorf("the errors line does not match the report's own failedPages=%d: %q", report.Summary.FailedPages, rec)
+	}
+}
+
+// Crawl-scope advice describes which URLs were SAMPLED, which no amount of browser
+// rendering changes, so it must survive verbatim. Dropping advice that is still true is
+// the failure mode on the other side of this fix.
+func TestSitemapCoverageAdviceIsForwardedUnchanged(t *testing.T) {
+	crawl := crawlAdvising([]string{inheritedSitemapRec, inheritedCoverRec},
+		seaportal.PageObject{URL: "https://example.com/", Status: 200, Markdown: longMarkdown},
+	)
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{NoBrowser: true}, crawl, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	for _, want := range []string{inheritedSitemapRec, inheritedCoverRec} {
+		found := false
+		for _, rec := range report.Summary.Recommendations {
+			if rec == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("crawl-scope advice was dropped: %q\n got %v", want, report.Summary.Recommendations)
+		}
+	}
+}
+
+// A clean run says nothing rather than saying nothing under a heading: an empty
+// "## Recommendations" section reads as a report with no conclusions.
+func TestACleanRunOmitsTheRecommendationsBlockEntirely(t *testing.T) {
+	crawl := crawlAdvising([]string{inheritedThinRec, inheritedErrorsRec},
+		seaportal.PageObject{URL: "https://example.com/", Status: 200, Markdown: longMarkdown},
+		seaportal.PageObject{URL: "https://example.com/js", Status: 200, Markdown: ""},
+	)
+	render := func(string) (string, error) { return renderedHTML, nil }
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{EnrichAll: true}, crawl, render)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if len(report.Summary.Recommendations) != 0 {
+		t.Fatalf("a run with nothing left to advise still carries %v", report.Summary.Recommendations)
+	}
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "recommendations") {
+		t.Error("the JSON report carries an empty recommendations key; omitempty needs a nil slice, not an allocated one")
+	}
+	if strings.Contains(string(RenderMarkdown(report)), "## Recommendations") {
+		t.Error("the markdown report renders a Recommendations heading with nothing under it")
+	}
+}
+
+// The threshold is PinchTab's own. seaportal applies the same number at the pinned
+// version, but its constant is unexported and inside another module's internal/ tree, so
+// nothing here can read it — this test is the pin that makes a future divergence a
+// decision someone takes rather than one that happens.
+func TestThinContentThresholdIsPinned(t *testing.T) {
+	if ThinContentChars != 160 {
+		t.Errorf("ThinContentChars = %d, want 160 — the value matches seaportal's own thin-content threshold at the pinned version. Changing it is allowed, but say why in the constant's comment, because the two notions of thin then differ", ThinContentChars)
+	}
+}
+
+// Preview withholds every page body, so a thin count read from Markdown would call the
+// whole site thin.
+func TestPreviewCountsWithheldBodiesByTheirRecordedLength(t *testing.T) {
+	crawl := crawlAdvising(nil,
+		seaportal.PageObject{URL: "https://example.com/", Status: 200, Markdown: longMarkdown},
+		seaportal.PageObject{URL: "https://example.com/thin", Status: 200, Markdown: "hi"},
+	)
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{Preview: true}, crawl, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if report.Pages[0].Markdown != "" || report.Pages[0].CharCount == 0 {
+		t.Fatalf("preview did not withhold the body, so this fixture proves nothing: %+v", report.Pages[0])
+	}
+	thinRec := recommendationNaming(t, report, "little extractable text")
+	if !strings.HasPrefix(thinRec, "1 pages") {
+		t.Errorf("preview counted withheld bodies as thin: %q", thinRec)
+	}
 }
