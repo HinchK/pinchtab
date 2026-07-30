@@ -37,11 +37,23 @@ func WriteCommandHints(out io.Writer, heading string, hints []CommandHint, width
 const SessionCreateCommand = "export PINCHTAB_SESSION=$(pinchtab session create --agent-id <id>)"
 
 // NoSessionHint is the single wording for "this caller has no agent session".
-// It names the server-side prerequisite before the command, because the command
-// exits 1 with "agent sessions are not enabled on this server" on default
-// config — so a user following the hint top to bottom cannot dead-end.
-const NoSessionHint = "this tab is shared — no agent session is set. Agent sessions must be enabled on the server " +
-	"(sessions.agent.enabled = true in config.json, then restart); once they are, create one with: " + SessionCreateCommand
+//
+// It must hold in BOTH server states, which is why the enable-and-restart clause is
+// conditional and comes last. It used to lead with "agent sessions must be enabled",
+// which kept a reader on default config from dead-ending in the command's own
+// "agent sessions are not enabled on this server" — but told every correctly
+// configured user to change config that was already right and restart a server that
+// needed no restart. This is the most-printed string in the product, so it says the
+// applicable half first and keeps the prerequisite as the fallback: a reader on
+// either server still reaches a working outcome by following it top to bottom.
+//
+// A THIRD state is still wrong here and this wording does not fix it: on a bridge
+// there are no agent sessions at all, so the otherwise-clause cannot help. Fixing
+// that needs the capability in the health payload (nothing there reports whether
+// agent sessions are enabled today) so the caller can pick a branch; do not read
+// this constant as true on a bridge.
+const NoSessionHint = "this tab is shared — no agent session is set. If agent sessions are enabled on this server, create one with: " +
+	SessionCreateCommand + "; otherwise set sessions.agent.enabled = true in config.json and restart first."
 
 // NextStepsRunningHints is the "Next steps" group shown when the server is up;
 // shared by the root banner and `pinchtab health` so the two stay in lockstep.
