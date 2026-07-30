@@ -761,3 +761,32 @@ func TestAnEmptyProxyBlockIsStillValidatedAsAbsent(t *testing.T) {
 		}
 	}
 }
+
+func TestACredentialsOnlyTargetProxyDoesNotReplaceAWorkingParentProxy(t *testing.T) {
+	cfg := &RuntimeConfig{
+		DefaultBrowser: BrowserChrome,
+		Proxy:          BrowserProxyConfig{Server: "http://parent.example:8080"},
+		Targets: BrowserTargetsConfig{
+			"creds": {
+				Provider: BrowserChrome,
+				Proxy:    BrowserProxyConfig{Username: "bob", Password: "secret"},
+			},
+		},
+	}
+
+	resolved, err := ResolveExplicitBrowserTarget(cfg, "creds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Config.Proxy.Server; got != "http://parent.example:8080" {
+		t.Fatalf("resolved proxy server = %q; a target proxy carrying only credentials replaced the working parent proxy, so the target's traffic would egress directly", got)
+	}
+
+	flags, err := BrowserProxyFlags(resolved.Config.Proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flags) == 0 {
+		t.Fatal("resolved target produced no proxy launch flags; traffic would egress directly, un-proxied")
+	}
+}
