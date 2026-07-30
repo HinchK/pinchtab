@@ -15,9 +15,7 @@ import (
 )
 
 // Cloudflare implements autosolver.Solver for Cloudflare Turnstile
-// and interstitial challenges. Unlike bridge/cloudflare.go, this
-// implementation uses the Page/ActionExecutor abstraction and has
-// zero dependency on chromedp.
+// and interstitial challenges.
 type Cloudflare struct{}
 
 func (s *Cloudflare) Name() string  { return autosolver.CloudflareSolverName }

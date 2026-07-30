@@ -1,11 +1,8 @@
-// Package cfchallenge holds the substrate-free Cloudflare challenge data
-// (title indicators, challenge-type tokens, turnstile selector JS, spinner
-// text) shared verbatim by the two Cloudflare solver flows —
-// internal/bridge/cloudflare.go and internal/autosolver/solvers/cloudflare.go —
-// so the duplicated copies can't drift. It depends on nothing but the stdlib so
-// both packages can import it without an import cycle. Control flow (jitter,
-// attempt counts, retry, detect/solve) stays in each flow; only the verbatim
-// data lives here.
+// Package cfchallenge holds the substrate-free Cloudflare challenge data: the
+// title indicators, challenge-type tokens, turnstile selector JS and spinner
+// text a solver matches against. It depends on nothing but the stdlib, so any
+// flow can import it without an import cycle. Control flow (jitter, attempt
+// counts, retry, detect/solve) stays with the solver; only the data lives here.
 package cfchallenge
 
 import "strings"

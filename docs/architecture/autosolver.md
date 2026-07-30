@@ -73,10 +73,9 @@ internal/autosolver/
 │   ├── llm.go             # LLM provider skeleton with structured prompts
 │   └── trim.go            # HTML trimming for token efficiency
 └── solvers/
-    ├── cloudflare.go      # Cloudflare Turnstile (new interface, no chromedp)
+    ├── cloudflare.go      # Cloudflare Turnstile solver
     ├── jschallenge.go     # Generic JavaScript challenge/interstitial solver
-    ├── jschallenge_test.go
-    └── legacy.go          # Compatibility shim for existing solver.Solver
+    └── jschallenge_test.go
 ```
 
 ## Core Interfaces
