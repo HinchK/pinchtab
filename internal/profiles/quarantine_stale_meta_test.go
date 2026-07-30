@@ -38,14 +38,16 @@ func TestAQuarantineCarryingStaleMetadataNeverClaimsTheLiveProfileIdentity(t *te
 	liveDir, quarantineDir := quarantineCarryingStaleMeta(t, baseDir, "shopping")
 	pm := NewProfileManager(baseDir)
 
-	// This one is defended twice, and only one defence is designed: a quarantine name is
-	// the live directory's name plus a suffix, so ReadDir yields the live directory first
-	// and the id match wins before the metadata is ever consulted. Measured — weakening
-	// trustedProfileMeta leaves this subtest passing. The identity subtest below is what
-	// actually holds the line, so do not read a green here as covering the rule. The same
-	// applies to the delete subtest: Delete resolves through findProfileDirByName, so it
-	// inherits this lookup's answer and also passes under the weakening. Both are here for
-	// the consequences they describe, not as evidence for the rule.
+	// This one is defended by two accidents, and neither is the rule under test. The live
+	// directory is reachable by its own name, so the direct stat in findProfileDirByName
+	// returns before ReadDir is consulted at all; and even without it, a quarantine sorts
+	// after the directory it was renamed from, so the id match wins first. Measured: either
+	// accident alone keeps this subtest green, and so does weakening trustedProfileMeta.
+	// The identity subtest below is what holds the line against that weakening, so do not
+	// read a green here as covering the rule. Delete inherits this lookup's answer and is
+	// green under the same weakening — but it is not inert: it reds once the by-name lookup
+	// stops preferring the live directory, which is the change reclaiming quarantined
+	// directories could plausibly make.
 	t.Run("a lookup by name resolves the live directory", func(t *testing.T) {
 		got, err := pm.findProfileDirByName("shopping")
 		if err != nil {
