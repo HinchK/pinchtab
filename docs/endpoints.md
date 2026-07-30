@@ -606,8 +606,9 @@ Response body behavior for network detail/export:
 - `bodyMode=retained-preferred` waits briefly for pending retained-body capture before falling back to live CDP
 - `bodyMode=retained-only` never falls back to live CDP and returns explicit pending/skipped/error state instead
 - detail responses may expose `bodySource=retained|live` to distinguish which path produced the returned body
-- retained-body detail responses may expose `bodyPending=true` while capture is still in flight, or `bodySkipped=true` with `bodySkipReason` when retention was intentionally not completed
-- retained bodies are capped by `server.retainNetworkBodyMaxBytes`; oversized retained bodies are truncated and marked with `bodyTruncated=true`
+- retained-body detail responses may expose `bodyPending=true` while capture is still in flight, or `bodySkipped=true` with `bodySkipReason` when retention was not completed — either skipped up front (retention disabled, the tab's retention budget exhausted, concurrency limit reached) or because an over-budget base64 body was dropped rather than cut
+- retained bodies are capped twice: per body by `server.retainNetworkBodyMaxBytes` (`bodySkipReason` says "retention limit") and by the tab's remaining retention buffer ("retention budget"). An oversized text body is truncated to a byte-exact prefix and marked `bodyTruncated=true`; an oversized base64 body is dropped entirely with `bodySkipped=true` and the reason, because a base64 fragment is undecodable
+- `base64Encoded=true` marks the returned body (retained or live) as base64 — decode it before use. The field is omitted, never `false`, for a text body, so its presence is what to branch on. Both caps measure the encoded length, so a binary response has an effective raw budget of roughly three quarters of the configured bytes
 - retained responses may include `bodyRetained=true`
 
 Request body (`postData`) behavior:
