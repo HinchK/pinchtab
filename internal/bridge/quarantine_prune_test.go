@@ -143,6 +143,54 @@ func TestPruneLeavesLiveProfilesAndOtherProfilesQuarantinesAlone(t *testing.T) {
 	}
 }
 
+// A profile a user names "<other profile>.quarantine-<digits>" is indistinguishable on
+// disk from a real quarantine, and no code here can tell them apart. What bounds the
+// exposure is the sibling scope: the lookalike is out of reach while its own profile
+// quarantines, is a candidate only when its NAMESAKE quarantines, and is kept even then
+// while it is the newest of that namesake's set. This is the whole of the protection, so
+// it is asserted rather than argued in a comment.
+func TestPruneOnlyReachesALookalikeThroughItsNamesakeAndStillKeepsTheNewest(t *testing.T) {
+	root := t.TempDir()
+	profileDir := filepath.Join(root, "default")
+	namesake := filepath.Join(root, "work")
+	lookalike := quarantinePathAt(namesake, 1700000009)
+	writeProfileDir(t, profileDir, 32)
+	writeProfileDir(t, namesake, 32)
+	writeProfileDir(t, lookalike, 32)
+
+	// Another profile pruning cannot reach it, however many times it quarantines.
+	newest := quarantinePathAt(profileDir, 1700000002)
+	writeProfileDir(t, quarantinePathAt(profileDir, 1700000001), 32)
+	writeProfileDir(t, newest, 32)
+	if _, err := PruneQuarantinedProfiles(profileDir, newest, 1); err != nil {
+		t.Fatalf("PruneQuarantinedProfiles() error = %v", err)
+	}
+	if _, err := os.Stat(lookalike); err != nil {
+		t.Fatalf("a lookalike named after another profile was reached by %s pruning: %v", filepath.Base(profileDir), err)
+	}
+
+	// Its namesake quarantining does make it a candidate, and as the newest of that set
+	// it is what the keep count keeps.
+	if _, err := PruneQuarantinedProfiles(namesake, "", 1); err != nil {
+		t.Fatalf("PruneQuarantinedProfiles() error = %v", err)
+	}
+	if _, err := os.Stat(lookalike); err != nil {
+		t.Fatalf("the newest of the namesake's set was removed, so the keep count did not protect the lookalike: %v", err)
+	}
+
+	// Only a NEWER real quarantine of that namesake displaces it — the bound, not a
+	// promise that it survives for ever.
+	displacing := quarantinePathAt(namesake, 1700000010)
+	writeProfileDir(t, displacing, 32)
+	removals, err := PruneQuarantinedProfiles(namesake, displacing, 1)
+	if err != nil {
+		t.Fatalf("PruneQuarantinedProfiles() error = %v", err)
+	}
+	if len(removals) != 1 || removals[0].Path != lookalike {
+		t.Fatalf("removals = %v, want the lookalike once its namesake quarantined again", removals)
+	}
+}
+
 // Eligibility comes from the predicate quarantine's writer uses, not a second copy of
 // the pattern: every name this prune accepts must be one that predicate accepts.
 func TestPruneEligibilityAgreesWithTheQuarantinePredicate(t *testing.T) {

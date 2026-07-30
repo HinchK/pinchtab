@@ -148,44 +148,37 @@ func SplitQuarantineName(dirName string) (profile string, stamp int64, ok bool) 
 	return match[1], stamp, true
 }
 
-// IsQuarantinedProfileDir reports whether a directory name is one quarantine
-// produced. Only the "<name>.quarantine-<unix>" suffix decides, so a profile a
-// user named after the word stays an ordinary profile.
 func IsQuarantinedProfileDir(dirName string) bool {
 	_, _, ok := SplitQuarantineName(dirName)
 	return ok
 }
 
-// QuarantineRemoval is one directory a prune reclaimed, for the caller to log and
-// for a user-invoked reclaim to report.
 type QuarantineRemoval struct {
 	Path  string
 	Bytes int64
 }
 
-// KeepAllQuarantinedProfiles is the keep count that turns pruning off, restoring
-// the behaviour of keeping every quarantined profile for ever.
 const KeepAllQuarantinedProfiles = 0
 
-// PruneQuarantinedProfiles keeps the newest `keep` quarantined siblings of one
-// profile and removes the rest, returning what it reclaimed. It is the only
-// deleter of quarantined profiles, so a user-invoked reclaim reuses it rather
-// than growing a second one.
+// PruneQuarantinedProfiles keeps the newest `keep` quarantined siblings of one profile
+// and removes the rest, returning what it reclaimed.
 //
-// Two things bound what it can touch. Eligibility goes through
-// IsQuarantinedProfileDir, the predicate quarantine's own writer uses, so a live
-// profile directory sitting beside them is not a candidate — and because the
-// pattern demands the "<name>.quarantine-<digits>" suffix, a profile a user named
-// after the word is not one either. A user who names a profile exactly
-// "<something>.quarantine-1700000000" IS indistinguishable on disk from a real
-// quarantine; what stops it being deleted is the sibling scope, since it would
-// have to sit in the profiles base dir under the name of ANOTHER profile with
-// that suffix, and it is still never the newest-kept entry of its own name.
+// It is the only deleter that applies the quarantine PREDICATE and the sibling SCOPE,
+// which is the property a user-invoked reclaim needs from it. It is not the only code
+// that can remove a quarantine directory: DELETE /profiles/{id} resolves an id through
+// the profile listing — where a quarantine appears under its own id — and calls
+// ProfileManager.Delete, which removes the directory by name with neither guard. That
+// route is authenticated and audit-logged and is arguably the reclaim a user wants, so
+// the distinction to preserve is which deleter is scoped, not which one exists.
 //
-// justCreated is excluded by path, not by being newest: quarantine may proceed
-// while a dying browser still holds the directory, so the entry that can still be
-// written to must never be a candidate even if a same-second timestamp ties it
-// with an older one.
+// A user who names a profile exactly "<other profile>.quarantine-<digits>" is
+// indistinguishable on disk from a real quarantine; nothing here can tell them apart,
+// and what bounds the exposure is the sibling scope. See
+// TestPruneOnlyReachesALookalikeThroughItsNamesakeAndStillKeepsTheNewest.
+//
+// justCreated is excluded by PATH, not by being newest: quarantine may proceed while a
+// dying browser still holds the directory, so the one entry that can still be written to
+// must survive a same-second timestamp tie.
 func PruneQuarantinedProfiles(profileDir, justCreated string, keep int) ([]QuarantineRemoval, error) {
 	if keep <= KeepAllQuarantinedProfiles {
 		return nil, nil
@@ -199,15 +192,10 @@ func PruneQuarantinedProfiles(profileDir, justCreated string, keep int) ([]Quara
 	if err != nil {
 		return nil, err
 	}
-	// Newest first, so keeping a prefix keeps the freshest artefacts — the ones
-	// most likely to relate to a problem being investigated now.
 	sort.Slice(siblings, func(i, j int) bool { return siblings[i].stamp > siblings[j].stamp })
 
-	// The just-created directory takes the first slot before anything else is
-	// considered, so keep=1 means exactly one quarantined profile survives and it is
-	// that one. Reserving rather than ranking is what makes this independent of the
-	// timestamp order: two quarantines in the same second tie, and the entry a dying
-	// browser may still be writing to must not lose a coin toss.
+	// justCreated reserves a slot rather than being ranked, which is what makes the
+	// outcome independent of the timestamp order.
 	budget := keep
 	for _, sibling := range siblings {
 		if sibling.path == justCreated {
@@ -240,10 +228,9 @@ type quarantinedSibling struct {
 	stamp int64
 }
 
-// quarantinedSiblings finds the quarantined directories belonging to one profile: same
-// parent, same profile name. Both halves have exactly one owner — SplitQuarantineName
-// decides whether a name is a quarantine at all, and the profile it reports decides whose
-// it is, which is what keeps one profile's prune away from another profile's evidence.
+// quarantinedSiblings finds the quarantined directories belonging to one profile. Both
+// halves come from SplitQuarantineName — whether a name is a quarantine at all, and whose
+// it is — so neither rule has a second implementation that could drift.
 func quarantinedSiblings(profileDir string) ([]quarantinedSibling, error) {
 	parent := filepath.Dir(profileDir)
 	profileName := filepath.Base(profileDir)
