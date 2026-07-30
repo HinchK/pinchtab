@@ -141,6 +141,76 @@ func TestExtractDocumentText_ArticleKeepsReadabilityOutput(t *testing.T) {
 	}
 }
 
+// The same word selected opposite behaviour on the two surfaces: the CLI's --full sends
+// mode=raw and returns innerText, while the API's ?mode=full fell through to readability.
+// full is now the alias the CLI already implies, and a mode nobody implemented is refused
+// rather than silently downgraded.
+func TestResolveTextMode(t *testing.T) {
+	for _, tc := range []struct {
+		requested string
+		want      string
+	}{
+		{"", ""},
+		{"raw", "raw"},
+		{"full", "raw"},
+		{"FULL", "raw"},
+		{"  raw  ", "raw"},
+	} {
+		got, err := resolveTextMode(tc.requested)
+		if err != nil {
+			t.Errorf("resolveTextMode(%q) refused: %v", tc.requested, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("resolveTextMode(%q) = %q, want %q", tc.requested, got, tc.want)
+		}
+	}
+}
+
+func TestResolveTextMode_RefusesAnUnimplementedMode(t *testing.T) {
+	_, err := resolveTextMode("readable")
+	if err == nil {
+		t.Fatal("an unimplemented mode was accepted; the caller gets readability while believing they asked for something else")
+	}
+	message := err.Error()
+	if !strings.Contains(message, `"readable"`) {
+		t.Errorf("the refusal does not name what the caller sent: %s", message)
+	}
+	for _, accepted := range []string{"full", "raw"} {
+		if !strings.Contains(message, accepted) {
+			t.Errorf("the refusal does not name the accepted value %q: %s", accepted, message)
+		}
+	}
+	if !strings.Contains(message, "full, raw") {
+		t.Errorf("the accepted values are not in a stable order, so the refusal differs between runs: %s", message)
+	}
+}
+
+// full must be byte-identical to raw, not merely close: the two are the same extraction.
+func TestExtractDocumentText_FullIsTheSameExtractionAsRaw(t *testing.T) {
+	extractions := map[string]textExtraction{}
+	for _, requested := range []string{"raw", "full"} {
+		mode, err := resolveTextMode(requested)
+		if err != nil {
+			t.Fatalf("resolveTextMode(%q): %v", requested, err)
+		}
+		m := textScriptBridge(t, collapsedReadabilityText, landingPageRawText)
+		h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
+		extraction, err := h.extractDocumentText(context.Background(), mode, "")
+		if err != nil {
+			t.Fatalf("extractDocumentText(%q): %v", requested, err)
+		}
+		extractions[requested] = extraction
+	}
+
+	if extractions["full"] != extractions["raw"] {
+		t.Errorf("?mode=full and ?mode=raw produced different extractions:\n full %+v\n raw  %+v", extractions["full"], extractions["raw"])
+	}
+	if extractions["raw"].Text != landingPageRawText {
+		t.Errorf("raw extraction = %q, want the raw document text unchanged", extractions["raw"].Text)
+	}
+}
+
 func TestExtractDocumentText_RawModeSkipsCoverageComparison(t *testing.T) {
 	m := textScriptBridge(t, collapsedReadabilityText, landingPageRawText)
 	h := New(m, &config.RuntimeConfig{}, nil, nil, nil)

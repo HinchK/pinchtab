@@ -43,5 +43,61 @@
 
   root.querySelectorAll('script, style, noscript, svg, [hidden]').forEach(el => el.remove());
 
-  return root.innerText.replace(/\n{3,}/g, '\n\n').trim();
+  // root is always a CLONE, so it is detached, and innerText on an unrendered node
+  // has no layout to consult — it degrades to textContent, which concatenates
+  // descendant text with no separator at all. That is how a status cell and a
+  // timestamp cell came back as one unparseable number, and how two adjacent
+  // paragraphs came back as one word.
+  //
+  // serialize walks the clone instead and supplies the boundaries layout would
+  // have: a newline between blocks, a tab between table cells. It inserts a
+  // separator ONLY where the text either side would otherwise fuse, so a document
+  // whose source already carries whitespace between its tags serialises exactly as
+  // it did before and nothing reflows.
+  //
+  // Every mutation above and every read below happen on the clone, which is never
+  // inserted into the document — that is what guarantees a read cannot alter the
+  // page an agent is driving. Do not "fix" this by attaching the clone off-screen
+  // to give it layout: that fires the page's mutation observers and re-requests
+  // every image and iframe in the copy.
+  const BLOCKS = new Set(['ADDRESS', 'ARTICLE', 'ASIDE', 'BLOCKQUOTE', 'DD', 'DETAILS',
+    'DIALOG', 'DIV', 'DL', 'DT', 'FIELDSET', 'FIGCAPTION', 'FIGURE', 'FOOTER', 'FORM',
+    'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'HEADER', 'HGROUP', 'HR', 'LI', 'MAIN', 'NAV',
+    'OL', 'P', 'PRE', 'SECTION', 'TABLE', 'TBODY', 'TFOOT', 'THEAD', 'TR', 'UL']);
+
+  let out = '';
+  let pending = '';
+  // A boundary QUEUES a separator rather than writing one. It is written only when the
+  // next text arrives with nothing separating it from what came before — which is what
+  // keeps a document that already spaces its tags byte-identical to the old output. A
+  // newline outranks a tab, so the first cell of a row starts a line rather than
+  // continuing one.
+  const queue = (sep) => {
+    if (sep === '\n' || pending === '') pending = sep;
+  };
+  const write = (data) => {
+    if (data === '') return;
+    if (pending && out !== '' && !/\s$/.test(out) && !/^\s/.test(data)) out += pending;
+    pending = '';
+    out += data;
+  };
+  const serialize = (node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      write(node.data);
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    if (node.tagName === 'BR') {
+      queue('\n');
+      return;
+    }
+    const block = BLOCKS.has(node.tagName);
+    if (block) queue('\n');
+    if (node.tagName === 'TD' || node.tagName === 'TH') queue('\t');
+    for (const child of node.childNodes) serialize(child);
+    if (block) queue('\n');
+  };
+  serialize(root);
+
+  return out.replace(/\n{3,}/g, '\n\n').trim();
 })()

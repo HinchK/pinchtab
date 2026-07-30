@@ -241,7 +241,7 @@ Snapshot query parameters:
 
 Text query parameters:
 
-- `mode=raw`
+- `mode=raw` (`mode=full` is an alias; any other value is a 400 naming the accepted ones)
 - `format`
 - `maxChars`
 - `frameId`
@@ -250,6 +250,12 @@ Text query parameters:
 `<main>` (skips `display:none`) and strips nav/footer/ads. Use `mode=raw` for
 full `innerText`, or `/snapshot` for structured UI text like prices and button
 labels.
+
+`mode=raw` and `mode=full` are the same extraction — the whole unfiltered page —
+and are what the CLI's `--raw` and `--full` send. The default extraction keeps
+block and table-cell boundaries: adjacent cells are separated by a tab and
+adjacent blocks by a newline, so a status code and a timestamp in neighbouring
+cells stay two fields rather than one number.
 
 `/text` is also frame-aware. `frameId` targets a specific iframe for a one-shot
 read; otherwise the endpoint inherits the tab's current `/frame` scope.

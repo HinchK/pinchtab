@@ -170,7 +170,7 @@ func configureBrowserFlags() {
 	findCmd.Flags().Bool("ref-only", false, "Output just the element ref")
 
 	textCmd.Flags().Bool("raw", false, "Raw extraction mode (alias of --full)")
-	textCmd.Flags().Bool("full", false, "Return the full page text (document.body.innerText) instead of the default Readability-filtered content")
+	textCmd.Flags().Bool("full", false, "Return the full page text (document.body.innerText, the API's mode=full/mode=raw) instead of the default Readability-filtered content")
 	textCmd.Flags().String("frame", "", "Extract text from a specific iframe by frameId. If unset, uses the tab's active frame scope (set via `pinchtab frame`) or the top-level document.")
 	textCmd.Flags().StringP("selector", "s", "", "Element selector to extract text from (ref/CSS/XPath/text)")
 	textCmd.Flags().Bool("json", false, "Output full JSON response instead of just text content")

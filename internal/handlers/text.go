@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +32,11 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mode := r.URL.Query().Get("mode")
+	mode, modeErr := resolveTextMode(r.URL.Query().Get("mode"))
+	if modeErr != nil {
+		httpx.Error(w, 400, modeErr)
+		return
+	}
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
 	maxChars := -1
 	if v := r.URL.Query().Get("maxChars"); v != "" {
@@ -124,6 +129,43 @@ func (h *Handlers) writeElementTextResponse(w http.ResponseWriter, r *http.Reque
 }
 
 const rawTextScript = `document.body.innerText`
+
+// textModes are the values ?mode= accepts, each mapped to the extraction it selects.
+// "full" is an ALIAS of raw because that is what the CLI's --full already sends and
+// what the word plainly reads as — the whole unfiltered page. It used to fall through
+// to readability, so a caller who read the CLI help and wrote ?mode=full against the
+// API got the filtered output while believing they had asked for innerText.
+var textModes = map[string]string{
+	"":     "",
+	"raw":  "raw",
+	"full": "raw",
+}
+
+// resolveTextMode maps a requested mode onto the extraction that runs, and REFUSES an
+// unimplemented one. Silently extracting readability for a mode nobody implemented hands
+// the caller something other than what they asked for with no signal, which is the same
+// defect class as losing a field boundary.
+func resolveTextMode(requested string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(requested))
+	mode, ok := textModes[normalized]
+	if !ok {
+		return "", fmt.Errorf("unknown text mode %q; accepted values are %s (omit mode for the default Readability extraction)", requested, strings.Join(namedTextModes(), ", "))
+	}
+	return mode, nil
+}
+
+// namedTextModes lists the modes a caller can spell, sorted so the refusal reads the
+// same on every run rather than however the map happened to iterate.
+func namedTextModes() []string {
+	named := make([]string, 0, len(textModes))
+	for mode := range textModes {
+		if mode != "" {
+			named = append(named, mode)
+		}
+	}
+	sort.Strings(named)
+	return named
+}
 
 // Extraction modes echoed to the caller: which extractor produced the text.
 const (
