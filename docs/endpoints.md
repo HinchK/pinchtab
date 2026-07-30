@@ -846,3 +846,50 @@ Problem Details is currently used for selected precondition and capability failu
 - screencast tab-not-found precondition failure
 
 Additional endpoints may be migrated over time. Clients should tolerate both error content types and branch on `Content-Type` when parsing failures.
+
+### Refusal guidance: `details.hint` and `details.remedy`
+
+A refusal that a caller can act on carries a `details` object with two fields. They are
+different kinds of answer and neither substitutes for the other:
+
+- `hint` — prose for a human or a model to read. Explanations, alternatives, preconditions
+  and anything that is not a single command live here.
+- `remedy` — **one line a shell accepts**, so an agent can run it verbatim without parsing
+  English.
+
+`remedy` guarantees all of the following:
+
+- one line, one or more `pinchtab` invocations, joined with `&&` when more than one is needed.
+  `$(...)` command substitution is allowed and is used where a value has to be read back
+  first — widening the domain allowlist appends to the current one rather than replacing it
+- no prose connectives (`then:`, `or`, a parenthetical tail), no pipes, semicolons,
+  redirections, backquotes, comments or brace expansion. `pinchtab dialog accept|dismiss`
+  is not two suggestions to a shell — it is a pipeline into a command named `dismiss` — so a
+  line like that is not a remedy and never appears in the field
+- every command and flag in it exists in the CLI
+- a free slot is a `<name>` placeholder, the same angle-bracket convention the CLI's own
+  `--help` uses, and nothing else. Values known when the refusal is produced are already
+  interpolated, so a placeholder means the value genuinely is the caller's to supply
+- **the field is absent when no single command fixes the refusal.** Absence is the answer,
+  not an omission: it says truthfully that there is nothing to run, and the guidance for that
+  case is in `hint`. Do not treat a missing `remedy` as an error in the response
+
+```json
+{
+  "error": "this endpoint requires the evaluate capability; enable security.allowEvaluate in config to use it",
+  "code": "evaluate_disabled",
+  "details": {
+    "setting": "security.allowEvaluate",
+    "hint": "Enable security.allowEvaluate to use this feature.",
+    "remedy": "pinchtab config set security.allowEvaluate true && pinchtab server restart"
+  }
+}
+```
+
+`details` may carry further machine-readable fields beside these two — the capability refusal
+above names the `setting`, an allowlist block names the blocked `url` and `domain` — so read
+the object by key rather than assuming it holds only guidance.
+
+`pinchtab` renders both fields when a request fails, printing `remedy` into a `Remedy:` line.
+Every value in that slot meets the contract above, whether it came from the server or from
+the CLI's own client-side refusals.
