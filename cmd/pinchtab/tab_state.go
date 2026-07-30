@@ -1,8 +1,6 @@
 package main
 
 import (
-	"bytes"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -108,7 +106,9 @@ func (s tabStateStore) resolveArg(args []string) string {
 	if !s.useLocal() {
 		return ""
 	}
-	return s.read()
+	cached := s.read()
+	s.announceCachedTab(cached)
+	return cached
 }
 
 // applyDefaultFlag fills an unset --tab from the cached current tab, probing the
@@ -136,6 +136,7 @@ func (s tabStateStore) applyDefaultFlag(cmd *cobra.Command) {
 		_ = os.Remove(s.path())
 		return
 	}
+	s.announceCachedTab(tabID)
 	_ = cmd.Flags().Set("tab", tabID)
 	flag.Changed = false
 }
@@ -194,23 +195,18 @@ func (tabStateStore) probe(tabID string) tabProbeResult {
 	}
 }
 
-// A tab-not-found 404 that names an ID the user never typed is unactionable on its
-// own — the ID came from this cache, so this is the only layer that can say so.
-// Clearing it here is the remedy rather than instructions to delete a file: the
-// retry the message asks for is what makes it true.
-func init() { apiclient.ErrorRemedy = defaultTabState.staleTabRemedy }
-
-func (s tabStateStore) staleTabRemedy(statusCode int, body []byte) string {
-	if statusCode != http.StatusNotFound || !s.useLocal() {
-		return ""
+// announceCachedTab hands the error renderer the two facts only this layer knows —
+// that the id came from this cache, and where that cache lives — as data, at the
+// moment the substitution happens. A tab-not-found 404 naming an id the user never
+// typed is unactionable without them, and resolving them here keeps the config read
+// and the state-file deletion out of the render path: the renderer formats, the
+// terminal path in apiclient clears.
+func (s tabStateStore) announceCachedTab(tabID string) {
+	if tabID == "" {
+		return
 	}
-	cached := s.read()
-	if cached == "" || !bytes.Contains(body, []byte(cached)) {
-		return ""
-	}
-	_ = os.Remove(s.path())
 	base, _ := resolveTabStateEndpoint()
-	return fmt.Sprintf("that tab id is this CLI's cached current tab for %s, not something you asked for; the cache is now cleared, so retry the command (or run `pinchtab nav <url>` to open a fresh tab)", base)
+	apiclient.UseCachedTab(apiclient.CachedTab{TabID: tabID, Base: base, StateFile: s.path()})
 }
 
 // The package-level helpers below preserve the existing CLI/test API by

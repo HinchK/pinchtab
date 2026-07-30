@@ -1,9 +1,17 @@
 package apiclient
 
 import (
+	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -97,5 +105,239 @@ func TestRenderAPIErrorBodyShowsNavigationChangedHintAndRemedy(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered error missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// cachedTabFile installs a cached-tab context pointing at a real file, so a render
+// that still performed the old os.Remove would be visible as a missing file rather
+// than as an assertion about a string.
+func cachedTabFile(t *testing.T, tabID string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "current-tab-127.0.0.1-9867")
+	if err := os.WriteFile(path, []byte(tabID+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	previous := cachedTab
+	UseCachedTab(CachedTab{TabID: tabID, Base: "http://127.0.0.1:9867", StateFile: path})
+	t.Cleanup(func() { UseCachedTab(previous) })
+	return path
+}
+
+// Formatting an error must not mutate anything. The remedy used to arrive as an
+// installed callback that deleted the state file and read the config, so every
+// render — including the ones a poll loop throws away — cleared persistent state.
+func TestRenderingAStaleTab404TwiceLeavesTheCacheIntact(t *testing.T) {
+	path := cachedTabFile(t, "CACHED-TAB")
+	body := []byte(`{"code":"tab_not_found","error":"tab CACHED-TAB not found"}`)
+
+	first := renderAPIErrorBody(http.StatusNotFound, body)
+	second := renderAPIErrorBody(http.StatusNotFound, body)
+
+	if first != second {
+		t.Errorf("rendering the same error twice differs, so something is carrying state:\n%s\n---\n%s", first, second)
+	}
+	for _, want := range []string{"cached current tab", "127.0.0.1:9867", "retry the command", "pinchtab nav"} {
+		if !strings.Contains(first, want) {
+			t.Errorf("remedy missing %q:\n%s", want, first)
+		}
+	}
+	if strings.Contains(first, "now cleared") {
+		t.Errorf("a render claims a completed clearing it did not perform:\n%s", first)
+	}
+	if data, err := os.ReadFile(path); err != nil || strings.TrimSpace(string(data)) != "CACHED-TAB" {
+		t.Fatalf("rendering an error mutated the cached tab file (%v, %q)", err, string(data))
+	}
+}
+
+// A 404 about a tab this CLI never cached is not this cache's business.
+func TestUnrelatedTabNotFoundGetsNoRemedy(t *testing.T) {
+	path := cachedTabFile(t, "CACHED-TAB")
+	out := renderAPIErrorBody(http.StatusNotFound, []byte(`{"error":"tab SOMEONE-ELSE not found"}`))
+	if strings.Contains(out, "cached current tab") {
+		t.Errorf("remedy offered for a tab the cache never held:\n%s", out)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Errorf("unrelated 404 cleared the cache: %v", err)
+	}
+}
+
+// DoGetRawE and DoPostRawE return instead of terminating — one caller polls them
+// ten times a second — so rendering their error must leave the cache alone.
+func TestReturningRequestPathsLeaveTheCacheIntact(t *testing.T) {
+	path := cachedTabFile(t, "CACHED-TAB")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"code":"tab_not_found","error":"tab CACHED-TAB not found"}`))
+	}))
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		name string
+		call func() ([]byte, error)
+	}{
+		{"DoGetRawE", func() ([]byte, error) { return DoGetRawE(srv.Client(), srv.URL, "", "/tabs/CACHED-TAB/text", nil) }},
+		{"DoPostRawE", func() ([]byte, error) {
+			return DoPostRawE(srv.Client(), srv.URL, "", "/action", map[string]any{"kind": "click"})
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.call()
+			if err == nil {
+				t.Fatal("expected the 404 to be returned as an error")
+			}
+			if !strings.Contains(err.Error(), "cached current tab") {
+				t.Errorf("returned error lost the remedy:\n%v", err)
+			}
+			if strings.Contains(err.Error(), "now cleared") {
+				t.Errorf("a returning path claims the cache was cleared:\n%v", err)
+			}
+			if _, statErr := os.Stat(path); statErr != nil {
+				t.Fatalf("%s cleared the cached tab: %v", tc.name, statErr)
+			}
+		})
+	}
+}
+
+// The remedy used to be an installed func the command layer assigned at init(), so
+// this package's behaviour depended on which binary linked it and its own tests
+// were side-effect free only because the variable happened to be nil here. Data
+// cannot carry behaviour; a func variable can, so none may come back.
+func TestNoMutablePackageLevelFunctionVariables(t *testing.T) {
+	paths, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileSet := token.NewFileSet()
+	scanned := 0
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fileSet, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		scanned++
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				value, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, name := range value.Names {
+					if declaresFunc(value.Type) || (i < len(value.Values) && declaresFunc(value.Values[i])) {
+						t.Errorf("%s:%d declares the package-level function variable %s; the command layer must hand this package DATA, not behaviour it installs",
+							path, fileSet.Position(name.Pos()).Line, name.Name)
+					}
+				}
+			}
+		}
+	}
+	if scanned < 2 {
+		t.Fatalf("scanned %d source files; this census matched almost nothing and would pass vacuously", scanned)
+	}
+}
+
+func declaresFunc(expr ast.Expr) bool {
+	switch expr.(type) {
+	case *ast.FuncType, *ast.FuncLit:
+		return true
+	}
+	return false
+}
+
+const terminalChildEnv = "PINCHTAB_TEST_TERMINAL_API_ERROR"
+
+// The clearing moved to the terminal paths, and those end in os.Exit, so the only
+// honest way to test them is to be a different process. Criterion two of the card
+// is kept verbatim: the purity cleanup must not quietly drop the feature — the
+// remedy tells the user to retry, and the retry works because the dead id is gone.
+func TestTerminalPathsClearTheCachedTabAndSayTheyDid(t *testing.T) {
+	if mode := os.Getenv(terminalChildEnv); mode != "" {
+		runTerminalChild(mode)
+		return
+	}
+
+	for _, mode := range []string{"ExitWithAPIError", "DoGetRaw"} {
+		t.Run(mode, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "current-tab-127.0.0.1-9867")
+			if err := os.WriteFile(path, []byte("CACHED-TAB\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			child := exec.Command(os.Args[0], "-test.run=TestTerminalPathsClearTheCachedTabAndSayTheyDid", "-test.timeout=60s") // #nosec G204 -- re-executes this test binary.
+			child.Env = append(os.Environ(), terminalChildEnv+"="+mode, "PINCHTAB_TEST_TAB_STATE_FILE="+path)
+			raw, err := child.CombinedOutput()
+			out := string(raw)
+
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) {
+				t.Fatalf("child exited with %v, want the terminal path's os.Exit(1); output:\n%s", err, out)
+			}
+			if code := exitErr.ExitCode(); code != 1 {
+				t.Fatalf("child exit code = %d, want 1; output:\n%s", code, out)
+			}
+			if !strings.Contains(out, "cached current tab") || !strings.Contains(out, "retry the command") {
+				t.Errorf("the terminal path lost the remedy:\n%s", out)
+			}
+			if !strings.Contains(out, "now cleared") {
+				t.Errorf("the terminal path cleared the cache without saying so:\n%s", out)
+			}
+			if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+				t.Fatalf("the cached tab survived a command that failed on it (%v), so the remedy's retry advice is false", statErr)
+			}
+		})
+	}
+}
+
+// runTerminalChild drives a real terminal path with a real cached-tab context, and
+// exits through it.
+func runTerminalChild(mode string) {
+	body := []byte(`{"code":"tab_not_found","error":"tab CACHED-TAB not found"}`)
+	UseCachedTab(CachedTab{
+		TabID:     "CACHED-TAB",
+		Base:      "http://127.0.0.1:9867",
+		StateFile: os.Getenv("PINCHTAB_TEST_TAB_STATE_FILE"),
+	})
+
+	switch mode {
+	case "ExitWithAPIError":
+		ExitWithAPIError(http.StatusNotFound, body)
+	case "DoGetRaw":
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write(body)
+		}))
+		defer srv.Close()
+		DoGetRaw(srv.Client(), srv.URL, "", "/tabs/CACHED-TAB/text", nil)
+	}
+	fmt.Fprintf(os.Stderr, "child mode %q returned instead of exiting\n", mode)
+	os.Exit(9)
+}
+
+// The past-tense sentence is a claim about a completed deletion, so it may only be
+// emitted when the file is actually gone. A removal that fails must stay silent
+// rather than tell the user to retry a command that will fail the same way.
+func TestAFailedClearingSaysNothing(t *testing.T) {
+	dir := t.TempDir()
+	unremovable := filepath.Join(dir, "state-dir")
+	if err := os.MkdirAll(filepath.Join(unremovable, "child"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	previous := cachedTab
+	UseCachedTab(CachedTab{TabID: "CACHED-TAB", Base: "http://127.0.0.1:9867", StateFile: unremovable})
+	t.Cleanup(func() { UseCachedTab(previous) })
+
+	got := clearCachedTabOnFailure(http.StatusNotFound, []byte(`{"error":"tab CACHED-TAB not found"}`))
+	if got != "" {
+		t.Errorf("clearCachedTabOnFailure reported %q although the removal failed", got)
+	}
+	if _, err := os.Stat(unremovable); err != nil {
+		t.Fatalf("precondition: the path was removable after all, so this test proves nothing: %v", err)
 	}
 }

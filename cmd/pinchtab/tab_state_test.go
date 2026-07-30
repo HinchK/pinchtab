@@ -50,6 +50,12 @@ func newTabStateHarness(t *testing.T) *tabStateHarness {
 	t.Setenv("PINCHTAB_AGENT_ID", "")
 	t.Setenv("PINCHTAB_SERVER", "")
 	t.Setenv("PINCHTAB_TOKEN", "")
+	// The cached-tab announcement is process-global data in apiclient, so each
+	// harness starts from nothing rather than from whatever a previous test left.
+	previousAnnounced := apiclient.AnnouncedCachedTab()
+	apiclient.UseCachedTab(apiclient.CachedTab{})
+	t.Cleanup(func() { apiclient.UseCachedTab(previousAnnounced) })
+
 	oldAgent := cliAgentID
 	cliAgentID = ""
 	oldResolve := resolveTabStateEndpoint
@@ -188,32 +194,68 @@ func TestInconclusiveProbeDoesNotProtectAStaleEntry(t *testing.T) {
 }
 
 // A 404 naming an id the user never typed is unactionable without saying where the
-// id came from. The remedy also clears the cache, so the retry it asks for works.
-func TestStaleTabErrorCarriesTheCachedTabRemedy(t *testing.T) {
+// id came from, and only this layer knows. It hands the renderer that fact as data
+// at the moment it substitutes the cached id — so the remedy needs no callback
+// installed into apiclient, and no config read or file deletion while an error is
+// being formatted.
+func TestSubstitutingTheCachedTabAnnouncesItToTheErrorRenderer(t *testing.T) {
+	h := newTabStateHarness(t)
+	WriteTabStateFile("CACHED-TAB")
+
+	cmd := tabFlagCommand()
+	defaultTabFlagFromState(cmd)
+	if got, _ := cmd.Flags().GetString("tab"); got != "CACHED-TAB" {
+		t.Fatalf("--tab = %q, want the cached tab so the announcement has something to describe", got)
+	}
+
+	announced := apiclient.AnnouncedCachedTab()
+	if announced.TabID != "CACHED-TAB" {
+		t.Errorf("announced tab id = %q, want CACHED-TAB; without it the renderer cannot tell a cached id from one the user typed", announced.TabID)
+	}
+	if announced.Base != h.base {
+		t.Errorf("announced base = %q, want the server this cache belongs to (%q)", announced.Base, h.base)
+	}
+	if announced.StateFile != tabStateFile() {
+		t.Errorf("announced state file = %q, want %q — the terminal path removes this file", announced.StateFile, tabStateFile())
+	}
+	if _, err := os.Stat(tabStateFile()); err != nil {
+		t.Errorf("announcing the cached tab must not touch it: %v", err)
+	}
+}
+
+// A positional tab argument resolves from the same cache, so it needs the same
+// announcement — the commands taking `pinchtab <cmd> [tab]` reach the identical 404.
+func TestResolvingAPositionalTabFromTheCacheAnnouncesIt(t *testing.T) {
 	newTabStateHarness(t)
 	WriteTabStateFile("CACHED-TAB")
 
-	body := []byte(`{"code":"tab_not_found","error":"tab CACHED-TAB not found"}`)
-	remedy := apiclient.ErrorRemedy(http.StatusNotFound, body)
+	if got := resolveTabArg(nil); got != "CACHED-TAB" {
+		t.Fatalf("resolveTabArg = %q, want the cached tab", got)
+	}
+	if got := apiclient.AnnouncedCachedTab().TabID; got != "CACHED-TAB" {
+		t.Errorf("announced tab id = %q after a positional resolve, want CACHED-TAB", got)
+	}
+}
 
-	if remedy == "" {
-		t.Fatal("no remedy for a 404 naming the cached tab")
-	}
-	for _, want := range []string{"cached current tab", "retry", "pinchtab nav"} {
-		if !strings.Contains(remedy, want) {
-			t.Errorf("remedy %q does not mention %q", remedy, want)
-		}
-	}
-	if _, err := os.Stat(tabStateFile()); !os.IsNotExist(err) {
-		t.Error("the remedy claims the cache is cleared but the file survived")
-	}
-
-	// A 404 about someone else's tab is not this cache's business.
+// An id the user typed is not this cache's business: the remedy says "not something
+// you asked for", so announcing an explicit id would make the message a lie.
+func TestAnExplicitTabIsNotAnnouncedAsCached(t *testing.T) {
+	newTabStateHarness(t)
 	WriteTabStateFile("CACHED-TAB")
-	if got := apiclient.ErrorRemedy(http.StatusNotFound, []byte(`{"error":"tab SOMEONE-ELSE not found"}`)); got != "" {
-		t.Errorf("remedy %q offered for a tab the cache never held", got)
+
+	if got := resolveTabArg([]string{"TYPED-TAB"}); got != "TYPED-TAB" {
+		t.Fatalf("resolveTabArg = %q, want the explicit argument", got)
 	}
-	if _, err := os.Stat(tabStateFile()); err != nil {
-		t.Errorf("unrelated 404 cleared the cache: %v", err)
+	if got := apiclient.AnnouncedCachedTab().TabID; got != "" {
+		t.Errorf("announced %q for a tab the user typed; the remedy would claim it came from the cache", got)
+	}
+
+	cmd := tabFlagCommand()
+	if err := cmd.Flags().Set("tab", "TYPED-TAB"); err != nil {
+		t.Fatal(err)
+	}
+	defaultTabFlagFromState(cmd)
+	if got := apiclient.AnnouncedCachedTab().TabID; got != "" {
+		t.Errorf("announced %q when --tab was set explicitly", got)
 	}
 }
