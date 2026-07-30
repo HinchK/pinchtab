@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -916,6 +917,118 @@ func TestActionQueryRefusalNamesEveryOffenderInAStableOrder(t *testing.T) {
 	}
 	if !strings.Contains(first, "humanize, modifiers, waitNav") {
 		t.Errorf("the offenders are not sorted: %s", first)
+	}
+}
+
+// MEASURED: the undecoded-field refusal is a deny-list, so it closed the class for a
+// correctly spelled parameter and left it open one typo over — ?modifers=8 and ?Modifiers=8
+// both answered 200 and dispatched a plain click. Same harm, same 200.
+func TestActionQueryRefusesAMisspelledOrMiscasedParameter(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		key      string
+		wantHint string
+	}{
+		{name: "a dropped letter", key: "modifers", wantHint: "modifiers"},
+		{name: "the wrong case", key: "Modifiers", wantHint: "modifiers"},
+		{name: "the wrong case on a decoded field", key: "TabId", wantHint: "tabId"},
+		{name: "a parameter of no endpoint", key: "cachebuster"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			_, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, "/action?kind=click&"+tc.key+"=8", nil))
+
+			if ok {
+				t.Fatalf("the query form accepted %q, which it reads nowhere — the caller's parameter is dropped and the wrong action is reported as success", tc.key)
+			}
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tc.key) {
+				t.Errorf("the refusal does not name the parameter the caller must fix: %s", body)
+			}
+			if tc.wantHint == "" {
+				if strings.Contains(body, "did you mean") {
+					t.Errorf("%q resembles no parameter, so a hint is a guess: %s", tc.key, body)
+				}
+				return
+			}
+			if !strings.Contains(body, "did you mean "+tc.wantHint+"?") {
+				t.Errorf("the refusal does not point at %q, so the caller has to find the spelling itself: %s", tc.wantHint, body)
+			}
+		})
+	}
+}
+
+// The allow-list is DERIVED from the request type, not a second list beside the decoder: every
+// key ActionRequest declares is meaningful, so a new field is accepted with no edit to the
+// refusal. Recorded-undecodable keys keep their own refusal, which says where they do work.
+func TestActionQueryAcceptsEveryFieldTheRequestTypeDeclares(t *testing.T) {
+	checked := 0
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(bridge.ActionRequest{})) {
+		key, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if key == "" || key == "-" {
+			continue
+		}
+		if unknown := unknownQueryFields(url.Values{key: []string{"1"}}); len(unknown) > 0 {
+			t.Errorf("%q is declared by ActionRequest and the GET form calls it unknown; the allow-list is not derived from the type", key)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no field was checked; the guard is not reading the request type")
+	}
+	if unknown := unknownQueryFields(url.Values{"modifers": []string{"8"}}); len(unknown) != 1 {
+		t.Fatalf("a key the type does not declare was not called unknown: %v — the allow-list accepts everything", unknown)
+	}
+}
+
+// A correctly spelled undecodable field keeps the refusal that tells the caller to POST it.
+// The unknown-key refusal must not swallow that message, or the fix a caller is told to make
+// changes from "send this as POST" to "check the spelling".
+func TestARecordedFieldStillRefusesWithThePostRemedy(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if _, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, "/action?kind=click&modifiers=8", nil)); ok {
+		t.Fatal("modifiers=8 was accepted")
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "cannot be sent as query parameters") {
+		t.Errorf("a recorded field got the unknown-key refusal instead of its own: %s", body)
+	}
+	if strings.Contains(body, "did you mean") {
+		t.Errorf("the field is spelled correctly, so a spelling hint misdirects the caller: %s", body)
+	}
+}
+
+// An empty value is absent, the rule every other presence check here follows, so a bare
+// ?_= does not refuse a request that supplied nothing.
+func TestActionQueryAcceptsAnEmptyUnknownParameter(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if _, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, "/action?kind=click&_=", nil)); !ok {
+		t.Fatalf("an empty unknown parameter refused, but no value was supplied to drop: %s", rec.Body.String())
+	}
+}
+
+func TestUnknownActionQueryRefusalNamesEveryOffenderInAStableOrder(t *testing.T) {
+	const query = "/action?kind=click&zebra=1&modifers=8&alpha=2"
+
+	first := ""
+	for range 20 {
+		rec := httptest.NewRecorder()
+		if _, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, query, nil)); ok {
+			t.Fatal("three unknown parameters were accepted")
+		}
+		body := rec.Body.String()
+		if first == "" {
+			first = body
+		}
+		if body != first {
+			t.Fatalf("the refusal differs between runs; map iteration order is deciding the message:\n  %s\n  %s", first, body)
+		}
+	}
+	if !strings.Contains(first, "alpha, modifers (did you mean modifiers?), zebra") {
+		t.Errorf("the offenders are not named in a sorted order, so a caller fixes one and is refused again: %s", first)
 	}
 }
 
