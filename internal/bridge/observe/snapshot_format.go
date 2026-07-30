@@ -2,11 +2,9 @@ package observe
 
 import "strings"
 
-// checkedAnnotations render all THREE states, not just the checked one. A bare
-// node and an unchecked one must not look alike: absent means the control has no
-// checkedness, false means it is off, and an agent reading a radio group needs to
-// tell those apart at a glance. The compact forms stay three characters so a
-// five-option group costs fifteen.
+// All THREE states are annotated, not just the checked one: absent means the control
+// has no checkedness and false means it is off, so rendering only [checked] would make
+// an unchecked option look like a node the field does not apply to.
 var checkedAnnotations = map[CheckedState]string{
 	CheckedTrue:  " [checked]",
 	CheckedFalse: " [unchecked]",

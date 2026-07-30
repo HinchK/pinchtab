@@ -283,3 +283,76 @@ func TestUnrecognisedCheckedReadingIsNotReportedAsUnchecked(t *testing.T) {
 		t.Errorf("a measured false must reach the wire: %s", encoded)
 	}
 }
+
+// checkboxNodeWithAXChecked builds the one shape a real browser cannot produce: a
+// checkable control whose accessibility "checked" property carries something outside
+// the three defined states. BuildSnapshot is a pure function over []RawAXNode, which
+// is the only way to feed it such a reading.
+func checkboxNodeWithAXChecked(axChecked string) []RawAXNode {
+	raw, _ := json.Marshal(axChecked)
+	return []RawAXNode{
+		{
+			NodeID:   "root",
+			Role:     &RawAXValue{Value: json.RawMessage(`"WebArea"`)},
+			Name:     &RawAXValue{Value: json.RawMessage(`"Form"`)},
+			ChildIDs: []string{"box"},
+		},
+		{
+			NodeID:           "box",
+			Role:             &RawAXValue{Value: json.RawMessage(`"checkbox"`)},
+			Name:             &RawAXValue{Value: json.RawMessage(`"Terms"`)},
+			BackendDOMNodeID: 11,
+			Properties: []RawAXProp{
+				{Name: "checked", Value: &RawAXValue{Value: raw}},
+			},
+		},
+	}
+}
+
+// checkedStateFromAX being correct is not the same as BuildSnapshot USING it, and only
+// this shape can tell the two apart: the browser-backed tests can only produce what
+// Chrome emits — true, false and mixed — so an unrecognised reading is unreachable from
+// them by construction, and a helper-level test cannot show the helper is wired.
+//
+// Assigning the raw property value at the call site passes every other test in this
+// package while putting checked:"undefined" on the wire, which the three-value contract
+// in docs/reference/snapshot.md forbids and which every renderer then annotates as
+// nothing at all — indistinguishable from a node the field does not apply to.
+func TestBuildSnapshotRoutesCheckednessThroughTheParserSoAnUnrecognisedReadingIsDropped(t *testing.T) {
+	for _, axChecked := range []string{"undefined", "", "unknown", "TRUE", "1"} {
+		t.Run("ax checked="+axChecked, func(t *testing.T) {
+			flat, _ := BuildSnapshot(checkboxNodeWithAXChecked(axChecked), "", -1)
+			if len(flat) != 2 {
+				t.Fatalf("expected 2 nodes, got %d", len(flat))
+			}
+
+			if got := flat[1].Checked; got != "" {
+				t.Errorf("Checked = %q for an accessibility reading of %q; only true/false/mixed are answers, and anything else must leave the field ABSENT rather than put an undefined state on the wire", got, axChecked)
+			}
+			encoded, err := json.Marshal(flat[1])
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(encoded), `"checked"`) {
+				t.Errorf("node serialises a checked key for an unrecognised reading: %s", encoded)
+			}
+		})
+	}
+}
+
+// The positive half, on the same synthetic path: the three defined states must survive
+// it. Without this, dropping every reading — the crudest possible bypass — would satisfy
+// the test above.
+func TestBuildSnapshotKeepsTheThreeDefinedCheckedStatesFromTheAXProperty(t *testing.T) {
+	for _, want := range []CheckedState{CheckedTrue, CheckedFalse, CheckedMixed} {
+		t.Run(string(want), func(t *testing.T) {
+			flat, _ := BuildSnapshot(checkboxNodeWithAXChecked(string(want)), "", -1)
+			if len(flat) != 2 {
+				t.Fatalf("expected 2 nodes, got %d", len(flat))
+			}
+			if got := flat[1].Checked; got != want {
+				t.Errorf("Checked = %q, want %q", got, want)
+			}
+		})
+	}
+}

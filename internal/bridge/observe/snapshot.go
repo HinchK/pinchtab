@@ -28,12 +28,10 @@ func IsSensitiveAutocomplete(value string) bool {
 	return false
 }
 
-// CheckedState is the tri-state checkedness of a checkable control, taken
-// verbatim from the accessibility tree's own "checked" property. It is a
-// three-value string rather than a bool because "mixed" is a real state — a
-// native indeterminate checkbox and aria-checked="mixed" both report it — and
-// because ABSENT must never read as unchecked: the empty value means this node
-// has no checkedness, not that it is off. A bool could not say all three things.
+// CheckedState is the accessibility tree's own "checked" property, verbatim. A bool
+// could not carry it: "mixed" is a real state that both a native indeterminate
+// checkbox and aria-checked="mixed" report, and absent has to mean "this node has no
+// checkedness" rather than "off".
 type CheckedState string
 
 const (
@@ -42,9 +40,6 @@ const (
 	CheckedMixed CheckedState = "mixed"
 )
 
-// checkedStateFromAX accepts only the three states the accessibility tree
-// defines. Anything else — including an empty value — leaves the field absent,
-// so an unrecognised reading is reported as "no answer" rather than as "off".
 func checkedStateFromAX(value string) (CheckedState, bool) {
 	switch CheckedState(value) {
 	case CheckedTrue, CheckedFalse, CheckedMixed:
@@ -57,10 +52,6 @@ func checkedStateFromAX(value string) (CheckedState, bool) {
 // the wire) means the bounds pass never measured this node, which is a
 // different statement from a measured false: it is set exactly when
 // BoundingBox is.
-//
-// Checked is empty for every node that has no checkedness. Only a checkable
-// control gets it, because only such a control carries the accessibility
-// property it is read from.
 type A11yNode struct {
 	Ref            string       `json:"ref"`
 	Role           string       `json:"role"`
