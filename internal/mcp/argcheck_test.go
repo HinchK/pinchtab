@@ -2,12 +2,14 @@ package mcp
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -383,34 +385,120 @@ func TestOnlyPointerToolsDeclareHumanize(t *testing.T) {
 	}
 }
 
+// argumentProbe is what this guard sends: the typed arguments to probe together,
+// plus fixed-value companions that make them reachable at all.
+//
+// A probe is a SET rather than a name because some arguments cannot show an effect
+// alone — resolveXY needs both x and y, and steps is folded in only under a
+// direction, and only by multiplying into deltaY. Companions may be of any type:
+// direction is a string, and this guard deliberately never probes strings (the
+// sibling census records why — no coercion, so nothing is silently dropped), so a
+// string can only ever be a companion. A combination-only argument sent as a
+// singleton cannot produce an effect on any tool, which is a vacuous pass; the
+// positive control below is what forces it to be declared here instead.
+type argumentProbe struct {
+	args       []string
+	companions map[string]any
+}
+
+func (p argumentProbe) label() string { return strings.Join(p.args, "+") }
+
+// combinationProbes are the probes whose arguments the handler only reads as a set.
+// Everything else is derived as a singleton from the tools' own declarations.
+var combinationProbes = []argumentProbe{
+	{args: []string{"x", "y"}},
+	{args: []string{"steps"}, companions: map[string]any{"direction": "down"}},
+}
+
+// callOutcome is everything this guard can observe about one tool call. The request
+// list is recorded before the body is parsed: snap's effect is a second /snapshot
+// GET, which makes the result text two concatenated JSON objects that resultJSON
+// cannot parse — so a two-request call keeps its raw text and is compared on that.
+type callOutcome struct {
+	requests []string
+	body     map[string]any
+	text     string
+}
+
+func observeToolCall(t *testing.T, tool string, args map[string]any) callOutcome {
+	t.Helper()
+	srv, paths := upstreamRecorder(t)
+	result := callTool(t, tool, args, srv)
+	if result.IsError {
+		t.Fatalf("%s rejected %v outright (%s); this guard reasons about arguments that are ignored, not rejected", tool, args, resultText(t, result))
+	}
+	outcome := callOutcome{requests: append([]string(nil), *paths...), text: resultText(t, result)}
+	if len(outcome.requests) == 1 {
+		outcome.body, _ = resultJSON(t, result)["body"].(map[string]any)
+	}
+	return outcome
+}
+
+// describeDifference reports how two outcomes differ, or "" when they do not. This
+// is the guard's whole oracle: an argument had an observable effect if ANYTHING the
+// caller can see changed. Matching the probe's own value instead — which is what
+// this replaced — was blind to a derived effect, and needed hasXY hand-added to the
+// condition as the tell.
+func describeDifference(baseline, probed callOutcome) string {
+	if !reflect.DeepEqual(baseline.requests, probed.requests) {
+		return fmt.Sprintf("upstream requests %v -> %v", baseline.requests, probed.requests)
+	}
+	if baseline.body == nil || probed.body == nil {
+		if baseline.text != probed.text {
+			return "the response text changed"
+		}
+		return ""
+	}
+	var changes []string
+	for field, want := range baseline.body {
+		got, present := probed.body[field]
+		switch {
+		case !present:
+			changes = append(changes, fmt.Sprintf("%s=%v dropped", field, want))
+		case !reflect.DeepEqual(want, got):
+			changes = append(changes, fmt.Sprintf("%s %v -> %v", field, want, got))
+		}
+	}
+	for field, got := range probed.body {
+		if _, present := baseline.body[field]; !present {
+			changes = append(changes, fmt.Sprintf("%s=%v added", field, got))
+		}
+	}
+	sort.Strings(changes)
+	return strings.Join(changes, ", ")
+}
+
 // The per-tool half the name-level census above cannot see. A typed argument read
 // for a kind whose tool does not declare it is undiscoverable AND unvalidated,
 // because validateTypedArgs keys its type map per tool — the name being declared
 // somewhere else does not help the tool being called. handleAction reads its
 // arguments before switching on kind, so this is where that goes wrong.
 //
-// Behavioural rather than structural: reachability is observed as an effect on the
-// wire (the argument, or anything derived from it, in the outbound body) or as an
-// extra upstream request. That needs no tool-to-handler-source mapping and cannot
-// go stale as the handler moves code around. Its blind spot is an undeclared read
-// with no observable effect at all, which by construction changes nothing.
+// Behavioural rather than structural: reachability is observed as a BASELINE DIFF —
+// the same call with and without the probe — so the sentinel, a value derived from
+// it, a dropped field and an extra upstream request all count uniformly, and no
+// derivative has to be listed by hand. That needs no tool-to-handler-source mapping
+// and cannot go stale as the handler moves code around.
+//
+// Its blind spot is an undeclared read with no observable effect at all, which by
+// construction changes nothing a caller can see.
 func TestNoActionToolIsSentATypedArgumentItDoesNotDeclare(t *testing.T) {
-	// Arguments the handler only reads as a set; sending one alone proves nothing.
-	groups := [][]string{{"x", "y"}}
+	probes := append([]argumentProbe(nil), combinationProbes...)
 	grouped := map[string]bool{}
-	for _, group := range groups {
-		for _, name := range group {
+	for _, probe := range probes {
+		for _, name := range probe.args {
 			grouped[name] = true
 		}
 	}
 	for _, tc := range actionToolTargets {
 		for name := range schemaArgTypesOnce()[tc.tool] {
 			if !grouped[name] {
-				groups = append(groups, []string{name})
+				probes = append(probes, argumentProbe{args: []string{name}})
 				grouped[name] = true
 			}
 		}
 	}
+	sort.Slice(probes, func(i, j int) bool { return probes[i].label() < probes[j].label() })
 
 	// The declared type of each name, taken from whichever action tool declares it,
 	// so the probe value is one the accessor would actually read.
@@ -422,52 +510,97 @@ func TestNoActionToolIsSentATypedArgumentItDoesNotDeclare(t *testing.T) {
 	}
 
 	const sentinel = 424242.0
+	probeArgs := func(tool string, probe argumentProbe, withProbe bool) map[string]any {
+		extra := map[string]any{"selector": "#a"}
+		for name, value := range probe.companions {
+			extra[name] = value
+		}
+		if withProbe {
+			for _, name := range probe.args {
+				if typeOf[name] == "boolean" {
+					extra[name] = true
+					continue
+				}
+				extra[name] = sentinel
+			}
+		}
+		return actionArgs(tool, extra)
+	}
+
+	// A diff oracle is only as trustworthy as the calls it compares. If anything in
+	// an outcome varied between two identical calls, every future card would inherit
+	// a red here — so this fails loudly and names the fields rather than normalising
+	// them away, and an exclusion has to be added deliberately.
+	for _, tc := range actionToolTargets {
+		for _, probe := range probes {
+			first := observeToolCall(t, tc.tool, probeArgs(tc.tool, probe, false))
+			second := observeToolCall(t, tc.tool, probeArgs(tc.tool, probe, false))
+			if diff := describeDifference(first, second); diff != "" {
+				t.Fatalf("%s is not stable across two identical calls (%s baseline): %s — the diff oracle below would read this as an effect, so exclude the varying field explicitly before trusting it",
+					tc.tool, probe.label(), diff)
+			}
+		}
+	}
+
+	// The positive control, and the half that keeps the probe list self-maintaining:
+	// every probe must be demonstrably capable of an effect on a tool that DOES
+	// declare it. A combination-only argument fails this as a singleton, which is
+	// what forces it into combinationProbes with the companions it needs instead of
+	// sitting in the undeclared sweep proving nothing.
+	for _, probe := range probes {
+		declaring := ""
+		for _, tc := range actionToolTargets {
+			declared := schemaArgTypesOnce()[tc.tool]
+			all := true
+			for _, name := range probe.args {
+				if _, ok := declared[name]; !ok {
+					all = false
+				}
+			}
+			if all {
+				declaring = tc.tool
+				break
+			}
+		}
+		if declaring == "" {
+			t.Errorf("no action tool declares %s, so the sweep below can never distinguish reachable from ignored for it", probe.label())
+			continue
+		}
+		baseline := observeToolCall(t, declaring, probeArgs(declaring, probe, false))
+		probed := observeToolCall(t, declaring, probeArgs(declaring, probe, true))
+		if diff := describeDifference(baseline, probed); diff == "" {
+			t.Errorf("%s has no observable effect on %s, which DECLARES it — so its rows in the sweep below prove nothing. Give it the companions that make it reachable (see combinationProbes) rather than leaving it a singleton.",
+				probe.label(), declaring)
+		}
+	}
+
 	checked := 0
 	for _, tc := range actionToolTargets {
 		declared := schemaArgTypesOnce()[tc.tool]
-		for _, group := range groups {
+		for _, probe := range probes {
 			kinds := map[string]int{}
-			for _, name := range group {
+			for _, name := range probe.args {
 				kinds[declared[name]]++
 			}
 			if len(kinds) != 1 {
-				t.Errorf("%s declares %v inconsistently (%v); the group must be all-or-nothing", tc.tool, group, kinds)
+				t.Errorf("%s declares %s inconsistently (%v); the group must be all-or-nothing", tc.tool, probe.label(), kinds)
 				continue
 			}
-			if _, isDeclared := declared[group[0]]; isDeclared {
+			if _, isDeclared := declared[probe.args[0]]; isDeclared {
 				continue
-			}
-
-			args := actionArgs(tc.tool, map[string]any{"selector": "#a"})
-			for _, name := range group {
-				if typeOf[name] == "boolean" {
-					args[name] = true
-					continue
-				}
-				args[name] = sentinel
 			}
 			checked++
 
-			srv, paths := upstreamRecorder(t)
-			result := callTool(t, tc.tool, args, srv)
-			if result.IsError {
-				t.Fatalf("%s rejected undeclared %v outright (%s); this guard expects it to be ignored", tc.tool, group, resultText(t, result))
-			}
-			body, _ := resultJSON(t, result)["body"].(map[string]any)
-			for field, value := range body {
-				if value == sentinel || value == true || field == "hasXY" {
-					t.Errorf("%s: %v is reachable but the tool does not declare it — the outbound body carries %s=%v, so it is undiscoverable in tools/list and validateTypedArgs cannot type-check it",
-						tc.tool, group, field, value)
-					break
-				}
-			}
-			if len(*paths) != 1 {
-				t.Errorf("%s made %v upstream requests with undeclared %v; the argument changed behaviour it cannot be validated for", tc.tool, *paths, group)
+			baseline := observeToolCall(t, tc.tool, probeArgs(tc.tool, probe, false))
+			probed := observeToolCall(t, tc.tool, probeArgs(tc.tool, probe, true))
+			if diff := describeDifference(baseline, probed); diff != "" {
+				t.Errorf("%s: %s is reachable but the tool does not declare it — %s, so it is undiscoverable in tools/list and validateTypedArgs cannot type-check it",
+					tc.tool, probe.label(), diff)
 			}
 		}
 	}
 	if checked == 0 {
 		t.Fatal("no undeclared (tool, argument) pair exercised — this guard is checking nothing")
 	}
-	t.Logf("checked %d undeclared (tool, typed argument) pairs across %d action tools", checked, len(actionToolTargets))
+	t.Logf("checked %d undeclared (tool, probe) pairs across %d action tools and %d probes", checked, len(actionToolTargets), len(probes))
 }
