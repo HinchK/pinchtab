@@ -256,14 +256,14 @@ func TestEveryHandRolledDisabledRefusalUsesTheSharedDetailsBuilder(t *testing.T)
 			if !ok || sel.Sel.Name != "ErrorCode" || len(call.Args) < 6 {
 				return true
 			}
-			code, ok := call.Args[2].(*ast.BasicLit)
-			if !ok || !strings.HasSuffix(strings.Trim(code.Value, `"`), "_disabled") {
+			code, isDisabled := disabledCodeSpelling(call.Args[2])
+			if !isDisabled {
 				return true
 			}
 			found++
 			if !callsDisabledEndpointDetails(call.Args[5]) {
 				t.Errorf("%s: %s builds its own details for %s; pass httpx.DisabledEndpointDetails(setting) instead, or the refusal ships without the hint and the restart",
-					fset.Position(call.Pos()), name, code.Value)
+					fset.Position(call.Pos()), name, code)
 			}
 			return true
 		})
@@ -273,8 +273,24 @@ func TestEveryHandRolledDisabledRefusalUsesTheSharedDetailsBuilder(t *testing.T)
 		t.Fatal("scanned no source files, so this census proves nothing")
 	}
 	if found == 0 {
-		t.Fatal("found no _disabled ErrorCode call at all; the shape moved and this census now passes over nothing")
+		t.Fatal("found no disabled-code ErrorCode call in either spelling; the shape moved and this census now passes over nothing")
 	}
+}
+
+// Both spellings of the code argument count. A literal "x_disabled" was the only form when
+// this census was written; deriving it from routes.Meta is the house form now, so a
+// predicate matching only the literal would discriminate on the form the package had just
+// moved away from — and its floor would rest on the last remaining literal, which the next
+// conversion removes for the opposite of the reason the floor exists.
+func disabledCodeSpelling(arg ast.Expr) (string, bool) {
+	switch code := arg.(type) {
+	case *ast.BasicLit:
+		value := strings.Trim(code.Value, `"`)
+		return value, strings.HasSuffix(value, "_disabled")
+	case *ast.SelectorExpr:
+		return code.Sel.Name, code.Sel.Name == "DisabledCode"
+	}
+	return "", false
 }
 
 func callsDisabledEndpointDetails(arg ast.Expr) bool {
