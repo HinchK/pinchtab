@@ -313,15 +313,26 @@ func TestTreeSkipsANestedCheckoutWhicheverKindOfGitEntryItHas(t *testing.T) {
 
 // The root itself holds a .git entry, so the skip cannot be unconditional or a census run
 // from a real checkout enumerates nothing.
-func TestTreeStillWalksARootThatIsItselfACheckout(t *testing.T) {
+//
+// The .go file inside .git is what makes the second assertion possible, and it is the only
+// thing pinning treeSkipDirs[".git"]. nestedCheckout has to EXEMPT the root, so it cannot
+// exclude the root's own .git subtree — the name skip is the sole owner of that case, and
+// the two entries cover disjoint cases rather than duplicating one. Without a .go file
+// planted in there the entry can be deleted with the whole suite still green, which is how
+// a live exclusion reads as dead to the next tidy-up.
+func TestTreeStillWalksARootThatIsItselfACheckoutButNotItsGitSubtree(t *testing.T) {
 	root := writeTree(t, map[string]string{
-		".git/HEAD":  "ref: refs/heads/main\n",
-		"real.go":    "package a\n",
-		"pkg/one.go": "package b\n",
+		".git/HEAD":              "ref: refs/heads/main\n",
+		".git/hooks/generate.go": "package hooks\n",
+		"real.go":                "package a\n",
+		"pkg/one.go":             "package b\n",
 	})
 
-	if got := treeNames(Tree(t, root, 2)); len(got) != 2 {
-		t.Errorf("Tree = %v, want both files; the root's own .git must not exclude the module", got)
+	got := treeNames(Tree(t, root, 2))
+
+	want := []string{"pkg/one.go", "real.go"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Tree = %v, want %v; the root's own .git must not exclude the module, and its contents must not be enumerated as module source", got, want)
 	}
 }
 
