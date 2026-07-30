@@ -19,15 +19,46 @@ import (
 // stay responsive.
 const mouseMoveDispatchTimeout = 50 * time.Millisecond
 
-func normalizeMouseButton(button string) string {
-	switch strings.ToLower(strings.TrimSpace(button)) {
-	case "right":
-		return "right"
-	case "middle":
-		return "middle"
-	default:
-		return "left"
+// DefaultMouseButton is what an unspecified button means. An unspecified button is a
+// default; an unrecognised NAME is a caller error, and the two used to share this answer.
+const DefaultMouseButton = "left"
+
+var mouseButtons = []string{DefaultMouseButton, "right", "middle"}
+
+// MouseButtons is the one owner of the button vocabulary. The normalizer, the refusal
+// message and the CLI flag help all derive from it, so a fourth button cannot be accepted
+// in one place and refused in another.
+func MouseButtons() []string {
+	return append([]string(nil), mouseButtons...)
+}
+
+// ValidateMouseButton refuses a name that is not a button, naming the ones that are. Empty
+// and whitespace-only stay valid: that is the default, not forgiveness. The DOM's own
+// vocabulary is refused rather than mapped — "primary" happens to mean left, so mapping it
+// would look right while "secondary" silently became left, and PinchTab documents neither.
+func ValidateMouseButton(button string) error {
+	normalized := strings.ToLower(strings.TrimSpace(button))
+	if normalized == "" {
+		return nil
 	}
+	for _, name := range mouseButtons {
+		if normalized == name {
+			return nil
+		}
+	}
+	return fmt.Errorf("button %q is not a mouse button; use one of %s", button, strings.Join(mouseButtons, ", "))
+}
+
+// normalizeMouseButton keeps its permissive default and its plain-string return: by the time
+// a value reaches it, ValidateMouseButton has already refused every name that is not here.
+func normalizeMouseButton(button string) string {
+	normalized := strings.ToLower(strings.TrimSpace(button))
+	for _, name := range mouseButtons {
+		if normalized == name {
+			return normalized
+		}
+	}
+	return DefaultMouseButton
 }
 
 func validatePointerCoordinates(x, y float64) error {

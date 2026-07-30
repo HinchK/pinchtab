@@ -271,6 +271,10 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		httpx.ErrorCode(w, http.StatusBadRequest, "missing_fill_text", err.Error(), false, nil)
 		return
 	}
+	if err := bridge.ValidateButtonAction(req.Kind, req); err != nil {
+		httpx.ErrorCode(w, http.StatusBadRequest, "invalid_mouse_button", err.Error(), false, nil)
+		return
+	}
 	h.recordActionRequest(r, req)
 	if available := h.Bridge.AvailableActions(); len(available) > 0 {
 		known := false

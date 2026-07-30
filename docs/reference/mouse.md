@@ -54,7 +54,12 @@ Notes:
   sustained movement follows the press, so a single jump fires no `dragstart` at all.
   Assembling a drag yourself out of `mouse move`/`mouse down`/`mouse up` has that problem:
   use `drag` for anything with a `draggable` source.
-- `button` supports `left`, `right`, and `middle`.
+- `button` supports `left`, `right`, and `middle`. Any other name is refused — the CLI
+  refuses it before sending, and the HTTP action body answers 400 naming the three. Omitting
+  `button` still means `left`; that is a default, whereas a name the server does not know
+  used to be reinterpreted as `left` and reported as success. The DOM's `primary` and
+  `secondary` are refused rather than mapped, since `primary` happens to mean left while
+  `secondary` would not.
 - Pointer move uses a bounded CDP `mouseMoved` dispatch first. If headless Chromium stalls that dispatch, PinchTab falls back to DOM mouse events so hover and mouse-move flows remain responsive.
 
 ## HTTP API

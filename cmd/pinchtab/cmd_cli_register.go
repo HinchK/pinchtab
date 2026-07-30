@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
+	bridgecdpops "github.com/pinchtab/pinchtab/internal/bridge/cdpops"
 	"github.com/spf13/cobra"
 )
 
@@ -82,10 +83,10 @@ func configureBrowserFlags() {
 	addPointerActionFlags(mouseMoveCmd, bridge.ActionMouseMove)
 
 	addPointerActionFlags(mouseDownCmd, bridge.ActionMouseDown)
-	mouseDownCmd.Flags().String("button", "left", "Mouse button: left, right, middle")
+	addMouseButtonFlag(mouseDownCmd)
 
 	addPointerActionFlags(mouseUpCmd, bridge.ActionMouseUp)
-	mouseUpCmd.Flags().String("button", "left", "Mouse button: left, right, middle")
+	addMouseButtonFlag(mouseUpCmd)
 
 	addPointerActionFlags(mouseWheelCmd, bridge.ActionMouseWheel)
 
@@ -97,7 +98,7 @@ func configureBrowserFlags() {
 	scrollCmd.Flags().Int("dy", 0, "Vertical scroll in pixels (negative scrolls up)")
 	scrollCmd.Flags().Int("dx", 0, "Horizontal scroll in pixels (negative scrolls left)")
 
-	dragCmd.Flags().String("button", "left", "Mouse button: left, right, middle")
+	addMouseButtonFlag(dragCmd)
 	dragCmd.Flags().Int("drag-x", 0, "Horizontal pixel offset for single-step drag action")
 	dragCmd.Flags().Int("drag-y", 0, "Vertical pixel offset for single-step drag action")
 
@@ -498,5 +499,25 @@ func addPostActionFlags(cmd *cobra.Command, verb string, withText bool) {
 	cmd.Flags().Bool("snap-diff", false, "Output snapshot diff after "+verb+" (changes only)")
 	if withText {
 		cmd.Flags().Bool("text", false, "Output page text after "+verb+" (for verification)")
+	}
+}
+
+// addMouseButtonFlag registers --button and the local refusal together, so the help text,
+// the default and the accepted set all come from the one vocabulary owner rather than being
+// spelled out per command. The refusal is a fast path for a typo, NOT the guard: the HTTP
+// body is validated server-side because the CLI is not the only client.
+func addMouseButtonFlag(cmd *cobra.Command) {
+	cmd.Flags().String("button", bridgecdpops.DefaultMouseButton,
+		"Mouse button: "+strings.Join(bridgecdpops.MouseButtons(), ", "))
+	previous := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		button, _ := c.Flags().GetString("button")
+		if err := bridgecdpops.ValidateMouseButton(button); err != nil {
+			return err
+		}
+		if previous != nil {
+			return previous(c, args)
+		}
+		return nil
 	}
 }

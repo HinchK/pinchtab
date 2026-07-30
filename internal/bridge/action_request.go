@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	bridgecdpops "github.com/pinchtab/pinchtab/internal/bridge/cdpops"
 )
 
 type ActionFunc func(ctx context.Context, req ActionRequest) (map[string]any, error)
@@ -259,6 +261,16 @@ func ValidateFillAction(kind string, req ActionRequest) error {
 	return nil
 }
 
+// ValidateButtonAction refuses a button name no pointer action can honour. It is not gated
+// on the action kind, deliberately: the button is normalized inside cdpops for every action
+// that dispatches a press, so a kind list here would have to be kept in step with that set
+// and would leave any kind nobody thought of accepting a misspelling silently. An
+// unrecognised name reached CDP as "left", so a mistyped right-click performed a left-click
+// and reported success.
+func ValidateButtonAction(kind string, req ActionRequest) error {
+	return bridgecdpops.ValidateMouseButton(req.Button)
+}
+
 func hasJSONKey(raw map[string]json.RawMessage, key string) bool {
 	_, ok := raw[key]
 	return ok
@@ -274,6 +286,9 @@ func (b *Bridge) ExecuteAction(ctx context.Context, kind string, req ActionReque
 		return nil, err
 	}
 	if err := ValidateFillAction(kind, req); err != nil {
+		return nil, err
+	}
+	if err := ValidateButtonAction(kind, req); err != nil {
 		return nil, err
 	}
 	if kind == ActionClick && b.effectiveHumanize(req) && strings.TrimSpace(req.Mode) != "" {
