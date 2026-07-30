@@ -16,6 +16,7 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/safelog"
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 func TestApplyServerAddressFlagsPrecedence(t *testing.T) {
@@ -314,91 +315,82 @@ func TestDaemonAndAutoStartLaunchWithoutLogLevelFlags(t *testing.T) {
 // on the helper cannot see a Run body that settles the level itself, and there are two
 // ways to do that: assigning cfg.LogLevel (which bypasses the precedence) or calling
 // safelog.SetLevel directly (which overrides the resolved threshold for the whole
-// process). Both are banned everywhere in the package except the file that declares
-// the resolver, and the census is over a glob so a new cmd_*.go is covered on arrival
-// rather than when someone remembers to list it.
+// process). Both are banned everywhere in the package except inside the
+// resolveLogLevel/applyLogLevel pair that owns the decision.
 //
-// KNOWN LIMIT, recorded so it is not rediscovered as new: the exemption is
-// FILE-scoped. cmd_server.go carries safelog.SetLevel three times inside
-// applyLogLevel, so a stray call added elsewhere in that same file is still permitted
-// — the coarse-scope problem this guard narrows, surviving in the owning file. The
-// honest fix is asserting the patterns occur only within the
-// resolveLogLevel/applyLogLevel pair, which needs real function-body extraction; a
-// hand-rolled brace matcher is the anti-pattern the AST-based shared guard is being
-// introduced to remove, so this waits for it rather than growing one here.
+// The scope is derived twice over, which is the property srccensus exists to make
+// automatic: the package's non-test sources are enumerated rather than listed, so a new
+// cmd_*.go is covered on arrival, and the exemption is the OWNING FUNCTIONS rather than
+// the owning file. That closes the limit this guard used to record: cmd_server.go holds
+// three legitimate safelog.SetLevel calls inside applyLogLevel, and a stray fourth
+// anywhere else in that same file used to pass.
 func TestTheCommandPackageSettlesTheLogLevelInOnePlace(t *testing.T) {
-	files := commandSourceFiles(t)
-	if len(files) < 2 {
-		t.Fatalf("scanned %d command files; the census matched almost nothing and would pass vacuously", len(files))
-	}
+	pkg := srccensus.Load(t, ".", 2)
 
-	sources := make(map[string]string, len(files))
-	for _, path := range files {
-		body, err := os.ReadFile(path) // #nosec G304 -- files listed from this package's own directory.
-		if err != nil {
-			t.Fatal(err)
+	owners := make([]srccensus.Func, 0, 2)
+	for _, name := range []string{"resolveLogLevel", "applyLogLevel"} {
+		fn, ok := pkg.Func(name)
+		if !ok {
+			t.Fatalf("no %s declaration in %s; the level owner was renamed or moved out of the package — re-point this census at whatever settles the level now rather than deleting it", name, pkg.Dir())
 		}
-		sources[filepath.Base(path)] = string(body)
+		owners = append(owners, fn)
 	}
 
-	// The declaring file is found rather than hardcoded, so moving the owner needs no
-	// test edit — the same staleness this census replaced.
-	const declaration = "func resolveLogLevel("
-	declarations := 0
-	owner := ""
-	for name, src := range sources {
-		if n := strings.Count(src, declaration); n > 0 {
-			declarations += n
-			owner = name
-		}
-	}
-	if declarations != 1 {
-		t.Fatalf("found %d %s declarations in the command package, want exactly 1 — a second copy means the two commands no longer share one precedence", declarations, declaration)
-	}
-
-	// Each pattern is banned outside the owner and required at least once inside it:
-	// a census that finds the pattern nowhere would pass while the rule it states has
-	// silently stopped applying to anything.
-	for _, banned := range []struct {
-		pattern string
-		why     string
-	}{
-		{".LogLevel = ", "the level is settled only inside resolveLogLevel, so a command that spawns or becomes a server must pass its flag there instead"},
-		{"safelog.SetLevel(", "a raw level set overrides the resolved threshold for the whole process, so a command that never resolves a level must not touch it"},
-	} {
-		found := 0
-		for name, src := range sources {
-			n := strings.Count(src, banned.pattern)
-			found += n
-			if n > 0 && name != owner {
-				t.Errorf("%s contains %q %d time(s); %s", name, banned.pattern, n, banned.why)
+	insideAnOwner := func(site srccensus.Site) bool {
+		for _, owner := range owners {
+			if pkg.Contains(owner, site) {
+				return true
 			}
 		}
-		if found == 0 {
-			t.Errorf("no command file contains %q; the census has nothing to guard and would pass vacuously", banned.pattern)
-		}
+		return false
 	}
 
-	// The one assignment must sit inside the resolver, not merely inside its file.
-	helper := sources[owner][strings.Index(sources[owner], declaration):]
-	if end := strings.Index(helper, "\nfunc "); end >= 0 {
-		helper = helper[:end]
-	}
-	if !strings.Contains(helper, ".LogLevel = ") {
-		t.Error("the one cfg.LogLevel assignment is outside resolveLogLevel; the flag can bypass the precedence again")
+	for _, rule := range []struct {
+		what  string
+		sites []srccensus.Site
+		why   string
+	}{
+		{
+			// Calls fails on zero by itself, so this rule's vacuity floor is structural.
+			what:  "safelog.SetLevel(",
+			sites: pkg.Calls(t, "safelog.SetLevel"),
+			why:   "a raw level set overrides the resolved threshold for the whole process, so a command that never resolves a level must not touch it",
+		},
+		{
+			// FieldAssignments has no such floor — an assignment is not a call — so the
+			// floor for this rule is the explicit check below.
+			what:  ".LogLevel = ",
+			sites: pkg.FieldAssignments("LogLevel"),
+			why:   "the level is settled only inside resolveLogLevel, so a command that spawns or becomes a server must pass its flag there instead",
+		},
+	} {
+		if len(rule.sites) == 0 {
+			t.Errorf("no %s anywhere in the command package; the census has nothing to guard and would pass vacuously — re-point it rather than deleting it", rule.what)
+			continue
+		}
+		inside := 0
+		for _, site := range rule.sites {
+			if insideAnOwner(site) {
+				inside++
+				continue
+			}
+			t.Errorf("%s uses %s outside resolveLogLevel/applyLogLevel; %s", site, rule.what, rule.why)
+		}
+		if inside == 0 {
+			t.Errorf("every %s in the package sits outside the owning functions; the rule has stopped applying where it is supposed to hold", rule.what)
+		}
 	}
 
 	// The positive half: an absence-only census would pass happily if both commands
 	// stopped resolving the level at all, which is the defect these guards were built
 	// for. Matched on the call rather than an argument spelling, so a legitimate
 	// signature change does not red this for no defect.
+	callers := map[string]bool{}
+	for _, site := range pkg.Calls(t, "resolveLogLevel") {
+		callers[site.File] = true
+	}
 	for _, caller := range []string{"cmd_server.go", "cmd_bridge.go"} {
-		src, ok := sources[caller]
-		if !ok {
-			t.Errorf("%s is no longer in the command package; this guard names it as a resolveLogLevel caller", caller)
-			continue
-		}
-		if strings.Count(src, "resolveLogLevel(") <= strings.Count(src, declaration) {
+		if !callers[caller] {
 			t.Errorf("%s no longer calls resolveLogLevel, so its --log-level and server.logLevel are silently ignored", caller)
 		}
 	}
