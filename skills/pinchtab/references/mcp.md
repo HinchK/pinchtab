@@ -67,7 +67,7 @@ All tool names are prefixed with `pinchtab_`.
 | `pinchtab_hover` | Hover over element. Required: `selector` or legacy `ref`. Optional: `tabId`. |
 | `pinchtab_focus` | Focus an element. Required: `selector` or legacy `ref`. Optional: `tabId`. |
 | `pinchtab_select` | Select dropdown option. Required: `selector` or legacy `ref`, plus `value`. Optional: `tabId`. |
-| `pinchtab_scroll` | Scroll page or element. Optional: `selector` or legacy `ref`, `pixels`, `tabId`. |
+| `pinchtab_scroll` | Scroll page or element. Optional: `selector` or legacy `ref`, `pixels`, `tabId`, `direction` (`down`/`left`/`right`/`up`, 800px per step — same as the CLI), `steps`. |
 
 ### Keyboard
 | Tool | Description |

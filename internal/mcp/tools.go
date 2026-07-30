@@ -1,8 +1,19 @@
 package mcp
 
-import "github.com/mark3labs/mcp-go/mcp"
+import (
+	"strconv"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/pinchtab/pinchtab/internal/scroll"
+)
 
 const positionalWrapperGrammar = " first/last/nth index matches in document order for every selector kind, so nth:0 is the first match in the page. A bare text: selector instead picks the most control-like smallest match, so text:X and first:text:X can differ."
+
+// scrollStepDescription states the direction magnitude in the tool description, read
+// from the owner rather than written out: an agent reads these descriptions fresh on
+// every session, so this is where the distance becomes discoverable — without it,
+// 'steps' is only usable by a caller who already knows an undocumented default.
+var scrollStepDescription = strconv.Itoa(scroll.StepPixels) + "px"
 
 // allTools returns every MCP tool exposed by the PinchTab MCP server.
 func allTools() []mcp.Tool {
@@ -176,8 +187,10 @@ func allTools() []mcp.Tool {
 			mcp.WithNumber("pixels", mcp.Description("Number of pixels to scroll (positive=down, negative=up)")),
 			mcp.WithNumber("deltaX", mcp.Description("Horizontal wheel delta for precise scrolling")),
 			mcp.WithNumber("deltaY", mcp.Description("Vertical wheel delta for precise scrolling")),
-			mcp.WithString("direction", mcp.Description("Convenience direction: 'up' or 'down'")),
-			mcp.WithNumber("steps", mcp.Description("Multiplier for direction-based scrolling (default 1)")),
+			mcp.WithString("direction", mcp.Description(
+				"Convenience direction: 'down', 'left', 'right' or 'up'. Moves "+scrollStepDescription+
+					" per step, the same distance as the CLI's `pinchtab scroll <direction>`; multiply it with 'steps' or override it with 'pixels'.")),
+			mcp.WithNumber("steps", mcp.Description("Multiplier for direction-based scrolling (default 1), so steps=2 moves twice "+scrollStepDescription)),
 			mcp.WithNumber("x", mcp.Description("Optional X coordinate for wheel target")),
 			mcp.WithNumber("y", mcp.Description("Optional Y coordinate for wheel target")),
 			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),

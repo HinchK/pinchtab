@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/pinchtab/pinchtab/internal/scroll"
 )
 
 // humanizeAction is the set of pointer actions that accept a per-request humanize
@@ -144,24 +145,30 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 				steps = 1
 			}
 
-			if direction != "" && !hasDeltaY {
-				magnitude := 120
+			// A direction keyword is an INTENT, so it reads its vocabulary and its
+			// magnitude from the one owner both surfaces share and routes to the same
+			// `scroll` action the CLI's keyword does. It used to carry its own switch
+			// (down and up only, no horizontal) and its own bare 120 — a wheel notch,
+			// which is a device unit: "down" moved a sixth of what the CLI moved, took
+			// six round trips to bring the next content into view, and said so nowhere.
+			if direction != "" && !hasDeltaY && !hasDeltaX {
+				resolved, ok := scroll.DirectionFor(direction)
+				if !ok {
+					return mcp.NewToolResultError(fmt.Sprintf("direction must be one of %s", strings.Join(scroll.DirectionKeywords(), ", "))), nil
+				}
+				distance := resolved.Delta * steps
 				if hasPixels && pixels != 0 {
-					magnitude = pixels
+					magnitude := pixels
 					if magnitude < 0 {
 						magnitude = -magnitude
 					}
+					distance = magnitude * steps
+					if resolved.Delta < 0 {
+						distance = -distance
+					}
 				}
-				magnitude *= steps
-				switch direction {
-				case "down":
-					deltaY = magnitude
-				case "up":
-					deltaY = -magnitude
-				default:
-					return mcp.NewToolResultError("direction must be 'up' or 'down'"), nil
-				}
-				hasDeltaY = true
+				payload[resolved.Axis] = distance
+				break
 			}
 
 			useWheel := hasXY || hasDeltaX || hasDeltaY || (hasSelector && hasPixels)

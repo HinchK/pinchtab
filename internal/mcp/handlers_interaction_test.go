@@ -1,11 +1,21 @@
 package mcp
 
 import (
+	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	browseractions "github.com/pinchtab/pinchtab/internal/cli/actions"
+	"github.com/pinchtab/pinchtab/internal/scroll"
+	"github.com/spf13/cobra"
 )
 
 func TestHandleClick(t *testing.T) {
@@ -252,7 +262,11 @@ func TestHandleScroll(t *testing.T) {
 	}
 }
 
-func TestHandleScrollDirectionUsesMouseWheel(t *testing.T) {
+// A direction keyword routes to the `scroll` action, not to a wheel event. It used to
+// post kind=mouse-wheel with a notch magnitude, which is the category error that made a
+// sixth of a viewport look like a reasonable answer to "down": a wheel notch is a device
+// unit, and a keyword is an intent. steps still multiplies.
+func TestHandleScrollDirectionRoutesToTheScrollAction(t *testing.T) {
 	srv := mockPinchTab()
 	defer srv.Close()
 
@@ -261,13 +275,33 @@ func TestHandleScrollDirectionUsesMouseWheel(t *testing.T) {
 		"steps":     float64(2),
 	}, srv)
 
-	resp := resultJSON(t, r)
-	body, _ := resp["body"].(map[string]any)
-	if got, _ := body["kind"].(string); got != "mouse-wheel" {
-		t.Fatalf("kind = %q, want mouse-wheel", got)
+	body, _ := resultJSON(t, r)["body"].(map[string]any)
+	if got, _ := body["kind"].(string); got != "scroll" {
+		t.Fatalf("kind = %q, want scroll — the same action the CLI's keyword posts", got)
 	}
-	if got, _ := body["deltaY"].(float64); got != 240 {
-		t.Fatalf("deltaY = %v, want 240", got)
+	if got, _ := body["scrollY"].(float64); got != float64(2*scroll.StepPixels) {
+		t.Fatalf("scrollY = %v, want %d", got, 2*scroll.StepPixels)
+	}
+	if _, wheel := body["deltaY"]; wheel {
+		t.Errorf("payload still carries a wheel delta: %v", body)
+	}
+}
+
+// An explicit pixels value still overrides the keyword magnitude, keeping its sign, so a
+// caller who wants a notch can still ask for one.
+func TestHandleScrollDirectionHonoursAnExplicitPixelsOverride(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	r := callTool(t, "pinchtab_scroll", map[string]any{
+		"direction": "up",
+		"pixels":    float64(120),
+		"steps":     float64(3),
+	}, srv)
+
+	body, _ := resultJSON(t, r)["body"].(map[string]any)
+	if got, _ := body["scrollY"].(float64); got != -360 {
+		t.Fatalf("scrollY = %v, want -360 (120 x 3, upward)", got)
 	}
 }
 
@@ -630,5 +664,176 @@ func TestFillStillSendsAnEmptyStringVerbatim(t *testing.T) {
 	}
 	if !strings.Contains(body, `"text":""`) {
 		t.Errorf("posted %s, want text:\"\" — the documented way to clear a field", body)
+	}
+}
+
+// THE CARD'S MEASUREMENT, as a test: capture the outbound body on BOTH surfaces and
+// compare them, rather than comparing constants — the two surfaces each used to build
+// their own body from their own copy of the vocabulary, so only the bodies can show they
+// now agree. internal/cli/actions is imported by the test binary only; production
+// internal/mcp does not depend on the CLI.
+func TestScrollDirectionMovesTheSameDistanceOnBothSurfaces(t *testing.T) {
+	for _, keyword := range scroll.DirectionKeywords() {
+		t.Run(keyword, func(t *testing.T) {
+			srv := mockPinchTab()
+			defer srv.Close()
+			mcpBody, _ := resultJSON(t, callTool(t, "pinchtab_scroll", map[string]any{"direction": keyword}, srv))["body"].(map[string]any)
+
+			cliBody := cliScrollBody(t, keyword)
+
+			for _, field := range []string{"kind", "scrollX", "scrollY"} {
+				if fmt.Sprint(mcpBody[field]) != fmt.Sprint(cliBody[field]) {
+					t.Errorf("%q: MCP posted %s=%v, the CLI posted %s=%v — the same keyword must mean the same distance on both surfaces\nMCP: %v\nCLI: %v",
+						keyword, field, mcpBody[field], field, cliBody[field], mcpBody, cliBody)
+				}
+			}
+		})
+	}
+}
+
+// cliScrollBody runs the CLI's own scroll builder against a recording server and returns
+// the body it posted.
+func cliScrollBody(t *testing.T, keyword string) map[string]any {
+	t.Helper()
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("tab", "", "")
+	cmd.Flags().Bool("json", false, "")
+	cmd.Flags().Bool("snap", false, "")
+	cmd.Flags().Bool("snap-diff", false, "")
+	cmd.Flags().Bool("text", false, "")
+	cmd.Flags().Int("dy", 0, "")
+	cmd.Flags().Int("dx", 0, "")
+	browseractions.ActionSimple(srv.Client(), srv.URL, "", "scroll", []string{keyword}, cmd)
+
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode the CLI's body %q: %v", raw, err)
+	}
+	return body
+}
+
+// Every keyword the owner accepts is reachable through MCP: horizontal scrolling used to
+// be refused here while the CLI accepted it, so the vocabulary is asserted as a whole
+// rather than by naming the two the handler happened to support.
+func TestScrollDirectionAcceptsEveryOwnedKeyword(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	for _, keyword := range scroll.DirectionKeywords() {
+		r := callTool(t, "pinchtab_scroll", map[string]any{"direction": keyword}, srv)
+		if r.IsError {
+			t.Errorf("direction %q was refused: %s", keyword, resultText(t, r))
+			continue
+		}
+		body, _ := resultJSON(t, r)["body"].(map[string]any)
+		want, _ := scroll.DirectionFor(keyword)
+		if got, _ := body[want.Axis].(float64); got != float64(want.Delta) {
+			t.Errorf("direction %q posted %s=%v, want %d", keyword, want.Axis, got, want.Delta)
+		}
+	}
+
+	r := callTool(t, "pinchtab_scroll", map[string]any{"direction": "sideways"}, srv)
+	if !r.IsError {
+		t.Fatal("an unknown direction was accepted")
+	}
+	for _, keyword := range scroll.DirectionKeywords() {
+		if !strings.Contains(resultText(t, r), keyword) {
+			t.Errorf("the refusal %q does not name %q, so an agent cannot learn the vocabulary from it", resultText(t, r), keyword)
+		}
+	}
+}
+
+// The tool description is where an agent learns the distance — the whole reason `steps`
+// was unusable was that the magnitude appeared nowhere it reads.
+func TestScrollToolDescriptionStatesTheMagnitudeAndEveryDirection(t *testing.T) {
+	var scrollTool *mcp.Tool
+	for i, tool := range allTools() {
+		if tool.Name == "pinchtab_scroll" {
+			scrollTool = &allTools()[i]
+		}
+	}
+	if scrollTool == nil {
+		t.Fatal("pinchtab_scroll is not declared")
+	}
+	direction, ok := scrollTool.InputSchema.Properties["direction"]
+	if !ok {
+		t.Fatal("pinchtab_scroll declares no direction argument")
+	}
+	described := fmt.Sprint(direction)
+
+	if !strings.Contains(described, strconv.Itoa(scroll.StepPixels)) {
+		t.Errorf("direction description %q states no magnitude; without it steps is only usable by a caller who already knows the default", described)
+	}
+	for _, keyword := range scroll.DirectionKeywords() {
+		if !strings.Contains(described, keyword) {
+			t.Errorf("direction description %q omits %q", described, keyword)
+		}
+	}
+}
+
+// The tool description derives its magnitude from the owner, so it cannot drift — but the
+// agent-facing reference tables spell the number out, and those CAN. They are asserted
+// against the owner too, so a change to the step reds here instead of silently leaving a
+// doc that teaches the wrong distance.
+func TestTheAgentFacingScrollDocsStateTheOwnersMagnitudeAndDirections(t *testing.T) {
+	for _, doc := range []string{
+		filepath.Join("..", "..", "docs", "reference", "mcp-tools.md"),
+		filepath.Join("..", "..", "skills", "pinchtab", "references", "mcp.md"),
+	} {
+		raw, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatalf("cannot read %s, so this guard would not cover it: %v", doc, err)
+		}
+		row, ok := lineContaining(string(raw), "`pinchtab_scroll` |")
+		if !ok {
+			t.Errorf("%s no longer has a pinchtab_scroll row, so drift there is unguarded", doc)
+			continue
+		}
+		if !strings.Contains(row, strconv.Itoa(scroll.StepPixels)) {
+			t.Errorf("%s states no direction magnitude: %s", doc, row)
+		}
+		for _, keyword := range scroll.DirectionKeywords() {
+			if !strings.Contains(row, keyword) {
+				t.Errorf("%s omits direction %q: %s", doc, keyword, row)
+			}
+		}
+	}
+}
+
+func lineContaining(text, marker string) (string, bool) {
+	for _, line := range strings.Split(text, "\n") {
+		if strings.Contains(line, marker) {
+			return line, true
+		}
+	}
+	return "", false
+}
+
+// Criterion: one owner. The handler must carry neither its own keyword switch nor its own
+// magnitude literal, or the two surfaces can drift apart again exactly as they did.
+func TestScrollHandlerCarriesNoOwnDirectionVocabularyOrMagnitude(t *testing.T) {
+	source, err := os.ReadFile("handlers_interaction.go")
+	if err != nil {
+		t.Fatalf("read the handler: %v", err)
+	}
+	text := string(source)
+
+	for _, keyword := range scroll.DirectionKeywords() {
+		if strings.Contains(text, `case "`+keyword+`"`) {
+			t.Errorf("the handler still switches on %q; the direction vocabulary has one owner, internal/scroll", keyword)
+		}
+	}
+	if strings.Contains(text, "magnitude := 120") || strings.Contains(text, "= 120") {
+		t.Error("the handler still carries a bare notch magnitude; the keyword distance comes from scroll.StepPixels")
+	}
+	if !strings.Contains(text, "scroll.DirectionFor(") {
+		t.Error("the handler no longer reads the owner, so this guard is pinning nothing")
 	}
 }

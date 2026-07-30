@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	browseractions "github.com/pinchtab/pinchtab/internal/cli/actions"
+	"github.com/pinchtab/pinchtab/internal/scroll"
 )
 
 func resetScrollFlags(t *testing.T) {
@@ -179,7 +179,7 @@ func directionsEnumeratedAfter(text, marker string) ([]string, bool) {
 // and "right", which work. A guard pinning one known-bad example would not have caught
 // either half — only comparing the whole set does.
 func TestDocumentedScrollDirectionsAreExactlyTheSupportedOnes(t *testing.T) {
-	want := browseractions.ScrollDirectionKeywords()
+	want := scroll.DirectionKeywords()
 
 	commands, err := os.ReadFile(filepath.Join("..", "..", "skills", "pinchtab", "references", "commands.md"))
 	if err != nil {

@@ -44,7 +44,7 @@ All element-action tools accept the unified `selector` and the legacy aliases `r
 | `pinchtab_hover` | `selector`, `ref`, `query`, `tabId`, `x`, `y`, `nodeId` | Hover an element or coordinate |
 | `pinchtab_focus` | `selector`, `ref`, `query`, `tabId`, `nodeId` | Focus element |
 | `pinchtab_select` | `selector`, `ref`, `query`, `nodeId`, `value` required, `tabId`, `snap` | Select `<option>` by value or visible text; target with `selector` or `nodeId` |
-| `pinchtab_scroll` | `selector`, `ref`, `query`, `nodeId`, `pixels`, `deltaX`, `deltaY`, `direction`, `steps`, `x`, `y`, `tabId` | Omit every target to scroll the page; element + `pixels` uses wheel semantics; `direction` accepts `up`/`down` |
+| `pinchtab_scroll` | `selector`, `ref`, `query`, `nodeId`, `pixels`, `deltaX`, `deltaY`, `direction`, `steps`, `x`, `y`, `tabId` | Omit every target to scroll the page; element + `pixels` uses wheel semantics; `direction` accepts `down`/`left`/`right`/`up` and moves 800px per step — the same distance as the CLI's `pinchtab scroll <direction>`, multiplied by `steps` or overridden by `pixels` |
 | `pinchtab_scroll_into_view` | `selector`, `ref`, `query`, `nodeId`, `tabId` | Scrolls the target into view and returns geometry for stable follow-up actions; target with `selector` or `nodeId` |
 | `pinchtab_fill` | `selector`, `ref`, `query`, `nodeId`, `value` required, `tabId`, `snap` | Direct fill via JS dispatch instead of keystrokes; target with `selector` or `nodeId`. An empty `value` clears the field; omitting it entirely is refused |
 

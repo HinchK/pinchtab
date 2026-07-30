@@ -3,7 +3,6 @@ package actions
 import (
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -11,6 +10,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
 	"github.com/pinchtab/pinchtab/internal/cli/output"
+	"github.com/pinchtab/pinchtab/internal/scroll"
 	"github.com/pinchtab/pinchtab/internal/selector"
 	"github.com/spf13/cobra"
 )
@@ -210,31 +210,6 @@ func setPointBody(body map[string]any, x, y float64) {
 	body["y"] = y
 }
 
-type scrollDirection struct {
-	axis  string
-	delta int
-}
-
-// scrollDirections is the whole vocabulary `scroll <direction>` accepts, and the single
-// place the help and the docs are checked against by ScrollDirectionKeywords.
-var scrollDirections = map[string]scrollDirection{
-	"down":  {"scrollY", 800},
-	"up":    {"scrollY", -800},
-	"right": {"scrollX", 800},
-	"left":  {"scrollX", -800},
-}
-
-// ScrollDirectionKeywords returns the accepted direction keywords, sorted. Any prose that
-// enumerates them is asserted against this rather than against a hand-kept list.
-func ScrollDirectionKeywords() []string {
-	keywords := make([]string, 0, len(scrollDirections))
-	for keyword := range scrollDirections {
-		keywords = append(keywords, keyword)
-	}
-	sort.Strings(keywords)
-	return keywords
-}
-
 // applyScrollTarget fills a scroll body from the single positional — integer pixels, then
 // direction keyword, then unified selector — or from --dy/--dx when there is no positional.
 // Pixels and directions would otherwise parse as CSS tag selectors ("up", "down"), so they
@@ -262,8 +237,8 @@ func applyScrollTarget(body map[string]any, args []string, cmd *cobra.Command) {
 		body["scrollY"] = px
 		return
 	}
-	if direction, ok := scrollDirections[strings.ToLower(args[0])]; ok {
-		body[direction.axis] = direction.delta
+	if direction, ok := scroll.DirectionFor(strings.ToLower(args[0])); ok {
+		body[direction.Axis] = direction.Delta
 		return
 	}
 	setSelectorBody(body, args[0])
