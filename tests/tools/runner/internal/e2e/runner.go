@@ -587,6 +587,7 @@ func (r *Runner) runSinglePlanWithCompose(plan suitePlan, composeFile string) in
 	r.printSuiteSummary(def, summary, duration)
 	if code != 0 {
 		r.dumpComposeFailure(composeFile, def)
+		r.reportServiceDeaths(composeFile, def.LogServices)
 		r.showFailureArtifacts(def, duration)
 	}
 	return code
@@ -639,10 +640,12 @@ func (r *Runner) bringUpSharedStack(composeFile string, services []string) int {
 	}
 	args = append(args, services...)
 	if code := r.runLoggedCommand("starting shared stack", stackOutput, r.composeArgs(composeFile, args...)); code != 0 {
+		r.reportServiceDeaths(composeFile, services)
 		return code
 	}
 	if err := r.assertStealthStatus(composeFile); err != nil {
 		_, _ = fmt.Fprintf(r.stderr, "e2e: pre-suite stealth assertion failed: %v\n", err)
+		r.reportServiceDeaths(composeFile, services)
 		return 1
 	}
 	return 0
@@ -657,6 +660,10 @@ func (r *Runner) buildSharedStackWithOverrides(composeFile string, includeOverri
 	code := r.runLoggedCommand("building shared-stack images", stackOutput, r.composeArgsWithOverrides(composeFile, includeOverrides, args...))
 	if code == 0 {
 		return 0
+	}
+	if r.stackOutputIsOutOfDisk() {
+		_, _ = fmt.Fprintln(r.stdout, outOfDiskRemedy)
+		return code
 	}
 	if !r.stackOutputHasBuildKitCacheFailure() {
 		return code
@@ -685,11 +692,19 @@ func needsStockPinchtabImage(services []string) bool {
 }
 
 func (r *Runner) stackOutputHasBuildKitCacheFailure() bool {
+	return isBuildKitCacheFailureLog(r.stackOutputLog())
+}
+
+func (r *Runner) stackOutputIsOutOfDisk() bool {
+	return isOutOfDiskLog(r.stackOutputLog())
+}
+
+func (r *Runner) stackOutputLog() string {
 	data, err := os.ReadFile(filepath.Join(r.repoRoot, stackOutput))
 	if err != nil {
-		return false
+		return ""
 	}
-	return isBuildKitCacheFailureLog(string(data))
+	return string(data)
 }
 
 func isBuildKitCacheFailureLog(log string) bool {
