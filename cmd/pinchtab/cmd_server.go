@@ -21,6 +21,12 @@ var serverCmd = &cobra.Command{
 		maybeRunWizard()
 
 		cfg, loadDiags := loadConfigDeferringDiagnostics()
+		verbose, _ := cmd.Flags().GetBool("verbose")
+		cfg.VerboseBanner = verbose
+		logLevel, _ := cmd.Flags().GetString("log-level")
+		resolveLogLevel(cfg, logLevel, verbose)
+		config.EmitLoadDiagnostics(loadDiags)
+
 		backgroundMarker, _ := cmd.Flags().GetString("background-child")
 		cfg.BackgroundMarker = backgroundMarker
 
@@ -52,11 +58,6 @@ var serverCmd = &cobra.Command{
 		if len(exts) > 0 {
 			cfg.ExtensionPaths = append(cfg.ExtensionPaths, exts...)
 		}
-		verbose, _ := cmd.Flags().GetBool("verbose")
-		cfg.VerboseBanner = verbose
-		logLevel, _ := cmd.Flags().GetString("log-level")
-		resolveLogLevel(cfg, logLevel, verbose)
-		config.EmitLoadDiagnostics(loadDiags)
 
 		browserName, _ := cmd.Flags().GetString("browser")
 		if browserName != "" {

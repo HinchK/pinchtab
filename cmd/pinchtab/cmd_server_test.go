@@ -3,8 +3,11 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"slices"
@@ -370,5 +373,108 @@ func TestConfigPackageHoldsNoLogLevelPrecedence(t *testing.T) {
 		if strings.Contains(string(raw), forbidden) {
 			t.Errorf("internal/config/config_load.go references %q — the level decision must stay in resolveLogLevel", forbidden)
 		}
+	}
+}
+
+// yoloChildEnv marks the re-executed child that drives serverCmd.Run for real.
+const yoloChildEnv = "PINCHTAB_TEST_YOLO_EXIT_CHILD"
+
+// The --yolo branch reports its failures with os.Exit, which no defer and no
+// in-process test can observe, so this re-executes the test binary and reads the
+// child's own output. Two things have to survive that exit: the loader's warning,
+// and the debug line the config asked for — the second one only lands if the level
+// is resolved above the --yolo branch rather than merely before the work.
+func TestServerYoloExitStillEmitsLoaderDiagnostics(t *testing.T) {
+	if os.Getenv(yoloChildEnv) == "1" {
+		runYoloExitChild()
+		return
+	}
+
+	path := filepath.Join(t.TempDir(), "config.json")
+	body := `{"configVersion":"` + config.CurrentConfigVersion + `","server":{"token":"test-token","logLevel":"debug"},` +
+		`"browser":{"binary":"/tmp/chrome"},"browsers":{"default":"not-a-browser"}}`
+	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	child := exec.Command(os.Args[0], "-test.run=TestServerYoloExitStillEmitsLoaderDiagnostics", "-test.timeout=60s") // #nosec G204 -- re-executes this test binary.
+	child.Env = append(os.Environ(),
+		yoloChildEnv+"=1",
+		"PINCHTAB_CONFIG="+path,
+		"PINCHTAB_TOKEN=test-token",
+	)
+	raw, err := child.CombinedOutput()
+	out := string(raw)
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("child exited with %v, want the --yolo os.Exit(1); output:\n%s", err, out)
+	}
+	if code := exitErr.ExitCode(); code != 1 {
+		t.Fatalf("child exit code = %d, want 1; output:\n%s", code, out)
+	}
+	if !strings.Contains(out, "--yolo:") {
+		t.Fatalf("child did not reach the --yolo failure, so the exit path is unproven:\n%s", out)
+	}
+	if !strings.Contains(out, "not a known browser") {
+		t.Errorf("the --yolo exit discarded the loader warning:\n%s", out)
+	}
+	if !strings.Contains(out, "loading config file") {
+		t.Errorf("server.logLevel=debug was not resolved before the --yolo exit, so its diagnostics stayed hidden:\n%s", out)
+	}
+	if !strings.Contains(out, "migrated legacy browser config") {
+		t.Errorf("the legacy-browser migration notice was lost on the --yolo exit path:\n%s", out)
+	}
+}
+
+// runYoloExitChild is the child half: production logging, the real Run body, the
+// real os.Exit.
+func runYoloExitChild() {
+	safelog.InstallDefault()
+	if err := serverCmd.Flags().Set("yolo", "true"); err != nil {
+		fmt.Fprintln(os.Stderr, "child could not set --yolo:", err)
+		os.Exit(9)
+	}
+	serverCmd.Run(serverCmd, nil)
+}
+
+// The fix is an ordering, and an ordering is only kept by something that checks
+// it: the next flag validation added to either prologue would reopen the window
+// silently. Every command that defers its diagnostics must emit them before it can
+// leave the prologue, so no exit may sit between the load and the emit.
+func TestDeferredDiagnosticsAreEmittedBeforeAnyExit(t *testing.T) {
+	const (
+		load = "= loadConfigDeferringDiagnostics()"
+		emit = "config.EmitLoadDiagnostics("
+	)
+
+	deferring := 0
+	for _, path := range commandSourceFiles(t) {
+		raw, err := os.ReadFile(path) // #nosec G304 -- files listed from this package's own directory.
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(raw)
+		start := strings.Index(src, load)
+		if start < 0 {
+			continue
+		}
+		deferring++
+
+		emitAt := strings.Index(src[start:], emit)
+		if emitAt < 0 {
+			t.Errorf("%s defers its load diagnostics and never emits them", filepath.Base(path))
+			continue
+		}
+		window := src[start : start+emitAt]
+		for _, escape := range []string{"return", "os.Exit("} {
+			if strings.Contains(window, escape) {
+				t.Errorf("%s can %s between the load and %s, which discards the loader's diagnostics; move the emit above it:\n%s",
+					filepath.Base(path), escape, emit, window)
+			}
+		}
+	}
+	if deferring < 2 {
+		t.Fatalf("found %d commands calling %s; the census matched almost nothing and would pass vacuously", deferring, load)
 	}
 }

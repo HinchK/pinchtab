@@ -36,6 +36,9 @@ Examples:
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, loadDiags := loadConfigDeferringDiagnostics()
+		resolveLogLevel(cfg, bridgeLogLevel, false)
+		config.EmitLoadDiagnostics(loadDiags)
+
 		if v := strings.TrimSpace(bridgeCDPAttach); v != "" {
 			cdpURL, err := validateBridgeCDPURL(v)
 			if err != nil {
@@ -59,8 +62,6 @@ Examples:
 		if v := strings.TrimSpace(bridgeRemoteBrowserName); v != "" {
 			cfg.RemoteBrowserName = v
 		}
-		resolveLogLevel(cfg, bridgeLogLevel, false)
-		config.EmitLoadDiagnostics(loadDiags)
 
 		server.RunBridgeServer(cfg, version)
 		return nil

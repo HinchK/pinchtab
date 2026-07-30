@@ -242,3 +242,27 @@ func TestBridgeResolvesTheLevelFromAWrittenChildConfig(t *testing.T) {
 		t.Fatalf("bridge started from a written child config resolved %v, want warn", got)
 	}
 }
+
+// The window this card closed: the prologue validated flags between the load and
+// the emit, so a bad --cdp-attach returned before the loader's warnings were ever
+// written. Driving the real RunE is what makes that visible — the warning has to
+// reach the log alongside the flag error, not instead of it.
+func TestBridgeFlagErrorStillEmitsLoaderWarnings(t *testing.T) {
+	writeRunConfig(t, `{"server":{"port":"9867"},"browsers":{"default":"not-a-browser"}}`)
+	buf := captureRunLog(t)
+
+	previous := bridgeCDPAttach
+	bridgeCDPAttach = "garbage"
+	t.Cleanup(func() { bridgeCDPAttach = previous })
+
+	err := bridgeCmd.RunE(bridgeCmd, nil)
+	if err == nil {
+		t.Fatal("bridge --cdp-attach garbage returned no error, so this test is not exercising the early-return path")
+	}
+	if !strings.Contains(err.Error(), "--cdp-attach") {
+		t.Fatalf("error = %v, want the --cdp-attach validation failure", err)
+	}
+	if out := buf.String(); !strings.Contains(out, "not a known browser") {
+		t.Errorf("the flag error discarded the loader warning:\n%s", out)
+	}
+}
