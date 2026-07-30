@@ -1,7 +1,9 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -134,5 +136,64 @@ func TestPrintPostureReflectsPosture(t *testing.T) {
 	}
 	if strings.Contains(down, "strict") {
 		t.Errorf("Guard DOWN summary should not advertise IDPI strict, got:\n%s", down)
+	}
+}
+
+// The startup write announces itself and reports its failure. Both halves were silent:
+// nothing said a plain `pinchtab server` had touched the user's file, and the save error
+// was discarded with `_ =`, so a config the user had marked read-only appeared to be
+// rewritten successfully.
+func TestRecordConfigVersionAnnouncesItselfAndReportsAFailedWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix-only file mode semantics")
+	}
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(`{"server":{"port":"9913","token":"tok3"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", path)
+
+	cfg, _, err := config.LoadFileConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	announced := captureStderr(t, func() {
+		if !recordConfigVersion(cfg, path, true) {
+			t.Error("recordConfigVersion() = false for a writable config")
+		}
+	})
+	if !strings.Contains(announced, "recording configVersion") || !strings.Contains(announced, path) {
+		t.Errorf("the startup write did not announce itself on stderr, got %q", announced)
+	}
+
+	// A separate file for the read-only half: the first call already stamped the one
+	// above, and a save with nothing left to write is skipped rather than refused —
+	// which is its own correct form of leaving a protected file alone, but proves
+	// nothing about reporting.
+	locked := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(locked, []byte(`{"server":{"port":"9913","token":"tok3"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", locked)
+	lockedCfg, _, err := config.LoadFileConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0444); err != nil {
+		t.Fatal(err)
+	}
+	reported := captureStderr(t, func() {
+		if recordConfigVersion(lockedCfg, locked, false) {
+			t.Error("recordConfigVersion() = true against a read-only config; the failure must not be swallowed")
+		}
+	})
+	if !strings.Contains(reported, "could not record configVersion") {
+		t.Errorf("a refused write was not reported on stderr, got %q", reported)
+	}
+	if fi, err := os.Stat(locked); err != nil {
+		t.Fatal(err)
+	} else if got := fi.Mode().Perm(); got != 0444 {
+		t.Errorf("mode after a refused write = %o, want 0444", got)
 	}
 }
