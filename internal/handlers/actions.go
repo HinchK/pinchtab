@@ -226,10 +226,23 @@ func unsupportedQueryFields(q url.Values) []string {
 	return offenders
 }
 
-// actionQueryKeys is the complete set of meaningful /action query parameters, derived from
-// the request type rather than listed by hand: a field added to bridge.ActionRequest is
-// accepted with no edit here, and anything else is a typo or a stray parameter the GET form
-// would drop without a word.
+// getOnlyActionQueryKeys are the parameters HandleAction reads from the query ITSELF, which
+// bridge.ActionRequest therefore does not declare. They exist because the GET form has no JSON
+// body to carry them, so deriving the allow-list from the request type alone refuses a
+// parameter this handler implements — the refusal would name the key as "not a parameter of
+// /action" while the code reading it sits in the same function.
+//
+// Each entry records why it is GET-only. TestEveryQueryParameterActionReadsIsAllowed is the
+// guard that keeps this in step: it walks every r.URL.Query().Get literal in actions.go and
+// requires the key to be allowed, so the next GET-only parameter cannot be silently refused.
+var getOnlyActionQueryKeys = map[string]string{
+	"timeout": "per-request action timeout in seconds; the GET form has no body to carry it, so HandleAction reads it from the query",
+}
+
+// actionQueryKeys is the complete set of meaningful /action query parameters, derived from its
+// TWO owners rather than listed by hand: every field bridge.ActionRequest declares, plus what
+// the handler reads from the query itself. A field added to either is accepted with no edit
+// here, and anything else is a typo or a stray parameter the GET form would drop without a word.
 var actionQueryKeys = actionRequestJSONKeys()
 
 func actionRequestJSONKeys() map[string]struct{} {
@@ -239,6 +252,9 @@ func actionRequestJSONKeys() map[string]struct{} {
 		if name != "" && name != "-" {
 			keys[name] = struct{}{}
 		}
+	}
+	for key := range getOnlyActionQueryKeys {
+		keys[key] = struct{}{}
 	}
 	return keys
 }

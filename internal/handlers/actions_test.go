@@ -5,10 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1001,6 +1005,25 @@ func TestARecordedFieldStillRefusesWithThePostRemedy(t *testing.T) {
 	}
 }
 
+// THE DECISION, pinned at the endpoint so the next reader cannot restore it by accident:
+// ?timeout= stays a supported GET parameter. It exists precisely because the GET form has no
+// body to carry a per-request timeout, and the block reading it is guarded by
+// r.Method == http.MethodGet — so refusing it would have made that code unreachable on the only
+// method that reaches it, behind a 400 saying it is not a parameter of /action.
+//
+// Asserted through the DECODER as a caller reaches it, not through the predicate alone: a
+// predicate test passes on a build where the refusal runs before the allow-list is consulted.
+func TestTheGetOnlyTimeoutParameterIsAccepted(t *testing.T) {
+	rec := httptest.NewRecorder()
+	if _, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, "/action?kind=click&timeout=5", nil)); !ok {
+		t.Fatalf("?timeout=5 was refused, but HandleAction reads it: %s", rec.Body.String())
+	}
+	// Its neighbours on the same request, since a caller sends them together.
+	if _, ok := decodeActionRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/action?kind=click&timeout=5&browser=chrome&tabId=T&owner=agent", nil)); !ok {
+		t.Error("a routing-and-ownership request with a timeout was refused")
+	}
+}
+
 // An empty value is absent, the rule every other presence check here follows, so a bare
 // ?_= does not refuse a request that supplied nothing.
 func TestActionQueryAcceptsAnEmptyUnknownParameter(t *testing.T) {
@@ -1090,4 +1113,95 @@ func jsonLiteral(t reflect.Type, value string) string {
 		return `"` + value + `"`
 	}
 	return value
+}
+
+// The defect this closes was not a wrong entry in a list — it was a whole OWNER missing from
+// the derivation. HandleAction reads `timeout` straight from the query, so an allow-list built
+// only from bridge.ActionRequest refused a parameter the same function implements, leaving the
+// code that reads it unreachable behind a 400 saying it is not a parameter of /action.
+//
+// This walks every r.URL.Query().Get("…") in actions.go and requires the key to be allowed, so
+// the NEXT such parameter fails here the day it lands rather than being refused in production.
+// Scope is the file, not the package: a query read in another handler belongs to that handler.
+func TestEveryQueryParameterActionReadsIsAllowed(t *testing.T) {
+	keys := queryGetLiteralsIn(t, "actions.go")
+	if len(keys) == 0 {
+		t.Fatal("no r.URL.Query().Get literal found in actions.go; the walk stopped matching and this guard would pass over nothing — re-point it at wherever the query reads moved rather than deleting it")
+	}
+
+	for _, key := range keys {
+		if _, ok := actionQueryKeys[key.name]; ok {
+			continue
+		}
+		t.Errorf("actions.go:%d reads the query parameter %q, but the allow-list refuses it — a caller who sends it gets a 400 saying it is not a parameter of /action while this line reads it. Declare it in getOnlyActionQueryKeys with the reason it is GET-only, or stop reading it",
+			key.line, key.name)
+	}
+}
+
+// Every GET-only entry must be one the handler actually reads, so the record cannot outlive
+// its parameter: a stale entry silently widens the allow-list and re-opens the typo class for
+// that spelling.
+func TestNoGetOnlyKeyOutlivesItsRead(t *testing.T) {
+	read := map[string]bool{}
+	for _, key := range queryGetLiteralsIn(t, "actions.go") {
+		read[key.name] = true
+	}
+	for key, reason := range getOnlyActionQueryKeys {
+		if reason == "" {
+			t.Errorf("%q is recorded as GET-only with no reason; every entry widens the allow-list and has to say why", key)
+		}
+		if !read[key] {
+			t.Errorf("%q is recorded as GET-only but actions.go reads no such query parameter; the entry outlived its code and now just permits a typo — drop it", key)
+		}
+	}
+}
+
+type queryGetLiteral struct {
+	name string
+	line int
+}
+
+// queryGetLiteralsIn finds the string literal of every `….Query().Get("x")` in one file of this
+// package. It matches the CHAIN rather than the method name, so an unrelated Get on some other
+// receiver is not mistaken for a query read.
+func queryGetLiteralsIn(t *testing.T, file string) []queryGetLiteral {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, file, nil, 0)
+	if err != nil {
+		t.Fatalf("cannot parse %s, so this guard would check nothing: %v", file, err)
+	}
+
+	var found []queryGetLiteral
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok || len(call.Args) != 1 {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || selector.Sel.Name != "Get" {
+			return true
+		}
+		receiver, ok := selector.X.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if inner, ok := receiver.Fun.(*ast.SelectorExpr); !ok || inner.Sel.Name != "Query" {
+			return true
+		}
+		literal, ok := call.Args[0].(*ast.BasicLit)
+		if !ok || literal.Kind != token.STRING {
+			t.Errorf("%s:%d reads the query with a non-literal key, which this guard cannot check — pass a literal, or exclude it here with a reason",
+				file, fset.Position(call.Pos()).Line)
+			return true
+		}
+		name, err := strconv.Unquote(literal.Value)
+		if err != nil {
+			t.Fatalf("cannot read the query key at %s:%d: %v", file, fset.Position(call.Pos()).Line, err)
+		}
+		found = append(found, queryGetLiteral{name: name, line: fset.Position(call.Pos()).Line})
+		return true
+	})
+	return found
 }
