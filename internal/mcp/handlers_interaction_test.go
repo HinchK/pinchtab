@@ -379,6 +379,49 @@ func TestScrollDirectionKeepsItsStepWhenPixelsIsAbsentOrNonZero(t *testing.T) {
 	}
 }
 
+// The crossed case neither half covers alone: a direction with an element target AND a
+// supplied zero. TestScrollDirectionAtAnElementStaysOnTheWheel pins the wheel routing only
+// with pixels absent, so a regression that reached the zero by dropping back to a page
+// scroll for the element target would keep every row above green while defeating the
+// documented reason the element target rides the wheel — actionScroll short-circuits on a
+// target into scroll-into-view, discarding direction, distance and sign, and still answers
+// scrolled:true. Routing and magnitude are therefore asserted together, per target spelling.
+func TestScrollDirectionAtATargetKeepsBothItsRoutingAndASuppliedZero(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		target   map[string]any
+		wantKind string
+		axis     string
+	}{
+		{name: "selector", target: map[string]any{"selector": "#feed"}, wantKind: "mouse-wheel", axis: "scrollY"},
+		{name: "ref", target: map[string]any{"ref": "e5"}, wantKind: "mouse-wheel", axis: "scrollY"},
+		{name: "nodeId", target: map[string]any{"nodeId": float64(42)}, wantKind: "mouse-wheel", axis: "scrollY"},
+		{name: "coordinate", target: map[string]any{"x": float64(200), "y": float64(200)}, wantKind: "scroll", axis: "scrollY"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := mockPinchTab()
+			defer srv.Close()
+
+			args := map[string]any{"direction": "down", "pixels": float64(0)}
+			for k, v := range tc.target {
+				args[k] = v
+			}
+			body, _ := resultJSON(t, callTool(t, "pinchtab_scroll", args, srv))["body"].(map[string]any)
+
+			if got, _ := body["kind"].(string); got != tc.wantKind {
+				t.Errorf("kind = %q, want %q — honouring the zero must not change which action the target routes to", got, tc.wantKind)
+			}
+			value, present := body[tc.axis]
+			if !present {
+				t.Fatalf("payload carries no %s, so the bridge cannot refuse a zero it never receives: %v", tc.axis, body)
+			}
+			if got, _ := value.(float64); got != 0 {
+				t.Errorf("%s = %v, want 0 — the caller supplied the magnitude and asked for none", tc.axis, got)
+			}
+		})
+	}
+}
+
 func TestHandleScrollSelectorPixelsUsesMouseWheel(t *testing.T) {
 	srv := mockPinchTab()
 	defer srv.Close()
