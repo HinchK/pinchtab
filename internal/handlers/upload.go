@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,7 +20,12 @@ import (
 type uploadRequest struct {
 	Selector string   `json:"selector"`
 	Files    []string `json:"files"`
-	Paths    []string `json:"paths"`
+	// FileNames names the entries of Files by index, so a page sees the file
+	// the caller actually sent rather than a synthetic one. Optional and
+	// index-aligned: a short or absent list leaves the remaining files on the
+	// content-sniffed name, which is all a caller posting bare blobs can offer.
+	FileNames []string `json:"fileNames"`
+	Paths     []string `json:"paths"`
 }
 
 const (
@@ -54,6 +60,7 @@ var (
 //	{
 //	  "selector": "input[type=file]",   // unified selector: CSS, XPath, text, ref, or semantic
 //	  "files": ["data:image/png;base64,...", "base64:..."],
+//	  "fileNames": ["chart.png", "data.csv"],
 //	  "paths": ["uploads/photo.jpg"]
 //	}
 //
@@ -61,6 +68,13 @@ var (
 // provided. Both can be combined. Files are written to a temp dir and passed to
 // CDP. Path-based uploads are limited to StateDir/uploads/. Successful base64
 // staging dirs are retained briefly for lazy browser reads, then cleaned.
+//
+// "fileNames" is index-aligned with "files" and decides the name the page sees.
+// A supplied name wins over the content sniff even when the two disagree,
+// because that is what a browser does: it sends the user's filename and leaves
+// the receiving page to decide whether to trust it. Without a name the extension
+// is sniffed from content, which is all a bare blob can support — and sniffing is
+// blind to exactly the text formats forms validate by extension.
 func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 	if !h.Config.AllowUpload {
 		h.writeCapabilityDisabled(w, routes.CapUpload)
@@ -159,7 +173,11 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 				httpx.Error(w, 400, fmt.Errorf("upload payload too large: max %d bytes total", maxTotalBytes))
 				return
 			}
-			path := fmt.Sprintf("%s/upload-%d%s", stagedDir, i, ext)
+			path, err := stageUploadPath(stagedDir, i, uploadFileName(req.FileNames, i), ext)
+			if err != nil {
+				httpx.Error(w, 400, fmt.Errorf("file[%d]: %w", i, err))
+				return
+			}
 			if err := os.WriteFile(path, data, 0600); err != nil {
 				httpx.Error(w, 500, fmt.Errorf("write staged file: %w", err))
 				return
@@ -223,6 +241,63 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 // @Endpoint POST /tabs/{id}/upload
 func (h *Handlers) HandleTabUpload(w http.ResponseWriter, r *http.Request) {
 	h.withPathTabID(w, r, h.HandleUpload)
+}
+
+// uploadFileName returns the caller-supplied name for file i, or "" when none
+// was sent. Names are index-aligned with files and the list may be shorter.
+func uploadFileName(names []string, i int) string {
+	if i < 0 || i >= len(names) {
+		return ""
+	}
+	return strings.TrimSpace(names[i])
+}
+
+// stagedUploadName reduces a caller-supplied name to the single filesystem
+// element it will be staged as, falling back to the generated upload-<i><ext>
+// when the caller sent nothing usable.
+//
+// Containment is a property of the RETURN VALUE rather than a second check after
+// the fact: the result is always one path element — never empty, never "." or
+// "..", never carrying a separator — so joining it under a directory cannot
+// leave that directory. A re-resolution after this would be unreachable by
+// construction, and an unreachable guard is one no test can hold to account.
+//
+// Reducing rather than refusing is what a browser does: it sends the basename of
+// whatever the user picked and never the directory above it.
+func stagedUploadName(name string, i int, ext string) string {
+	generated := fmt.Sprintf("upload-%d%s", i, ext)
+
+	// filepath.Base already guarantees the result carries no separator, so the
+	// only rejections left are the values Base returns that are not usable
+	// filenames: the empty input, the two relative markers, the root itself, and
+	// a NUL, which Base passes through and the filesystem then refuses.
+	base := filepath.Base(filepath.FromSlash(strings.TrimSpace(name)))
+	switch {
+	case strings.TrimSpace(name) == "",
+		base == ".", base == "..",
+		base == string(filepath.Separator),
+		strings.ContainsRune(base, 0):
+		return generated
+	}
+	return base
+}
+
+// stageUploadPath returns the path to write file i to, under its own numbered
+// subdirectory of stagedDir.
+//
+// The subdirectory is what keeps the caller's real basename usable: a page reads
+// file.name from the basename of the path CDP was handed, so the presented name
+// and the on-disk name are the same string by construction, and two files sent in
+// one request under the same name (a/data.csv and b/data.csv) would otherwise
+// resolve to one path that os.WriteFile truncates — losing a file silently. The
+// index used to live in the filename and provided that uniqueness; moving it to
+// the directory keeps it while freeing the name.
+func stageUploadPath(stagedDir string, i int, name, ext string) (string, error) {
+	fileDir := filepath.Join(stagedDir, strconv.Itoa(i))
+	if err := os.MkdirAll(fileDir, 0o700); err != nil {
+		return "", fmt.Errorf("create staged dir: %w", err)
+	}
+	return filepath.Join(fileDir, stagedUploadName(name, i, ext)), nil
 }
 
 func validateUploadSandboxPath(baseDir, rawPath string, maxFileBytes int) (string, int64, error) {
