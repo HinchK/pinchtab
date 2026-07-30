@@ -94,6 +94,13 @@ names the valid subcommands, at the top level and inside every group. `pinchtab 
 does not share an exit code with `pinchtab cache clear`, so `set -e` and `&&` chains stop on
 a typo instead of continuing as though the state had been reset.
 
+```bash
+$ pinchtab cache clera ; echo exit=$?
+unknown command "clera" for "pinchtab cache"
+Valid subcommands: clear, status
+exit=1
+```
+
 Two commands take an argument rather than a subcommand and are unaffected: `pinchtab tab
 <id>` focuses a tab, and `pinchtab network <filter>` filters the network log. An unknown
 value there is data the server rejects, not a typo the CLI can catch.

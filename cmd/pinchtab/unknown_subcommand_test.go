@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -142,6 +143,27 @@ func TestUnknownSubcommandExitsWithOneCodeEverywhere(t *testing.T) {
 	}
 }
 
+// A refusal is two lines, the shape daemon already had: the token and the valid verbs. Cobra
+// adds the parent's whole usage block and prints the error a second time unless the command
+// silences both, so a refusal without those flags names the typo three times over.
+func TestARefusalRendersOnceWithoutTheUsageBlock(t *testing.T) {
+	for _, args := range [][]string{
+		{"cache", "zzz-clera"},
+		{"config", "zzz-st", "server.port", "18899"},
+		{"mcp", "zzz-bogus"},
+	} {
+		invocation := "pinchtab " + strings.Join(args, " ")
+		rendered := renderedRefusal(t, args...)
+
+		if got := strings.Count(rendered, args[1]); got != 1 {
+			t.Errorf("`%s` named the token %d times, want once:\n%s", invocation, got, rendered)
+		}
+		if strings.Contains(rendered, "Usage:") {
+			t.Errorf("`%s` printed the usage block, so the valid verbs appear twice over:\n%s", invocation, rendered)
+		}
+	}
+}
+
 // The guard lives at Execute because the command tree is only complete there. A test that
 // installs it itself proves the walk works, not that the binary runs it.
 func TestExecuteInstallsTheGuard(t *testing.T) {
@@ -194,15 +216,35 @@ func runRootArgs(t *testing.T, args ...string) (string, error) {
 	t.Helper()
 
 	var out bytes.Buffer
+	err := runRoot(t, &out, io.Discard, args...)
+	return out.String(), err
+}
+
+func runRoot(t *testing.T, out, errOut io.Writer, args ...string) error {
+	t.Helper()
+
 	t.Cleanup(func() {
 		rootCmd.SetArgs(nil)
 		rootCmd.SetOut(nil)
 		rootCmd.SetErr(nil)
 	})
 	rootCmd.SetArgs(args)
-	rootCmd.SetOut(&out)
-	rootCmd.SetErr(io.Discard)
+	rootCmd.SetOut(out)
+	rootCmd.SetErr(errOut)
 
-	err := rootCmd.Execute()
-	return out.String(), err
+	return rootCmd.Execute()
+}
+
+// renderedRefusal is everything a user sees on a refusal: what cobra printed plus the line
+// Execute prints itself. Asserting on the error VALUE instead is what let the refusal grow to
+// eighteen lines unnoticed.
+func renderedRefusal(t *testing.T, args ...string) string {
+	t.Helper()
+
+	var stream bytes.Buffer
+	err := runRoot(t, &stream, &stream, args...)
+	if err == nil {
+		t.Fatalf("`pinchtab %s` succeeded, want a refusal", strings.Join(args, " "))
+	}
+	return stream.String() + fmt.Sprintln(err)
 }
