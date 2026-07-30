@@ -60,3 +60,42 @@ func TestScrollRefusesAnExplicitZeroDeltaButKeepsTheDefaultWhenAbsent(t *testing
 		t.Errorf("a bare scroll was refused as a zero delta: %v", err)
 	}
 }
+
+// mouse-wheel is the sibling spelling of the same question, and it reaches further: the MCP
+// scroll tool routes to wheel semantics whenever deltaX/deltaY or a coordinate is given, so
+// an agent passing a computed deltaY of 0 lands here rather than on actionScroll. Scroll
+// refusing a zero while wheel silently scrolled a notch would be one rule with two answers.
+func TestWheelDeltaRefusesAnExplicitZeroInEitherSpelling(t *testing.T) {
+	for _, tc := range []struct {
+		body     string
+		wantErr  bool
+		wantX    int
+		wantY    int
+		whyNotOK string
+	}{
+		{body: `{"kind":"mouse-wheel"}`, wantY: 120, whyNotOK: "a bare wheel has always meant one notch down"},
+		{body: `{"kind":"mouse-wheel","deltaY":0}`, wantErr: true},
+		{body: `{"kind":"mouse-wheel","deltaX":0}`, wantErr: true},
+		{body: `{"kind":"mouse-wheel","deltaX":0,"deltaY":0}`, wantErr: true},
+		{body: `{"kind":"mouse-wheel","scrollY":0}`, wantErr: true, whyNotOK: "the legacy spelling asks the same question"},
+		{body: `{"kind":"mouse-wheel","deltaX":0,"deltaY":500}`, wantX: 0, wantY: 500, whyNotOK: "a zero on one axis is a real scroll on the other"},
+		{body: `{"kind":"mouse-wheel","deltaY":-300}`, wantY: -300},
+		{body: `{"kind":"mouse-wheel","deltaY":0,"scrollY":300}`, wantY: 300, whyNotOK: "an explicit zero delta still carries a non-zero legacy delta"},
+	} {
+		gotX, gotY, err := wheelDelta(decodeScrollRequest(t, tc.body))
+
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("%s: accepted, resolving to (%d,%d) — a zero delta scrolls a default notch nobody asked for", tc.body, gotX, gotY)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: refused (%v); %s", tc.body, err, tc.whyNotOK)
+			continue
+		}
+		if gotX != tc.wantX || gotY != tc.wantY {
+			t.Errorf("%s: delta = (%d,%d), want (%d,%d); %s", tc.body, gotX, gotY, tc.wantX, tc.wantY, tc.whyNotOK)
+		}
+	}
+}

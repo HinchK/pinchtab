@@ -537,6 +537,12 @@ func (b *Bridge) actionMouseUp(ctx context.Context, req ActionRequest) (map[stri
 }
 
 func (b *Bridge) actionMouseWheel(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	// Resolved before the pointer target, so a request that cannot scroll is refused
+	// without reaching CDP at all.
+	deltaX, deltaY, err := wheelDelta(req)
+	if err != nil {
+		return nil, err
+	}
 	x, y, err := b.pointerCoordinatesFromRequest(ctx, req, true)
 	if err != nil {
 		if req.HasXY || req.NodeID > 0 || req.Selector != "" || req.TabID == "" {
@@ -547,20 +553,30 @@ func (b *Bridge) actionMouseWheel(ctx context.Context, req ActionRequest) (map[s
 			return nil, fmt.Errorf("resolve wheel viewport center: %w", err)
 		}
 	}
-	deltaX := req.DeltaX
-	deltaY := req.DeltaY
-	if deltaX == 0 && deltaY == 0 {
-		deltaX = req.ScrollX
-		deltaY = req.ScrollY
-	}
-	if deltaX == 0 && deltaY == 0 {
-		deltaY = 120
-	}
 	if err := scrollByCoordinateAction(ctx, x, y, deltaX, deltaY, req.Modifiers); err != nil {
 		return nil, err
 	}
 	b.rememberPointerPosition(req.TabID, x, y)
 	return map[string]any{"wheel": true, "x": x, "y": y, "deltaX": deltaX, "deltaY": deltaY}, nil
+}
+
+// wheelDelta resolves a wheel delta from either spelling, deltaX/deltaY or the legacy
+// scrollX/scrollY. An absent delta means one notch down, which is what a bare wheel has
+// always meant. An explicit zero is a different request and cannot share that answer, for
+// the reason a zero scroll cannot: a caller computing a delta reaches zero exactly when it
+// wants no movement. A zero on one axis only is a real scroll on the other.
+func wheelDelta(req ActionRequest) (int, int, error) {
+	deltaX, deltaY := req.DeltaX, req.DeltaY
+	if deltaX == 0 && deltaY == 0 {
+		deltaX, deltaY = req.ScrollX, req.ScrollY
+	}
+	if deltaX != 0 || deltaY != 0 {
+		return deltaX, deltaY, nil
+	}
+	if req.HasDelta || req.HasScroll {
+		return 0, 0, fmt.Errorf("a zero delta is not a scroll: pass a non-zero deltaX/deltaY")
+	}
+	return 0, 120, nil
 }
 
 func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[string]any, error) {

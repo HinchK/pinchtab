@@ -88,8 +88,11 @@ type ActionRequest struct {
 	// mouse-wheel actions. ScrollX/ScrollY remain for backward compatibility.
 	DeltaX int `json:"deltaX,omitempty"`
 	DeltaY int `json:"deltaY,omitempty"`
-	DragX  int `json:"dragX"`
-	DragY  int `json:"dragY"`
+	// HasDelta is the DeltaX/DeltaY counterpart of HasScroll: a bare wheel means one
+	// notch down, an explicit zero means no movement, and both leave the fields at 0.
+	HasDelta bool `json:"hasDelta,omitempty"`
+	DragX    int  `json:"dragX"`
+	DragY    int  `json:"dragY"`
 
 	// A drag's destination. ToSelector takes the same unified selector vocabulary as
 	// Selector and the handler resolves it to ToNodeID; HasToXY separates an absent
@@ -166,11 +169,13 @@ func (r *ActionRequest) UnmarshalJSON(data []byte) error {
 	r.HasScroll = r.HasScroll || hasJSONKey(raw, "scrollX") || hasJSONKey(raw, "scrollY")
 	r.HasText = r.HasText || hasJSONKey(raw, "text") || hasJSONKey(raw, "value")
 	if hasJSONKey(raw, "deltaX") {
+		r.HasDelta = true
 		if err := json.Unmarshal(raw["deltaX"], &r.DeltaX); err != nil {
 			return err
 		}
 	}
 	if hasJSONKey(raw, "deltaY") {
+		r.HasDelta = true
 		if err := json.Unmarshal(raw["deltaY"], &r.DeltaY); err != nil {
 			return err
 		}
