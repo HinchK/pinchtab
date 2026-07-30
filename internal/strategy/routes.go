@@ -7,28 +7,20 @@ import (
 	"github.com/pinchtab/pinchtab/internal/routes"
 )
 
-// capabilitySetting returns the config key and disabled code for a capability.
+// capabilitySetting returns the label, config key and disabled code a refused route
+// answers with, from routes.Meta — the one owner. This front previously restated the whole
+// table, which is how the same route came to answer two different codes depending on which
+// front a client reached; the handler layer reads Meta, so this must too.
+//
+// The fallback only covers a capability the catalogue gates without describing, which
+// CapabilityEndpoints cannot currently produce. It is deliberately not the old synthesis:
+// that derived "security.allow"+cap and cap+"_disabled", which is wrong for every
+// camelCase capability — the reason each one needed an explicit case in the first place.
 func capabilitySetting(cap routes.Capability) (feature, setting, code string) {
-	switch cap {
-	case routes.CapEvaluate:
-		return "evaluate", "security.allowEvaluate", "evaluate_disabled"
-	case routes.CapMacro:
-		return "macro", "security.allowMacro", "macro_disabled"
-	case routes.CapScreencast:
-		return "screencast", "security.allowScreencast", "screencast_disabled"
-	case routes.CapDownload:
-		return "download", "security.allowDownload", "download_disabled"
-	case routes.CapCookies:
-		return "cookies", "security.allowCookies", "cookies_disabled"
-	case routes.CapUpload:
-		return "upload", "security.allowUpload", "upload_disabled"
-	case routes.CapStateExport:
-		return "stateExport", "security.allowStateExport", "state_export_disabled"
-	case routes.CapNetworkIntercept:
-		return "networkIntercept", "security.allowNetworkIntercept", "network_intercept_disabled"
-	default:
-		return string(cap), "security.allow" + string(cap), string(cap) + "_disabled"
+	if meta, ok := routes.Meta(cap); ok {
+		return meta.Label, meta.Setting, meta.DisabledCode
 	}
+	return string(cap), "", ""
 }
 
 // RegisterShorthandRoutes registers all shorthand proxy routes on the mux,
