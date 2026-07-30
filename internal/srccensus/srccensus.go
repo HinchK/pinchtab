@@ -205,7 +205,10 @@ func tree(t testing.TB, root string, minFiles int, kind string, include func(pat
 		t.Fatalf("cannot walk %s, so this census would check nothing: %v", abs, walkErr)
 	}
 	if len(files) < minFiles {
-		t.Fatalf("walked %d non-test files under %s, want at least %d; the census matched almost nothing and would pass vacuously", len(files), abs, minFiles)
+		// The class comes from the caller: a walk that enumerated the wrong one otherwise
+		// reads as a walk that found too little, which sends the reader to the floor value
+		// instead of to the file predicate.
+		t.Fatalf("walked %d %s files under %s, want at least %d; the census matched almost nothing and would pass vacuously", len(files), kind, abs, minFiles)
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
 	return files

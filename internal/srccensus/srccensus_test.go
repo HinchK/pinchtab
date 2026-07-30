@@ -373,6 +373,7 @@ func TestTreeFailsBelowItsFileFloor(t *testing.T) {
 			t.Errorf("Fatalf = %q, want it to mention %q", got, want)
 		}
 	}
+	assertFloorNamesOnly(t, got, "non-test", "test")
 }
 
 // The file contents are what every module-wide census actually reads, so a walk returning
@@ -428,9 +429,43 @@ func TestTestTreeFloorNamesTheFileClassItCounted(t *testing.T) {
 
 	got := mustFatal(t, func(tb testing.TB) { TestTree(tb, root, 5) })
 
-	if !strings.Contains(got, "test files") {
-		t.Errorf("floor failure said %q, want it to name the file class counted", got)
+	assertFloorNamesOnly(t, got, "test", "non-test")
+}
+
+// "test" is a substring of "non-test", so Contains cannot separate the only two values this
+// property has: the shipped assertion was Contains("test files") against a message reading
+// "non-test files", and it was green against the very answer it existed to refuse. Pinning
+// the class by EQUALITY on the word before " files" is what cannot be satisfied by the
+// wrong one; the absence check is kept as its own assertion because it names the failure.
+func assertFloorNamesOnly(t *testing.T, message, want, other string) {
+	t.Helper()
+
+	class, ok := floorFileClass(message)
+	if !ok {
+		t.Fatalf("floor message %q does not name a file class at all, so a walk of the wrong class cannot be told from one that found too little", message)
 	}
+	if class != want {
+		t.Errorf("floor counted the %q class but the message says %q; that misreports which predicate ran", want, class)
+	}
+	if want == "test" && strings.Contains(message, other) {
+		t.Errorf("floor message %q contains %q, so it reports the other class: %s", message, other, message)
+	}
+}
+
+// floorFileClass extracts the class word the floor message names — the token before
+// " files" — so the assertion is equality rather than a substring test.
+func floorFileClass(message string) (string, bool) {
+	const marker = " files "
+	at := strings.Index(message, marker)
+	if at < 0 {
+		return "", false
+	}
+	head := message[:at]
+	space := strings.LastIndexByte(head, ' ')
+	if space < 0 {
+		return "", false
+	}
+	return head[space+1:], true
 }
 
 // The census over the census files. Four module-wide guards hand-rolled their walks with
