@@ -149,9 +149,10 @@ var ambientGlobalsExceptions = map[string]string{}
 
 // canonicalViewLine is the preamble as it stands in the tree. Its two counts below
 // answer two different questions that one counter used to conflate:
-//   - in-scope but unreached: a declaration this census does not recognise. Now a
-//     cheap sanity assertion rather than a safety net, because an ast.Inspect walk
-//     sees every literal in the file.
+//   - in-scope but unreached: a declaration this census does not recognise. It
+//     detects a blind spot only for this one marker, so it is not the guarantee that
+//     the walk reaches every literal — TestTheCensusWalkReachesEveryRawLiteralInTheModule
+//     is, and it asserts the property this comment used to claim by construction.
 //   - present in a file that is out of scope: the file shadows correctly but no
 //     longer matches isolatedHandleTokens, so its declarations stopped being
 //     scanned. That is a scope problem with a different remedy, and reporting it as
@@ -226,16 +227,19 @@ func identRawLiteral(expr ast.Expr) (string, bool) {
 // and resolved named fragments. The fragment that reads a global is routinely not
 // the fragment that opens the function — the xpath arm of the selector resolver
 // lives in a tail fragment — so a chain has to be assembled, not sampled.
-func appendChain(fset *token.FileSet, lit *jsLiteral, expr ast.Expr) {
+//
+// It returns the operands it could NOT absorb — a call, an index, a conversion — in
+// source order. The caller consumes the chain whole and must walk those itself:
+// they can hold raw literals of their own, and a chain consumed without them is a
+// literal recorded nowhere.
+func appendChain(fset *token.FileSet, lit *jsLiteral, expr ast.Expr) []ast.Expr {
 	if bin, ok := expr.(*ast.BinaryExpr); ok && bin.Op == token.ADD {
-		appendChain(fset, lit, bin.X)
-		appendChain(fset, lit, bin.Y)
-		return
+		return append(appendChain(fset, lit, bin.X), appendChain(fset, lit, bin.Y)...)
 	}
 	text, ok := rawLiteralText(expr)
 	if !ok {
 		if text, ok = identRawLiteral(expr); !ok {
-			return
+			return []ast.Expr{expr}
 		}
 	}
 	line := fset.Position(expr.Pos()).Line
@@ -244,6 +248,7 @@ func appendChain(fset *token.FileSet, lit *jsLiteral, expr ast.Expr) {
 	}
 	lit.segments = append(lit.segments, jsSegment{offset: len(lit.text), line: line})
 	lit.text += text
+	return nil
 }
 
 // chainHasRawLiteral reports whether a +-chain contains a raw literal at all, so a
@@ -259,32 +264,45 @@ func chainHasRawLiteral(expr ast.Expr) bool {
 // goRawLiterals returns every raw string literal in a Go file, splicing
 // +-concatenated ones — named fragments included, resolved in their own scope —
 // into the single string the browser is actually handed.
-//
-// go/parser answers this by construction: literals are *ast.BasicLit, chains are
-// *ast.BinaryExpr, and lines come from the FileSet. That is why the blind-spot
-// cross-check below is only a sanity assertion now — an ast.Inspect walk sees
-// every literal in the file, so "assembled in a shape the scan cannot see" is no
-// longer a reachable failure.
 func goRawLiterals(name, src string) ([]jsLiteral, error) {
+	literals, _, err := goRawLiteralsWithReach(name, src)
+	return literals, err
+}
+
+// goRawLiteralsWithReach also reports the byte offset of every raw literal the walk
+// took in, which is what TestTheCensusWalkReachesEveryRawLiteralInTheModule compares
+// against a naive every-literal census. Offsets rather than counts, so a literal
+// swapped for another still reads as missed, and byte offsets rather than token.Pos
+// so two separate parses of the same source are comparable.
+func goRawLiteralsWithReach(name, src string) ([]jsLiteral, map[int]bool, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, name, src, parser.ParseComments)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	var literals []jsLiteral
-	ast.Inspect(file, func(n ast.Node) bool {
+	reached := map[int]bool{}
+	var walk func(n ast.Node) bool
+	walk = func(n ast.Node) bool {
 		switch expr := n.(type) {
 		case *ast.BinaryExpr:
 			if expr.Op != token.ADD || !chainHasRawLiteral(expr) {
 				return true
 			}
 			var lit jsLiteral
-			appendChain(fset, &lit, expr)
+			skipped := appendChain(fset, &lit, expr)
+			markRawLiteralsReached(fset, reached, expr, skipped)
 			if lit.text != "" {
 				literals = append(literals, lit)
 			}
-			// The chain is consumed whole; descending would record its parts again.
+			// The chain is consumed whole, so its own parts must not be recorded again
+			// — but an operand the chain could not absorb is walked explicitly. Letting
+			// this return stand for those too is what made a raw literal inside a call
+			// operand invisible to the census.
+			for _, operand := range skipped {
+				ast.Inspect(operand, walk)
+			}
 			return false
 		case *ast.BasicLit:
 			text, ok := rawLiteralText(expr)
@@ -292,6 +310,7 @@ func goRawLiterals(name, src string) ([]jsLiteral, error) {
 				return false
 			}
 			line := fset.Position(expr.Pos()).Line
+			reached[fset.Position(expr.Pos()).Offset] = true
 			literals = append(literals, jsLiteral{
 				text:      text,
 				startLine: line,
@@ -300,8 +319,34 @@ func goRawLiterals(name, src string) ([]jsLiteral, error) {
 			return false
 		}
 		return true
-	})
-	return literals, nil
+	}
+	ast.Inspect(file, walk)
+	return literals, reached, nil
+}
+
+// markRawLiteralsReached records the raw literals a consumed chain absorbed: every one
+// under the chain except those inside an operand the chain skipped, which is walked
+// separately and records itself.
+func markRawLiteralsReached(fset *token.FileSet, reached map[int]bool, chain ast.Expr, skipped []ast.Expr) {
+	skippedNodes := map[ast.Expr]bool{}
+	for _, operand := range skipped {
+		skippedNodes[operand] = true
+	}
+	var mark func(expr ast.Expr)
+	mark = func(expr ast.Expr) {
+		if skippedNodes[expr] {
+			return
+		}
+		if bin, ok := expr.(*ast.BinaryExpr); ok && bin.Op == token.ADD {
+			mark(bin.X)
+			mark(bin.Y)
+			return
+		}
+		if _, ok := rawLiteralText(expr); ok {
+			reached[fset.Position(expr.Pos()).Offset] = true
+		}
+	}
+	mark(chain)
 }
 
 // declarations returns the literals that are Runtime.callFunctionOn function
@@ -453,6 +498,49 @@ func censusSanityFailures(c censusScope) []string {
 	return failures
 }
 
+// ambientRead is one ambient global mentioned by one callFunctionOn declaration,
+// shadowed or not: the counters need the shadowed ones and the failures need the rest.
+type ambientRead struct {
+	file      string
+	line      int
+	ambient   string
+	offending string
+	forms     []shadowForm
+	shadowed  bool
+}
+
+func ambientReads(name string, decls []jsLiteral) []ambientRead {
+	var reads []ambientRead
+	for _, decl := range decls {
+		body := jsCode(decl.text)
+		for _, ambient := range sortedKeys(ambientShadows) {
+			at := ambientMention(body, ambient)
+			if at < 0 {
+				continue
+			}
+			reads = append(reads, ambientRead{
+				file:      name,
+				line:      decl.lineAt(at),
+				ambient:   ambient,
+				offending: lineAtOffset(body, at),
+				forms:     ambientShadows[ambient],
+				shadowed:  hasShadow(body, ambientShadows[ambient]),
+			})
+		}
+	}
+	return reads
+}
+
+// ambientViolationFailure is the wording of the census's own failure, a function so a
+// test can pin what the reader is told — the same reason censusSanityFailures is one.
+func ambientViolationFailure(read ambientRead) string {
+	return fmt.Sprintf("%s:%d reads the ambient %s inside a callFunctionOn declaration without deriving it from the node:\n  %s\n"+
+		"An isolated handle runs in the TOP frame's world, so the ambient %s is not the node's — frame offsets vanish and hit tests run on the wrong document.\n"+
+		"Add one of:\n  %s",
+		read.file, read.line, read.ambient, read.offending, read.ambient,
+		strings.Join(formLines(read.forms), "\n  "))
+}
+
 func sortedKeys[V any](m map[string]V) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {
@@ -497,32 +585,22 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 			t.Errorf("%s: parse: %v", name, parseErr)
 			continue
 		}
-		for _, decl := range callFunctionDeclarations(literals) {
+		decls := callFunctionDeclarations(literals)
+		for _, decl := range decls {
 			scope.checkedDecls++
-			body := jsCode(decl.text)
-			scope.canonicalInScope += strings.Count(body, canonicalViewLine)
-			for ambient, forms := range ambientShadows {
-				at := ambientMention(body, ambient)
-				if at < 0 {
-					continue
-				}
-				scope.exercised[ambient]++
-				if hasShadow(body, forms) {
-					continue
-				}
-				scope.violations[name] = true
-				offending := lineAtOffset(body, at)
-				line := decl.lineAt(at)
-				if why, excused := ambientGlobalsExceptions[name]; excused {
-					t.Logf("%s:%d reads ambient %s under a recorded exception (%s)", name, line, ambient, why)
-					continue
-				}
-				t.Errorf("%s:%d reads the ambient %s inside a callFunctionOn declaration without deriving it from the node:\n  %s\n"+
-					"An isolated handle runs in the TOP frame's world, so the ambient %s is not the node's — frame offsets vanish and hit tests run on the wrong document.\n"+
-					"Add one of:\n  %s",
-					name, line, ambient, offending, ambient,
-					strings.Join(formLines(forms), "\n  "))
+			scope.canonicalInScope += strings.Count(jsCode(decl.text), canonicalViewLine)
+		}
+		for _, read := range ambientReads(name, decls) {
+			scope.exercised[read.ambient]++
+			if read.shadowed {
+				continue
 			}
+			scope.violations[name] = true
+			if why, excused := ambientGlobalsExceptions[name]; excused {
+				t.Logf("%s:%d reads ambient %s under a recorded exception (%s)", name, read.line, read.ambient, why)
+				continue
+			}
+			t.Error(ambientViolationFailure(read))
 		}
 	}
 
@@ -624,4 +702,123 @@ func TestScopeLossAndBlindSpotAreReportedSeparately(t *testing.T) {
 	if !strings.Contains(joined, "isolatedHandleTokens") || !strings.Contains(joined, "shape the scan cannot see") {
 		t.Errorf("one condition masked the other:\n  %s", joined)
 	}
+}
+
+// The probe from the card, as source rather than as an edit to a real file: a chain
+// whose own operands are raw literals, with a THIRD raw literal inside a call operand
+// the chain cannot absorb. The walk used to consume the chain and return false, so the
+// nested literal — a callFunctionOn declaration in its own right, reading an
+// unshadowed ambient window — was recorded nowhere and the census stayed green.
+const nestedDeclarationProbe = "package p\n\n" +
+	"import \"strings\"\n\n" +
+	"var probeWrapped = `function(){` + strings.TrimSpace(`function(){ return window.innerWidth; }`) + `}`\n"
+
+func TestTheWalkReachesARawLiteralInsideAnUnabsorbedChainOperand(t *testing.T) {
+	literals, err := goRawLiterals("probe.go", nestedDeclarationProbe)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, lit := range literals {
+		if strings.Contains(lit.text, "window.innerWidth") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the walk recorded %d literal(s), none holding the literal inside the call operand: a chain consumed whole hides every literal its operands were not able to absorb, and this census fails open when a literal is recorded nowhere", len(literals))
+	}
+}
+
+func TestTheNestedDeclarationProbeIsReportedWithItsFileLineAndAmbientRead(t *testing.T) {
+	literals, err := goRawLiterals("internal/cdptk/screenshot.go", nestedDeclarationProbe)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var failures []string
+	for _, read := range ambientReads("internal/cdptk/screenshot.go", callFunctionDeclarations(literals)) {
+		if read.shadowed {
+			continue
+		}
+		failures = append(failures, ambientViolationFailure(read))
+	}
+
+	if len(failures) != 1 {
+		t.Fatalf("the probe produced %d violation(s), want exactly one:\n  %s", len(failures), strings.Join(failures, "\n  "))
+	}
+	// Line 5 is where the nested literal sits in the probe source. Pinning the line and
+	// not just the file is the difference between a report a reader can act on and one
+	// that sends them to audit a whole file.
+	for _, want := range []string{"internal/cdptk/screenshot.go:5", "window", "window.innerWidth"} {
+		if !strings.Contains(failures[0], want) {
+			t.Errorf("the failure does not name %q, so the reader cannot find the read it describes:\n  %s", want, failures[0])
+		}
+	}
+}
+
+// The card fixes ONE operand shape. This fixes the property, whatever shape the next
+// operand takes: every raw literal in every module file must be reached by the census
+// walk. Without it the fail-closed guarantee is prose — and prose is what let a walk
+// that silently stopped descending pass for a whole release.
+func TestTheCensusWalkReachesEveryRawLiteralInTheModule(t *testing.T) {
+	total := 0
+	for _, file := range srccensus.Tree(t, "../..", moduleGoFileFloor) {
+		_, reached, err := goRawLiteralsWithReach(file.Name, file.Text)
+		if err != nil {
+			t.Errorf("%s: parse: %v", file.Name, err)
+			continue
+		}
+		every, err := everyRawLiteralOffset(file.Name, file.Text)
+		if err != nil {
+			t.Errorf("%s: parse: %v", file.Name, err)
+			continue
+		}
+		total += len(every)
+
+		for _, offset := range sortedInts(every) {
+			if reached[offset] {
+				continue
+			}
+			t.Errorf("%s: the raw literal at byte offset %d is in the file but the census walk never took it in, so JS assembled there is unguarded; the walk consumed some enclosing expression whole without descending into the part holding this literal", file.Name, offset)
+		}
+	}
+
+	if total < 2000 {
+		t.Fatalf("the naive census found only %d raw literals in the whole module; it has stopped seeing the tree and this sweep would pass vacuously", total)
+	}
+	t.Logf("walk reach: %d raw literals in the module, 0 missed", total)
+}
+
+// everyRawLiteralOffset is the naive oracle: every raw literal in the file, with no
+// notion of chains. Independent of the census walk on purpose — an oracle sharing the
+// walk's descent decisions could not detect a wrong one.
+func everyRawLiteralOffset(name, src string) (map[int]bool, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, name, src, parser.ParseComments)
+	if err != nil {
+		return nil, err
+	}
+
+	offsets := map[int]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok {
+			return true
+		}
+		if _, raw := rawLiteralText(lit); raw {
+			offsets[fset.Position(lit.Pos()).Offset] = true
+		}
+		return true
+	})
+	return offsets, nil
+}
+
+func sortedInts(m map[int]bool) []int {
+	out := make([]int, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Ints(out)
+	return out
 }
