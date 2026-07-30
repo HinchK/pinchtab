@@ -20,7 +20,43 @@ const (
 	maxFPS            = 30
 	maxQuality        = 100
 	maxScale          = 1.0
+	// firstFrameGrace is the slack added to one frame interval before a stop with no
+	// frames is called a failure. The tick and the capture are not the same instant —
+	// the capture is a round trip — so waiting the bare interval races the frame it is
+	// waiting for.
+	firstFrameGrace = 50 * time.Millisecond
 )
+
+// frameInterval is how long one frame takes at a given rate, and it is the one owner of
+// that arithmetic: the capture loop's ticker and stop()'s first-frame wait must agree, or
+// stop resumes discarding recordings that were about to produce their first frame.
+func frameInterval(fps int) time.Duration {
+	if fps <= 0 {
+		return 0
+	}
+	return time.Second / time.Duration(fps)
+}
+
+// noFramesError says what went wrong and what to do about it, in the house style the
+// ffmpeg refusal set. The bare "no frames captured" it replaces named the symptom the
+// encoder saw rather than a cause the caller could act on, and the recording was already
+// gone by the time they read it. Every arm names the elapsed time, the rate, and what one
+// frame costs at that rate, because those three are what decide the next attempt.
+func noFramesError(elapsed time.Duration, fps int, stopReason string) error {
+	interval := frameInterval(fps)
+	elapsed = elapsed.Round(time.Millisecond)
+	switch {
+	case stopReason != "":
+		return fmt.Errorf("no frames captured: the recording ran %s at %d fps and ended early (%s) before its first frame, which needs %s at that rate",
+			elapsed, fps, stopReason, interval)
+	case elapsed < interval:
+		return fmt.Errorf("no frames captured: the recording ran %s at %d fps and stopped before its first frame, which needs %s at that rate; record for longer or raise the frame rate",
+			elapsed, fps, interval)
+	default:
+		return fmt.Errorf("no frames captured: the recording ran %s at %d fps, longer than the %s one frame needs, so the capture itself produced nothing; check the tab is still open and rendering",
+			elapsed, fps, interval)
+	}
+}
 
 // maxGIFEncodeBytes bounds the total in-memory paletted GIF frame data. It is the
 // real GIF safeguard now that --scale is honored at full resolution: oversized
@@ -163,13 +199,32 @@ func (rec *recorder) stop(callerOwner, outputPath string) (RecordStopResult, err
 	}
 	rec.state = stateStopping
 	rec.outputPath = outputPath
-	close(rec.stopCh)
+	stopCh := rec.stopCh
 	doneCh := rec.doneCh
 	format := rec.format
 	tmpDir := rec.tmpDir
 	fps := rec.fps
 	scale := rec.scale
+	startTime := rec.startTime
+	frames := rec.frameNum
 	rec.mu.Unlock()
+
+	// Stopping before the first frame is due is not a failure, it is a recording that
+	// has not reached its first tick — which is exactly what "start, one fast action,
+	// stop" does. Waiting out the remainder of one frame interval turns the commonest
+	// scripted shape from a discarded recording into a one-frame one. Nothing is waited
+	// for once a frame exists, so longer recordings stop as immediately as before.
+	if frames == 0 {
+		if remaining := frameInterval(fps) + firstFrameGrace - time.Since(startTime); remaining > 0 {
+			timer := time.NewTimer(remaining)
+			select {
+			case <-doneCh:
+			case <-timer.C:
+			}
+			timer.Stop()
+		}
+	}
+	close(stopCh)
 
 	<-doneCh
 
@@ -179,6 +234,7 @@ func (rec *recorder) stop(callerOwner, outputPath string) (RecordStopResult, err
 	// snapshot under-reports (and can read 0 after a frame was written).
 	rec.mu.Lock()
 	frameNum := rec.frameNum
+	stopReason := rec.stopReason
 	rec.mu.Unlock()
 
 	result := RecordStopResult{
@@ -193,7 +249,7 @@ func (rec *recorder) stop(callerOwner, outputPath string) (RecordStopResult, err
 		rec.cleanup()
 		rec.state = stateIdle
 		rec.mu.Unlock()
-		return result, fmt.Errorf("no frames captured")
+		return result, noFramesError(time.Since(startTime), fps, stopReason)
 	}
 
 	if outputPath == "" {

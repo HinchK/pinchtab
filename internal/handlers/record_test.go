@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"runtime"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -89,8 +90,16 @@ func TestHandleRecordStart_Success(t *testing.T) {
 	}
 }
 
+// captureNothing is the stub for fixtures that assert state or ownership rather than
+// frames. stop() now waits out the first frame interval when no frame has arrived, so the
+// capture loop reaches its first tick in these tests where it previously never did — and a
+// nil captureFrame is called there.
+func captureNothing(context.Context, int) ([]byte, error) {
+	return nil, fmt.Errorf("no capture in this test")
+}
+
 func TestRecorderStart_AlreadyRecording(t *testing.T) {
-	rec := &recorder{}
+	rec := &recorder{captureFrame: captureNothing}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -149,7 +158,7 @@ func TestHandleRecordStatus_Inactive(t *testing.T) {
 }
 
 func TestRecorderStatus_Active(t *testing.T) {
-	rec := &recorder{}
+	rec := &recorder{captureFrame: captureNothing}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -203,7 +212,7 @@ func TestHandleRecordStart_ClampsInputs(t *testing.T) {
 }
 
 func TestRecorderStop_OwnerMismatch(t *testing.T) {
-	rec := &recorder{}
+	rec := &recorder{captureFrame: captureNothing}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -220,7 +229,7 @@ func TestRecorderStop_OwnerMismatch(t *testing.T) {
 }
 
 func TestRecorderStop_OwnerMatch(t *testing.T) {
-	rec := &recorder{}
+	rec := &recorder{captureFrame: captureNothing}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -228,10 +237,113 @@ func TestRecorderStop_OwnerMatch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Gets past owner check; fails with "no frames captured" which is expected
+	// Gets past the owner check; the capture never succeeds, so the frameless refusal
+	// is expected.
 	_, err := rec.stop("agent-1", "")
-	if err == nil || err.Error() != "no frames captured" {
-		t.Errorf("expected 'no frames captured' error, got %v", err)
+	if err == nil || !strings.HasPrefix(err.Error(), "no frames captured") {
+		t.Errorf("expected the frameless refusal, got %v", err)
+	}
+}
+
+// The defect: a stop issued straight after start refused with "no frames captured" and
+// DISCARDED the recording, because the first tick had not arrived yet. That is the shape
+// every script has — start, one fast action, stop — so the commonest use of the recorder
+// was the one that lost its output. The capture here always succeeds, so the only thing
+// that can produce zero frames is stopping before the first tick.
+func TestRecorderStopImmediatelyAfterStartWaitsForTheFirstFrame(t *testing.T) {
+	rec := &recorder{captureFrame: func(context.Context, int) ([]byte, error) {
+		return []byte("jpeg-bytes"), nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := rec.start(ctx, "tab1", "", "gif", 5, 80, 1.0); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := rec.stop("", "")
+
+	if err != nil {
+		t.Fatalf("a stop straight after start was refused: %v", err)
+	}
+	if res.Frames < 1 {
+		t.Fatalf("frames = %d; the recording was discarded for not having reached its first tick", res.Frames)
+	}
+}
+
+// A recording that already has a frame must not pay the wait — the fix is for the case
+// before the first tick, not a delay on every stop.
+func TestRecorderStopDoesNotWaitOnceAFrameExists(t *testing.T) {
+	captured := make(chan struct{}, 1)
+	rec := &recorder{captureFrame: func(context.Context, int) ([]byte, error) {
+		select {
+		case captured <- struct{}{}:
+		default:
+		}
+		return []byte("jpeg-bytes"), nil
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 1 fps, so the wait this test must not observe would be a full second.
+	if err := rec.start(ctx, "tab1", "", "gif", 1, 80, 1.0); err != nil {
+		t.Fatal(err)
+	}
+	<-captured
+
+	start := time.Now()
+	if _, err := rec.stop("", ""); err != nil {
+		t.Fatalf("stop with a frame in hand was refused: %v", err)
+	}
+	if waited := time.Since(start); waited > frameInterval(1)/2 {
+		t.Errorf("stop took %s with a frame already captured, so it waited for a first frame it already had", waited)
+	}
+}
+
+// The refusal has to survive: every arm names the elapsed time, the rate, and what one
+// frame costs at that rate, because those three decide the next attempt. Driven through
+// stop() as well as the table, since a table alone cannot show the handler passes the
+// recording's own fps rather than a constant.
+func TestNoFramesRefusalNamesTheElapsedTimeTheRateAndTheFrameCost(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		elapsed    time.Duration
+		fps        int
+		stopReason string
+		wantSays   []string
+	}{
+		{name: "stopped before the first frame", elapsed: 12 * time.Millisecond, fps: 5, wantSays: []string{"12ms", "5 fps", "200ms", "record for longer"}},
+		{name: "ran long enough and captured nothing", elapsed: 3 * time.Second, fps: 10, wantSays: []string{"3s", "10 fps", "100ms", "tab is still open"}},
+		{name: "the loop ended early", elapsed: 40 * time.Millisecond, fps: 5, stopReason: "tab_closed", wantSays: []string{"40ms", "5 fps", "200ms", "tab_closed"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			message := noFramesError(tc.elapsed, tc.fps, tc.stopReason).Error()
+			for _, want := range tc.wantSays {
+				if !strings.Contains(message, want) {
+					t.Errorf("refusal %q does not name %q", message, want)
+				}
+			}
+		})
+	}
+
+	rec := &recorder{captureFrame: func(context.Context, int) ([]byte, error) {
+		return nil, fmt.Errorf("this capture never succeeds")
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := rec.start(ctx, "tab1", "", "gif", 5, 80, 1.0); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := rec.stop("", "")
+
+	if err == nil {
+		t.Fatal("a recording that captured nothing was accepted")
+	}
+	for _, want := range []string{"5 fps", "200ms"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal %q does not name %q, so it carries a constant rather than this recording's own rate", err.Error(), want)
+		}
 	}
 }
 
@@ -242,7 +354,7 @@ func TestRecorderStop_OwnerMatch(t *testing.T) {
 // not yet incremented frameNum. The fix reads frameNum only after <-doneCh, so
 // the in-flight frame is included; the pre-drain snapshot reported 0.
 func TestRecorderStop_CountsFrameCapturedAfterStopSignal(t *testing.T) {
-	rec := &recorder{}
+	rec := &recorder{captureFrame: captureNothing}
 
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
@@ -303,7 +415,7 @@ func TestRecorderStop_CountsFrameCapturedAfterStopSignal(t *testing.T) {
 }
 
 func TestRecorderStop_NoOwnerCanStopAnonymous(t *testing.T) {
-	rec := &recorder{}
+	rec := &recorder{captureFrame: captureNothing}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -312,8 +424,8 @@ func TestRecorderStop_NoOwnerCanStopAnonymous(t *testing.T) {
 	}
 
 	_, err := rec.stop("any-agent", "")
-	if err == nil || err.Error() != "no frames captured" {
-		t.Errorf("expected 'no frames captured', got %v", err)
+	if err == nil || !strings.HasPrefix(err.Error(), "no frames captured") {
+		t.Errorf("expected the frameless refusal, got %v", err)
 	}
 }
 
@@ -394,7 +506,7 @@ func TestRecorderStateString(t *testing.T) {
 }
 
 func TestRecorderStatus_Aborted(t *testing.T) {
-	rec := &recorder{}
+	rec := &recorder{captureFrame: captureNothing}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	if err := rec.start(ctx, "tab1", "", "gif", 5, 80, 1.0); err != nil {
@@ -418,7 +530,7 @@ func TestRecorderStatus_Aborted(t *testing.T) {
 }
 
 func TestRecorderStatus_IdleAfterStop(t *testing.T) {
-	rec := &recorder{}
+	rec := &recorder{captureFrame: captureNothing}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

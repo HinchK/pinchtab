@@ -15,8 +15,7 @@ func (rec *recorder) captureLoop() {
 	deadline := time.NewTimer(maxRecordDuration)
 	defer deadline.Stop()
 
-	interval := time.Second / time.Duration(rec.fps)
-	ticker := time.NewTicker(interval)
+	ticker := time.NewTicker(frameInterval(rec.fps))
 	defer ticker.Stop()
 
 	var diskBytes atomic.Int64
