@@ -835,3 +835,56 @@ func TestHistoryToolsAreRegistered(t *testing.T) {
 		}
 	}
 }
+
+// browser and snap are only dangerous TOGETHER, which is why each of them having its own
+// test left the combination unguarded: with browser alone there is no second request to
+// mis-route, and with snap alone there is no browser to lose. Set both and the snapshot
+// leg has to carry the routing too — otherwise the navigation moves the named instance
+// and the snapshot comes back from the DEFAULT one, presented as the result of that
+// navigation. The payload is well-formed, so nothing downstream can tell.
+//
+// historyRecorder is reused for pinchtab_navigate rather than duplicated: it keeps every
+// request in order WITH its query, which is the axis this defect lives on. That navigate
+// also sends a body is beside the point here — the assertion is about routing.
+func TestSnapAndBrowserTogetherRouteBothRequestsToTheNamedInstance(t *testing.T) {
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		path string
+	}{
+		{tool: "pinchtab_back", args: map[string]any{}, path: "/back"},
+		{tool: "pinchtab_forward", args: map[string]any{}, path: "/forward"},
+		{tool: "pinchtab_reload", args: map[string]any{}, path: "/reload"},
+		{tool: "pinchtab_navigate", args: map[string]any{"url": "https://example.com"}, path: "/navigate"},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			srv, seen := historyRecorder(t)
+
+			args := map[string]any{"browser": "cloak", "snap": true}
+			for k, v := range tc.args {
+				args[k] = v
+			}
+			result := callTool(t, tc.tool, args, srv)
+			if result.IsError {
+				t.Fatalf("%s failed: %s", tc.tool, resultText(t, result))
+			}
+			if len(*seen) != 2 {
+				t.Fatalf("requests = %d, want the navigation and the snapshot: %+v", len(*seen), *seen)
+			}
+
+			verb, snapshot := (*seen)[0], (*seen)[1]
+			if verb.path != tc.path {
+				t.Fatalf("first request path = %q, want %q", verb.path, tc.path)
+			}
+			if snapshot.path != "/snapshot" {
+				t.Fatalf("second request path = %q, want /snapshot", snapshot.path)
+			}
+			if got := verb.query.Get("browser"); got != "cloak" {
+				t.Errorf("%s went to browser %q, want cloak", tc.path, got)
+			}
+			if got := snapshot.query.Get("browser"); got != "cloak" {
+				t.Errorf("the snapshot went to browser %q while %s went to cloak: the tool would answer with another instance's page as the result of this navigation", got, tc.path)
+			}
+		})
+	}
+}
