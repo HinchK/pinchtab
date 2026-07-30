@@ -9,6 +9,7 @@ import (
 
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/chromedp"
+	bridgecdpops "github.com/pinchtab/pinchtab/internal/bridge/cdpops"
 	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
@@ -296,6 +297,52 @@ func TestDragHoldsTheRequestedButton(t *testing.T) {
 				t.Errorf("button %q %s: page saw buttons=%d during the drag, want %d; the moves must carry the same button as the press", tc.button, form.name, held, tc.wantHeld)
 			}
 		}
+	}
+}
+
+// The layer TestDragHoldsTheRequestedButton cannot reach: it restates three names and the
+// expected codes, so a name added to the vocabulary is invisible to it, and the browserless
+// table test that DOES enumerate the vocabulary stubs the wire. This drives every name the
+// vocabulary advertises through a real browser and asserts the page reads a DISTINCT press
+// button and held mask for each, which is the reading a name dispatched as another name's
+// row cannot produce — without restating any code the vocabulary owns.
+func TestEveryButtonInTheVocabularyReachesThePageAsItsOwnPair(t *testing.T) {
+	names := bridgecdpops.MouseButtons()
+	if len(names) < 3 {
+		t.Fatalf("vocabulary = %v; a distinctness sweep over fewer than the three documented buttons passes vacuously", names)
+	}
+
+	f := newDragFixture(t)
+	seenPress, seenHeld := map[int]string{}, map[int]string{}
+	for _, name := range names {
+		f.reload(t)
+		if _, err := f.b.actionDrag(f.ctx, ActionRequest{Kind: ActionDrag, Selector: "#mouseSrc", ToSelector: "#mouseDst", Button: name}); err != nil {
+			t.Fatalf("button %q: %v", name, err)
+		}
+
+		pressed, held := f.buttonRecord(t)
+		if pressed < 0 {
+			t.Errorf("button %q: the page saw no mousedown at all", name)
+			continue
+		}
+		if held <= 0 {
+			t.Errorf("button %q: the page read buttons=%d during the moves, so the drag moved with nothing held", name, held)
+			continue
+		}
+		if held&(held-1) != 0 {
+			t.Errorf("button %q: the page read buttons=%d, which is more than one bit — the moves held a different button than the press", name, held)
+		}
+
+		// Two separate distinctness maps, not one over the pair: a press that keeps its own
+		// code while every move holds the same mask is exactly the split this card removed,
+		// and a combined key would read as distinct and hide it.
+		if other, clash := seenPress[pressed]; clash {
+			t.Errorf("button %q pressed as button=%d, the same code the page read for %q — one was dispatched as the other", name, pressed, other)
+		}
+		if other, clash := seenHeld[held]; clash {
+			t.Errorf("button %q moved with buttons=%d, the same mask the page read for %q — the press said %q while the moves held %q's button", name, held, other, name, other)
+		}
+		seenPress[pressed], seenHeld[held] = name, name
 	}
 }
 
