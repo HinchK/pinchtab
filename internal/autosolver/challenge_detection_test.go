@@ -22,8 +22,8 @@ var cloudflareTriggerTitles = []string{
 // block revived after the canonical call can set it by assignment instead, and
 // that shape is invisible twice over: unreachable, so no behavioural test sees
 // it, and colon-free, so a literal search does not either. Assignment is checked
-// only under the Intent-owning tree — internal/solver's Result has its own
-// ChallengeType field, and internal/bridge legitimately assigns THAT one.
+// only under the Intent-owning tree, so a same-named field on another package's
+// own result type cannot be mistaken for this one.
 func assignsIntentChallengeType(path, src string) bool {
 	if !strings.Contains(path, "internal/autosolver/") {
 		return false

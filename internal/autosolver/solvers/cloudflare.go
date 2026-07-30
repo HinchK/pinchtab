@@ -6,6 +6,7 @@ package solvers
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -42,6 +43,17 @@ func (s *Cloudflare) Solve(ctx context.Context, page autosolver.Page, executor a
 		return result, fmt.Errorf("detect challenge type: %w", err)
 	}
 
+	// Re-detect once after a pause when the first read finds no type. Cloudflare
+	// writes cType into the document after the interstitial paints, so an early
+	// read sees nothing and a non-interactive challenge would be driven down the
+	// clicking path instead of simply being waited out.
+	if challengeType == "" {
+		time.Sleep(cfRedetectDelay)
+		if retried, retryErr := detectCFChallengeType(ctx, executor); retryErr == nil {
+			challengeType = retried
+		}
+	}
+
 	// Non-interactive challenges resolve automatically.
 	if challengeType == "non-interactive" {
 		return waitForCFResolve(ctx, page, result, 15*time.Second)
@@ -64,9 +76,11 @@ func (s *Cloudflare) Solve(ctx context.Context, page autosolver.Page, executor a
 			continue
 		}
 
-		// Click the checkbox area (left portion of the widget).
-		checkboxX := box.x + box.width*0.09
-		checkboxY := box.y + box.height*0.40
+		// Click the checkbox area (left portion of the widget), jittered: an
+		// exact-centre click on every attempt is a fingerprint, and this solver
+		// exists to get past fingerprinting.
+		checkboxX := box.x + box.width*0.09 + cfClickJitter()
+		checkboxY := box.y + box.height*0.40 + cfClickJitter()
 
 		if err := executor.Click(ctx, checkboxX, checkboxY); err != nil {
 			return result, fmt.Errorf("click turnstile: %w", err)
@@ -87,6 +101,20 @@ func (s *Cloudflare) Solve(ctx context.Context, page autosolver.Page, executor a
 
 type boundingBox struct {
 	x, y, width, height float64
+}
+
+const (
+	// cfRedetectDelay is how long to wait before re-reading the challenge type.
+	cfRedetectDelay = 2 * time.Second
+	// cfClickJitterPx is the full width of the click-position jitter window.
+	cfClickJitterPx = 8
+)
+
+var cfRand = rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404 -- input humanisation, not cryptography.
+
+// cfClickJitter returns a signed offset within half the jitter window either way.
+func cfClickJitter() float64 {
+	return (cfRand.Float64() - 0.5) * cfClickJitterPx
 }
 
 func isCFChallenge(title string) bool {
