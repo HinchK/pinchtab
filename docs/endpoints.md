@@ -190,6 +190,13 @@ Action targeting fields:
 field `select` reads. A `fill` carrying neither is rejected — send `"text": ""` to clear a
 field, so clearing stays distinct from a request whose text never arrived.
 
+`select` matches the `<option value="...">` attribute first and the option's visible text
+second, so either spelling works. It draws the same absent-versus-supplied distinction as
+`fill`: send `"value": ""` to select an `<option value="">` placeholder and reset the
+dropdown, and a `select` carrying neither key is rejected. Every surface expresses it —
+`POST /action` with `"value": ""`, `pinchtab select <ref> ""`, and the `pinchtab_select` MCP
+tool with `value: ""`.
+
 `humanize` is a per-action override for input style. When omitted, actions use `instanceDefaults.humanize`, which defaults to `false`. Use `kind:"click"` or `kind:"type"` with `humanize:true` when a page needs the slower human-like pointer or typing path.
 
 Pointer fallback behavior:

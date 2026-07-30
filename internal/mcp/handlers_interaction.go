@@ -22,6 +22,33 @@ var humanizeAction = map[string]bool{"click": true, "hover": true}
 // forwarded an inert, undiscoverable and unvalidated pair, hasXY included.
 var xyAction = map[string]bool{"click": true, "hover": true, "scroll": true}
 
+// suppliedStringArg resolves an argument whose PRESENCE, not emptiness, says it was asked
+// for, and refuses with a message the caller can act on. Both refusals exist because the
+// collapsing accessor answers "missing" to two requests that are not missing: one that
+// supplied the empty string on purpose, and one that supplied the argument under a type the
+// library never enforced. An agent told to send what it just sent has nowhere to go.
+//
+// emptyMeans says what the empty string DOES on this verb; a verb where it means nothing
+// passes "" and the refusals leave the clause out.
+func suppliedStringArg(r mcp.CallToolRequest, verb, arg, emptyMeans string, keys ...string) (string, *mcp.CallToolResult) {
+	value, supplied, wrongType := firstSuppliedString(r, keys...)
+	if supplied {
+		return value, nil
+	}
+	if wrongType != "" {
+		message := fmt.Sprintf("%s's '%s' must be a string, got %s; quote it", verb, arg, wrongType)
+		if emptyMeans != "" {
+			message += ", or " + emptyMeans
+		}
+		return "", mcp.NewToolResultError(message)
+	}
+	message := fmt.Sprintf("%s needs a '%s' argument", verb, arg)
+	if emptyMeans != "" {
+		message += "; " + emptyMeans
+	}
+	return "", mcp.NewToolResultError(message)
+}
+
 func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		payload := map[string]any{"kind": kind}
@@ -107,9 +134,15 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			if _, err := resolveSelector(!hasNodeID); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			text := firstNonEmptyString(r, "text", "value")
-			if text == "" {
-				return mcp.NewToolResultError("required parameter 'text' is missing"), nil
+			// Typing nothing is meaningless, so type keeps collapsing empty with absent —
+			// but only after a wrong-typed argument has been named as one, rather than
+			// reported as an argument the caller never sent.
+			text, refusal := suppliedStringArg(r, "type", "text", "", "text", "value")
+			if refusal != nil {
+				return refusal, nil
+			}
+			if strings.TrimSpace(text) == "" {
+				return mcp.NewToolResultError("type needs a non-empty 'text' argument"), nil
 			}
 			payload["text"] = text
 
@@ -124,9 +157,12 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			if _, err := resolveSelector(!hasNodeID); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			value := firstNonEmptyString(r, "value", "option")
-			if value == "" {
-				return mcp.NewToolResultError("required parameter 'value' is missing"), nil
+			// `<option value="">` is the standard placeholder, so an empty value is a real
+			// selection — the one that resets a dropdown — and the bridge tells it apart
+			// from an absent one by key presence.
+			value, refusal := suppliedStringArg(r, "select", "value", `send "" to select an empty-valued option`, "value", "option")
+			if refusal != nil {
+				return refusal, nil
 			}
 			payload["value"] = value
 
@@ -199,12 +235,9 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			// so refusing it made the one documented clear idiom inexpressible here
 			// while the raw API accepted it — and the old message claimed a parameter
 			// the caller had supplied was missing.
-			value, supplied, wrongType := firstSuppliedString(r, "value", "text")
-			if !supplied {
-				if wrongType != "" {
-					return mcp.NewToolResultError(fmt.Sprintf("fill's 'value' must be a string, got %s; quote it, or send \"\" to clear the field", wrongType)), nil
-				}
-				return mcp.NewToolResultError("fill needs a 'value' argument; send \"\" to clear the field"), nil
+			value, refusal := suppliedStringArg(r, "fill", "value", `send "" to clear the field`, "value", "text")
+			if refusal != nil {
+				return refusal, nil
 			}
 			// "text" is the field actionFill reads. Posting the same string under "value"
 			// reached a real ActionRequest field that fill ignores, so the write was empty

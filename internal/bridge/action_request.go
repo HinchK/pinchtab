@@ -253,6 +253,23 @@ func FillText(req ActionRequest) (string, bool) {
 	return "", req.HasText
 }
 
+// SelectValue is FillText with the precedence reversed, and they stay two named functions
+// because the precedence IS the difference — a shared helper taking a preference argument
+// would hide it at both call sites.
+//
+// Supplied-ness reads HasText, which is inferred from key presence of text OR value, and
+// those are exactly the two fields select reads. So an explicitly supplied empty string is
+// a request to select the `<option value="">` placeholder, not an absent argument.
+func SelectValue(req ActionRequest) (string, bool) {
+	if req.Value != "" {
+		return req.Value, true
+	}
+	if req.Text != "" {
+		return req.Text, true
+	}
+	return "", req.HasText
+}
+
 // ValidateFillAction refuses a fill that carries no text under any spelling. That
 // request used to write "" and answer filled:true with len:0 — indistinguishable
 // from clearing a field on purpose, which is why it stayed invisible. Clearing

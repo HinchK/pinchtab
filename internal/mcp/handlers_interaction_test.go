@@ -667,6 +667,132 @@ func TestFillStillSendsAnEmptyStringVerbatim(t *testing.T) {
 	}
 }
 
+// `<option value="">` is the standard placeholder, so an empty value is the one selection
+// that resets a dropdown. The pair is the assertion: either half alone is satisfiable by
+// deleting the check, which would forward a select with no value at all.
+func TestSelectForwardsASuppliedEmptyValueAndStillRefusesAnAbsentOne(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	for _, key := range []string{"value", "option"} {
+		t.Run("supplied empty "+key+" selects the placeholder", func(t *testing.T) {
+			r := callTool(t, "pinchtab_select", map[string]any{"ref": "e0", key: ""}, srv)
+			if r.IsError {
+				t.Fatalf("a supplied empty %s was refused: %s", key, resultText(t, r))
+			}
+			body, _ := resultJSON(t, r)["body"].(map[string]any)
+			value, present := body["value"]
+			if !present {
+				t.Fatalf("payload carries no value key, so the bridge cannot tell a placeholder selection from a request whose value never arrived: %v", body)
+			}
+			if got, _ := value.(string); got != "" {
+				t.Errorf("forwarded value = %q, want the empty string that selects the placeholder", got)
+			}
+		})
+	}
+
+	t.Run("absent value is refused", func(t *testing.T) {
+		r := callTool(t, "pinchtab_select", map[string]any{"ref": "e0"}, srv)
+		if !r.IsError {
+			body, _ := resultJSON(t, r)["body"].(map[string]any)
+			t.Fatalf("a select with no value at all was forwarded as %v; absent is not a placeholder", body)
+		}
+		message := resultText(t, r)
+		if strings.Contains(message, "is missing") && strings.Contains(message, "'value'") {
+			t.Errorf("refusal %q reads as a supplied parameter being missing; it must say what select needs", message)
+		}
+		if !strings.Contains(message, "empty-valued option") {
+			t.Errorf("refusal %q does not tell the caller how to reach the placeholder, which is the case it is most likely to be confused with", message)
+		}
+	})
+}
+
+// The two verbs still reading the collapsing accessor answered "the argument is missing" to
+// an argument the caller had sent under the wrong type — the same dead end fill was fixed to
+// remove. The genuinely-absent row is the pair: collapsing the two again reds it.
+func TestSelectAndTypeNameAWrongTypedArgumentInsteadOfCallingItMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		tool     string
+		args     map[string]any
+		wantSays string
+	}{
+		{name: "select a number", tool: "pinchtab_select", args: map[string]any{"selector": "e5", "value": float64(2024)}, wantSays: "must be a string, got number"},
+		{name: "select a boolean", tool: "pinchtab_select", args: map[string]any{"selector": "e5", "value": true}, wantSays: "must be a string, got boolean"},
+		{name: "select genuinely absent", tool: "pinchtab_select", args: map[string]any{"selector": "e5"}, wantSays: "needs a 'value' argument"},
+		{name: "type a number", tool: "pinchtab_type", args: map[string]any{"selector": "e5", "text": float64(2024)}, wantSays: "must be a string, got number"},
+		{name: "type an array", tool: "pinchtab_type", args: map[string]any{"selector": "e5", "text": []any{"a"}}, wantSays: "must be a string, got array"},
+		{name: "type genuinely absent", tool: "pinchtab_type", args: map[string]any{"selector": "e5"}, wantSays: "needs a 'text' argument"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("an unusable argument was posted instead of refused")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+
+			res := callTool(t, tc.tool, tc.args, srv)
+
+			if !res.IsError {
+				t.Fatalf("accepted %v", tc.args)
+			}
+			if text := resultText(t, res); !strings.Contains(text, tc.wantSays) {
+				t.Errorf("error = %q, want it to say %q so the caller knows what to change", text, tc.wantSays)
+			}
+		})
+	}
+}
+
+// The surfaces are compared on the WIRE, not against two copies of a rule: each builds its
+// own body, and the bridge reads key presence, so only the posted bytes can show that a
+// caller reaches the placeholder whichever surface it came in through. The raw API is the
+// same body, asserted against a real page in internal/bridge.
+func TestSelectSendsAnEmptyValueOnEverySurface(t *testing.T) {
+	var mcpBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		mcpBody = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	res := callTool(t, "pinchtab_select", map[string]any{"selector": "e5", "value": ""}, srv)
+	if res.IsError {
+		t.Fatalf("MCP refused an empty value: %s", resultText(t, res))
+	}
+	if !strings.Contains(mcpBody, `"value":""`) {
+		t.Errorf("MCP posted %s, want value:\"\" — the key presence is what the bridge reads", mcpBody)
+	}
+
+	if cliBody := cliSelectBody(t, ""); !strings.Contains(cliBody, `"value":""`) {
+		t.Errorf("the CLI posted %s, want value:\"\" — the surfaces must express the same selection", cliBody)
+	}
+}
+
+// cliSelectBody runs the CLI's own select builder against a recording server and returns the
+// raw body it posted, so the assertion is on the wire rather than on two copies of a rule.
+func cliSelectBody(t *testing.T, value string) string {
+	t.Helper()
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"success":true}`))
+	}))
+	defer srv.Close()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("tab", "", "")
+	cmd.Flags().Bool("json", false, "")
+	cmd.Flags().Bool("snap", false, "")
+	cmd.Flags().Bool("snap-diff", false, "")
+	cmd.Flags().Bool("text", false, "")
+	browseractions.ActionSimple(srv.Client(), srv.URL, "", "select", []string{"e5", value}, cmd)
+
+	return string(raw)
+}
+
 // THE CARD'S MEASUREMENT, as a test: capture the outbound body on BOTH surfaces and
 // compare them, rather than comparing constants — the two surfaces each used to build
 // their own body from their own copy of the vocabulary, so only the bodies can show they
