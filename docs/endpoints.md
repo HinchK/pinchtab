@@ -620,8 +620,9 @@ Response body behavior for network detail/export:
 Request body (`postData`) behavior:
 
 - `postData` holds the request body as the page sent it, decoded. Chrome delivers it base64-encoded and split into chunks; PinchTab decodes and joins it, so no base64 decoding is needed by the caller
-- it is capped at 64 KiB of decoded body, cut on a character boundary
-- it is omitted when the body is not text — a binary part in a multipart upload, for example — because the field carries no encoding marker
+- it is capped at 64 KiB of decoded body, cut on a character boundary, and a cut body is marked `postDataTruncated=true` — without it a clipped request body reads as the body the client sent
+- it is omitted when the body is not text — a binary part in a multipart upload, for example — because the field carries no encoding marker. An omitted body says why: `postDataSkipped=true` with `postDataSkipReason` ("request body entry is not base64", "request body is not valid UTF-8"), so an absent `postData` is never mistaken for a request sent without one
+- `postDataTruncated` and `postDataSkipped` are different answers and never both set: truncated means cut but usable, skipped means there is no body to read. A request that simply had no body carries neither flag
 - HAR export puts the same decoded value in `request.postData.text`, and omits the block entirely when there is no publishable body
 
 Network export query parameters:

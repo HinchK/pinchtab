@@ -37,6 +37,10 @@ type NetworkEntry struct {
 	BodySkipReason  string            `json:"bodySkipReason,omitempty"`
 	BodyTruncated   bool              `json:"bodyTruncated,omitempty"`
 	BodyError       string            `json:"bodyError,omitempty"`
+
+	PostDataTruncated  bool   `json:"postDataTruncated,omitempty"`
+	PostDataSkipped    bool   `json:"postDataSkipped,omitempty"`
+	PostDataSkipReason string `json:"postDataSkipReason,omitempty"`
 }
 
 type NetworkBuffer struct {

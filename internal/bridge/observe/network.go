@@ -132,25 +132,7 @@ func (nm *NetworkMonitor) StartCaptureWithSize(tabCtx context.Context, tabID str
 	chromedp.ListenTarget(listenerCtx, func(ev interface{}) {
 		switch e := ev.(type) {
 		case *network.EventRequestWillBeSent:
-			headers := make(map[string]string)
-			if e.Request.Headers != nil {
-				for k, v := range e.Request.Headers {
-					if s, ok := v.(string); ok {
-						headers[k] = s
-					}
-				}
-			}
-			postData := decodePostData(e.Request.PostDataEntries)
-			entry := NetworkEntry{
-				RequestID:      string(e.RequestID),
-				URL:            e.Request.URL,
-				Method:         e.Request.Method,
-				ResourceType:   e.Type.String(),
-				RequestHeaders: headers,
-				PostData:       postData,
-				StartTime:      time.Now(),
-			}
-			buf.Add(entry)
+			buf.Add(requestEntryFromEvent(e))
 			buf.MarkRequestStart(string(e.RequestID))
 
 		case *network.EventResponseReceived:
@@ -292,14 +274,15 @@ func skipRetainedBody(buf *NetworkBuffer, requestID, reason string) {
 const (
 	retentionLimitScope  = "retention limit"
 	retentionBudgetScope = "retention budget"
+	postDataLimitScope   = "request body limit"
 )
 
-// clampRetainedBody applies a byte budget to a retained response body. One rule:
-// a retained body is a byte-exact prefix of the response, or there is no retained
-// body. Text is cut on a rune boundary with the suffix-free helper — the display
+// clampRetainedBody applies a byte budget to a retained payload — a response body,
+// or the request body in PostData. One rule: a retained payload is a byte-exact
+// prefix of what crossed the wire, or there is no retained payload. Text is cut on a rune boundary with the suffix-free helper — the display
 // variant appends "..." inside the budget, and a machine-read body must not carry
-// characters the response never contained when bodyTruncated already says it was
-// cut. A base64 body cannot be cut at all (the encoding's length and padding make
+// characters the payload never contained when the truncated flag already says it
+// was cut. A base64 body cannot be cut at all (the encoding's length and padding make
 // a fragment undecodable in whole, not only at the tail), and a budget smaller
 // than the body's first character leaves no whole rune to keep; both are dropped
 // with a reason rather than returned corrupt or returned empty-but-retained.
@@ -437,11 +420,12 @@ func GetResponseBody(ctx context.Context, requestID string) (string, bool, error
 // in a field named after the request body, and base64(a)+base64(b) is not base64(a+b) once an
 // entry's length is not a multiple of three, so any multi-entry body arrives corrupt.
 //
-// Anything that cannot be published as the text it claims to be publishes nothing: an entry
-// that is not base64, or a body that is not valid UTF-8 once decoded, such as a file part in
-// a multipart POST. The alternative is mojibake or a blob in a field with no encoding signal.
-// The reason for the absence has nowhere to ride yet — the signal is PIN-114's.
-func decodePostData(entries []*network.PostDataEntry) string {
+// Anything that cannot be published as the text it claims to be publishes nothing, and says
+// why: an entry that is not base64, or a body that is not valid UTF-8 once decoded, such as a
+// file part in a multipart POST. The alternative is mojibake, or a blob in a field with no
+// encoding signal, or — worse — an empty string that reads as a request sent with no body.
+// The second return is that reason, empty when there is nothing to explain.
+func decodePostData(entries []*network.PostDataEntry) (string, string) {
 	var decoded []byte
 	for _, entry := range entries {
 		if entry == nil {
@@ -449,14 +433,40 @@ func decodePostData(entries []*network.PostDataEntry) string {
 		}
 		chunk, err := base64.StdEncoding.DecodeString(entry.Bytes)
 		if err != nil {
-			return ""
+			return "", "request body entry is not base64"
 		}
 		decoded = append(decoded, chunk...)
 	}
 	if !utf8.Valid(decoded) {
-		return ""
+		return "", "request body is not valid UTF-8"
 	}
-	return string(decoded)
+	return string(decoded), ""
+}
+
+// requestEntryFromEvent builds the entry a started request is recorded as. It is the one
+// place a refused request body turns into a stated reason on the entry, so an absent
+// postData is never mistaken for a request sent without one.
+func requestEntryFromEvent(e *network.EventRequestWillBeSent) NetworkEntry {
+	headers := make(map[string]string)
+	if e.Request.Headers != nil {
+		for k, v := range e.Request.Headers {
+			if s, ok := v.(string); ok {
+				headers[k] = s
+			}
+		}
+	}
+	postData, postDataSkipReason := decodePostData(e.Request.PostDataEntries)
+	return NetworkEntry{
+		RequestID:          string(e.RequestID),
+		URL:                e.Request.URL,
+		Method:             e.Request.Method,
+		ResourceType:       e.Type.String(),
+		RequestHeaders:     headers,
+		PostData:           postData,
+		PostDataSkipped:    postDataSkipReason != "",
+		PostDataSkipReason: postDataSkipReason,
+		StartTime:          time.Now(),
+	}
 }
 
 func normalizeNetworkEntry(entry NetworkEntry) NetworkEntry {
@@ -466,9 +476,21 @@ func normalizeNetworkEntry(entry NetworkEntry) NetworkEntry {
 	entry.StatusText = sanitize.TruncateUTF8Bytes(entry.StatusText, maxNetworkStatusTextBytes)
 	entry.MimeType = sanitize.TruncateUTF8Bytes(entry.MimeType, maxNetworkMimeTypeBytes)
 	entry.Error = sanitize.TruncateUTF8Bytes(entry.Error, maxNetworkErrorBytes)
-	// The budget measures the decoded body, which is what PostData now holds, so the
-	// constant describes the request content rather than its encoded length.
-	entry.PostData = sanitize.PrefixUTF8Bytes(entry.PostData, maxNetworkPostDataBytes)
+	// The request body is clamped by the one owner of that rule, so it inherits the
+	// prefix-or-nothing policy the response body already states. The budget measures the
+	// decoded body, which is what PostData holds, so the constant describes the request
+	// content rather than its encoded length. Flags are only ever set here, never cleared:
+	// an entry is re-normalised on every update, and a second pass sees a value already
+	// within budget.
+	clampedPostData, postDataTruncated, postDataDropReason := clampRetainedBody(entry.PostData, false, maxNetworkPostDataBytes, postDataLimitScope)
+	entry.PostData = clampedPostData
+	if postDataTruncated {
+		entry.PostDataTruncated = true
+	}
+	if postDataDropReason != "" {
+		entry.PostDataSkipped = true
+		entry.PostDataSkipReason = postDataDropReason
+	}
 	entry.RequestHeaders = normalizeNetworkHeaders(entry.RequestHeaders)
 	entry.ResponseHeaders = normalizeNetworkHeaders(entry.ResponseHeaders)
 	return entry

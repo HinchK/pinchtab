@@ -267,8 +267,11 @@ func TestBodyClampsAndDisplayFieldsUseTheirOwnHelper(t *testing.T) {
 	if strings.Contains(clamp, "sanitize.TruncateUTF8Bytes(") {
 		t.Error("clampRetainedBody reaches the ellipsis variant again: the retained body would carry characters the response never sent")
 	}
-	if !strings.Contains(src, "entry.PostData = sanitize.PrefixUTF8Bytes(") {
-		t.Error("PostData no longer cuts with the suffix-free helper")
+	if !strings.Contains(src, "clampRetainedBody(entry.PostData,") {
+		t.Error("PostData no longer goes through clampRetainedBody: a second clamp beside it drifts, and PostData loses the drop-with-reason cases the response body already handles")
+	}
+	if strings.Contains(src, "entry.PostData = sanitize.") {
+		t.Error("PostData cuts with a sanitize helper directly again, bypassing the one payload clamp")
 	}
 
 	displayFields := []string{"entry.URL", "entry.Method", "entry.ResourceType", "entry.StatusText", "entry.MimeType", "entry.Error"}
@@ -287,7 +290,7 @@ func TestBodyClampsAndDisplayFieldsUseTheirOwnHelper(t *testing.T) {
 	// The checks above ask whether each site this test KNOWS about picked the right
 	// helper, which cannot see a site it does not know about — and an unlisted field
 	// taking the ellipsis by default is how the defect this file exists for arrived.
-	accounted := len(displayFields) + len(headerClamps) + 2 // the two body clamps: the retained body and PostData
+	accounted := len(displayFields) + len(headerClamps) + 1 // the one payload clamp, which both the retained body and PostData go through
 	if sites := strings.Count(src, "sanitize.TruncateUTF8Bytes(") + strings.Count(src, "sanitize.PrefixUTF8Bytes("); sites != accounted {
 		t.Errorf("network.go cuts a field at %d sites but this test classifies %d — a new field is picking a truncation policy nobody reviewed. Add it above: the ellipsis variant if a human reads it, the suffix-free one if it is machine-read and a marker would be fabricated content",
 			sites, accounted)

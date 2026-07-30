@@ -9,6 +9,14 @@ import (
 	"github.com/chromedp/cdproto/network"
 )
 
+// harPostData keeps the HAR fixtures reading the decoded value the entry would carry,
+// without the reason those tests do not assert.
+func harPostData(t *testing.T, entries []*network.PostDataEntry) string {
+	t.Helper()
+	decoded, _ := decodePostData(entries)
+	return decoded
+}
+
 func postDataEntries(chunks ...string) []*network.PostDataEntry {
 	entries := make([]*network.PostDataEntry, 0, len(chunks))
 	for _, chunk := range chunks {
@@ -23,7 +31,7 @@ func postDataEntries(chunks ...string) []*network.PostDataEntry {
 func TestPostDataIsTheBodyThePageSentNotBase64(t *testing.T) {
 	const body = `{"hi":"there — 🎯"}`
 
-	got := decodePostData(postDataEntries(body))
+	got, _ := decodePostData(postDataEntries(body))
 
 	if got != body {
 		t.Errorf("postData = %q, want the body byte for byte", got)
@@ -47,7 +55,7 @@ func TestPostDataJoinsMultipleEntriesOnDecodedBytes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			want := tc.first + tc.second
 
-			got := decodePostData(postDataEntries(tc.first, tc.second))
+			got, _ := decodePostData(postDataEntries(tc.first, tc.second))
 
 			if got != want {
 				t.Errorf("postData = %q, want %q — the entries were joined before decoding", got, want)
@@ -68,31 +76,39 @@ func TestPostDataJoinsMultipleEntriesOnDecodedBytes(t *testing.T) {
 // signal that says why it is absent.
 func TestPostDataPublishesNothingRatherThanSomethingItCannotDescribe(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		entries []*network.PostDataEntry
+		name       string
+		entries    []*network.PostDataEntry
+		wantReason string
 	}{
 		{
-			name:    "not base64 at all",
-			entries: []*network.PostDataEntry{{Bytes: "not base64!!"}},
+			name:       "not base64 at all",
+			entries:    []*network.PostDataEntry{{Bytes: "not base64!!"}},
+			wantReason: "request body entry is not base64",
 		},
 		{
-			name:    "one bad entry among good ones",
-			entries: append(postDataEntries("good"), &network.PostDataEntry{Bytes: "@@@"}),
+			name:       "one bad entry among good ones",
+			entries:    append(postDataEntries("good"), &network.PostDataEntry{Bytes: "@@@"}),
+			wantReason: "request body entry is not base64",
 		},
 		{
-			name:    "decodes to bytes that are not valid UTF-8",
-			entries: []*network.PostDataEntry{{Bytes: base64.StdEncoding.EncodeToString([]byte{0xff, 0xfe, 0x00, 0x80})}},
+			name:       "decodes to bytes that are not valid UTF-8",
+			entries:    []*network.PostDataEntry{{Bytes: base64.StdEncoding.EncodeToString([]byte{0xff, 0xfe, 0x00, 0x80})}},
+			wantReason: "request body is not valid UTF-8",
 		},
 		{
-			name:    "valid UTF-8 chunks that are invalid once joined",
-			entries: []*network.PostDataEntry{{Bytes: base64.StdEncoding.EncodeToString([]byte("é")[:1])}},
+			name:       "valid UTF-8 chunks that are invalid once joined",
+			entries:    []*network.PostDataEntry{{Bytes: base64.StdEncoding.EncodeToString([]byte("é")[:1])}},
+			wantReason: "request body is not valid UTF-8",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := decodePostData(tc.entries)
+			got, reason := decodePostData(tc.entries)
 
 			if got != "" {
 				t.Errorf("postData = %q, want it absent: the field carries no encoding signal, so this is either mojibake or a blob claiming to be text", got)
+			}
+			if reason != tc.wantReason {
+				t.Errorf("skip reason = %q, want %q: an absent body with no reason reads as a request sent without one", reason, tc.wantReason)
 			}
 		})
 	}
@@ -109,8 +125,12 @@ func TestPostDataIsAbsentWhenTheRequestHasNoBody(t *testing.T) {
 		{name: "empty entry", entries: postDataEntries("")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := decodePostData(tc.entries); got != "" {
+			got, reason := decodePostData(tc.entries)
+			if got != "" {
 				t.Errorf("postData = %q, want empty", got)
+			}
+			if reason != "" {
+				t.Errorf("skip reason = %q, want none: a request with no body was not refused", reason)
 			}
 		})
 	}
@@ -131,7 +151,8 @@ func TestPostDataCapMeasuresTheDecodedBodyAndCutsOnARuneBoundary(t *testing.T) {
 		t.Fatal("fixture must straddle the limit with a multi-byte rune")
 	}
 
-	entry := normalizeNetworkEntry(NetworkEntry{PostData: decodePostData(postDataEntries(body))})
+	decoded, _ := decodePostData(postDataEntries(body))
+	entry := normalizeNetworkEntry(NetworkEntry{PostData: decoded})
 
 	if len(entry.PostData) > maxNetworkPostDataBytes {
 		t.Errorf("postData is %d bytes, over the %d-byte cap on the decoded body", len(entry.PostData), maxNetworkPostDataBytes)
@@ -156,7 +177,7 @@ func TestHARPostDataTextHoldsTheDecodedBody(t *testing.T) {
 	entry := NetworkEntry{
 		URL:            "https://example.test/sink",
 		Method:         "POST",
-		PostData:       decodePostData(postDataEntries(body)),
+		PostData:       harPostData(t, postDataEntries(body)),
 		RequestHeaders: map[string]string{"Content-Type": "application/json"},
 	}
 
@@ -179,7 +200,7 @@ func TestHAROmitsPostDataWhenTheBodyCouldNotBePublished(t *testing.T) {
 	entry := NetworkEntry{
 		URL:      "https://example.test/upload",
 		Method:   "POST",
-		PostData: decodePostData([]*network.PostDataEntry{{Bytes: base64.StdEncoding.EncodeToString([]byte{0xff, 0xfe})}}),
+		PostData: harPostData(t, []*network.PostDataEntry{{Bytes: base64.StdEncoding.EncodeToString([]byte{0xff, 0xfe})}}),
 	}
 
 	if e := NetworkEntryToExport(entry, "", false); e.Request.PostData != nil {
@@ -196,7 +217,138 @@ func TestPostDataUnderTheDecodedCapIsNotCut(t *testing.T) {
 		t.Fatalf("fixture encodes to %d bytes, which is under the cap too — it cannot tell the two measurements apart", len(encoded))
 	}
 
-	if got := normalizeNetworkEntry(NetworkEntry{PostData: decodePostData(postDataEntries(body))}).PostData; got != body {
+	decodedUnderCap, _ := decodePostData(postDataEntries(body))
+	if got := normalizeNetworkEntry(NetworkEntry{PostData: decodedUnderCap}).PostData; got != body {
 		t.Errorf("postData is %d bytes, want the whole %d-byte body: the cap is measuring the encoded length", len(got), len(body))
+	}
+}
+
+// A cut request body that carries no signal is indistinguishable from the body the client
+// actually sent — the whole point of the flag. Truncated (cut but usable) and skipped
+// (absent, with a reason) are different answers and must never both be set.
+func TestPostDataOverTheCapIsFlaggedTruncatedNotSkipped(t *testing.T) {
+	body := strings.Repeat("a", maxNetworkPostDataBytes) + "tail"
+
+	decoded, _ := decodePostData(postDataEntries(body))
+	entry := normalizeNetworkEntry(NetworkEntry{PostData: decoded})
+
+	if !entry.PostDataTruncated {
+		t.Error("a request body cut at the cap reports no truncation, so a clipped payload reads as complete")
+	}
+	if entry.PostDataSkipped || entry.PostDataSkipReason != "" {
+		t.Errorf("a cut body must not also report skipped: skipped=%v reason=%q", entry.PostDataSkipped, entry.PostDataSkipReason)
+	}
+	if entry.PostData != body[:len(entry.PostData)] {
+		t.Error("postData is not a byte-exact prefix of the body the page sent")
+	}
+}
+
+func TestPostDataUnderTheCapCarriesNoSignal(t *testing.T) {
+	const body = `{"hi":"there — 🎯"}`
+
+	decoded, _ := decodePostData(postDataEntries(body))
+	entry := normalizeNetworkEntry(NetworkEntry{PostData: decoded})
+
+	if entry.PostData != body {
+		t.Fatalf("postData = %q, want the whole body", entry.PostData)
+	}
+	if entry.PostDataTruncated || entry.PostDataSkipped || entry.PostDataSkipReason != "" {
+		t.Errorf("an untouched body carries a signal: %+v", entry)
+	}
+}
+
+// Entries are re-normalised on every update, and the second pass sees a value already
+// within budget. The flag has to survive that or the signal disappears the moment the
+// response arrives.
+func TestPostDataTruncationSurvivesRenormalisation(t *testing.T) {
+	body := strings.Repeat("a", maxNetworkPostDataBytes) + "tail"
+
+	decoded, _ := decodePostData(postDataEntries(body))
+	once := normalizeNetworkEntry(NetworkEntry{PostData: decoded})
+	twice := normalizeNetworkEntry(once)
+
+	if !twice.PostDataTruncated {
+		t.Error("the truncated flag was cleared by a second normalise, so an entry updated after its response reads as complete")
+	}
+	if twice.PostData != once.PostData {
+		t.Errorf("second normalise changed the body: %d bytes then %d", len(once.PostData), len(twice.PostData))
+	}
+}
+
+// The refusal reason has to reach the ENTRY, not just decodePostData's return: this is the
+// wiring an absent postData depends on to say why it is absent.
+func TestRequestEntryCarriesTheRefusalReasonForAnUnpublishableBody(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		entries    []*network.PostDataEntry
+		wantReason string
+	}{
+		{
+			name:       "binary file part",
+			entries:    []*network.PostDataEntry{{Bytes: base64.StdEncoding.EncodeToString([]byte{0xff, 0xfe, 0x00, 0x80})}},
+			wantReason: "request body is not valid UTF-8",
+		},
+		{
+			name:       "entry that is not base64",
+			entries:    []*network.PostDataEntry{{Bytes: "not base64!!"}},
+			wantReason: "request body entry is not base64",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := requestEntryFromEvent(&network.EventRequestWillBeSent{
+				RequestID: "req-1",
+				Type:      network.ResourceTypeXHR,
+				Request:   &network.Request{URL: "https://example.test/upload", Method: "POST", PostDataEntries: tc.entries},
+			})
+
+			if entry.PostData != "" {
+				t.Fatalf("postData = %q, want it absent", entry.PostData)
+			}
+			if !entry.PostDataSkipped {
+				t.Error("an absent body reports no skip, so it reads as a request sent with no body at all")
+			}
+			if entry.PostDataSkipReason != tc.wantReason {
+				t.Errorf("skip reason = %q, want %q", entry.PostDataSkipReason, tc.wantReason)
+			}
+			if entry.PostDataTruncated {
+				t.Error("a body that was never published cannot also be truncated")
+			}
+		})
+	}
+}
+
+func TestRequestEntryFlagsNothingForAnOrdinaryBody(t *testing.T) {
+	const body = `{"ok":true}`
+
+	entry := requestEntryFromEvent(&network.EventRequestWillBeSent{
+		RequestID: "req-2",
+		Type:      network.ResourceTypeXHR,
+		Request:   &network.Request{URL: "https://example.test/api", Method: "POST", PostDataEntries: postDataEntries(body)},
+	})
+
+	if entry.PostData != body {
+		t.Fatalf("postData = %q, want %q", entry.PostData, body)
+	}
+	if entry.PostDataSkipped || entry.PostDataSkipReason != "" || entry.PostDataTruncated {
+		t.Errorf("a publishable body carries a signal: %+v", entry)
+	}
+}
+
+// The sub-rune budget cannot arise through normalizeNetworkEntry — the cap is a constant far
+// larger than any rune — so the case is pinned where it lives, on the shared clamp, with the
+// scope name this call site passes. That name is what an operator reads in the reason.
+func TestTheRequestBodyScopeNamesItselfInTheDropReason(t *testing.T) {
+	for limit := 1; limit < 4; limit++ {
+		clamped, truncated, reason := clampRetainedBody("🎯 body", false, limit, postDataLimitScope)
+
+		if clamped != "" || truncated {
+			t.Errorf("limit=%d: kept %q (truncated=%v) of a body whose first character does not fit", limit, clamped, truncated)
+		}
+		if reason != postDataLimitScope+" is smaller than the body's first character" {
+			t.Errorf("limit=%d: reason = %q, which does not name the request body budget", limit, reason)
+		}
+	}
+	if clamped, truncated, reason := clampRetainedBody("🎯 body", false, 4, postDataLimitScope); clamped != "🎯" || !truncated || reason != "" {
+		t.Fatalf("limit=4: got (%q, %v, %q), want the first character alone as a truncated prefix — the drops above must be the budget, not a dead branch", clamped, truncated, reason)
 	}
 }
