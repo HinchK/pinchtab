@@ -78,16 +78,43 @@ func firstNonEmptyString(r mcp.CallToolRequest, keys ...string) string {
 // empty with absent (actionSelect refuses an empty value; DialogText is a plain
 // string with no presence flag), so reading presence here would promise a
 // distinction the request cannot carry.
-func firstSuppliedString(r mcp.CallToolRequest, keys ...string) (string, bool) {
+// wrongType names the JSON type of a value that WAS supplied under one of the keys but is
+// not a string. The library does not enforce the declared type before calling a handler, so
+// a model answering a numeric-looking field with 2024 rather than "2024" arrives here — and
+// collapsing that into "not supplied" reproduces the very complaint this helper was written
+// for: telling a caller an argument it sent is missing.
+func firstSuppliedString(r mcp.CallToolRequest, keys ...string) (value string, supplied bool, wrongType string) {
 	args := r.GetArguments()
 	for _, key := range keys {
-		if raw, ok := args[key]; ok {
-			if v, isString := raw.(string); isString {
-				return v, true
-			}
+		raw, ok := args[key]
+		if !ok {
+			continue
+		}
+		if v, isString := raw.(string); isString {
+			return v, true, ""
+		}
+		if wrongType == "" {
+			wrongType = jsonTypeName(raw)
 		}
 	}
-	return "", false
+	return "", false, wrongType
+}
+
+func jsonTypeName(v any) string {
+	switch v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case float64, int, int64:
+		return "number"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return fmt.Sprintf("%T", v)
+	}
 }
 
 func looksLikeStructuredSelector(v string) bool {

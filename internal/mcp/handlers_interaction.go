@@ -192,8 +192,11 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			// so refusing it made the one documented clear idiom inexpressible here
 			// while the raw API accepted it — and the old message claimed a parameter
 			// the caller had supplied was missing.
-			value, supplied := firstSuppliedString(r, "value", "text")
+			value, supplied, wrongType := firstSuppliedString(r, "value", "text")
 			if !supplied {
+				if wrongType != "" {
+					return mcp.NewToolResultError(fmt.Sprintf("fill's 'value' must be a string, got %s; quote it, or send \"\" to clear the field", wrongType)), nil
+				}
 				return mcp.NewToolResultError("fill needs a 'value' argument; send \"\" to clear the field"), nil
 			}
 			// "text" is the field actionFill reads. Posting the same string under "value"

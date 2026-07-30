@@ -1,6 +1,9 @@
 package mcp
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -570,5 +573,62 @@ func TestFillForwardsASuppliedValueVerbatim(t *testing.T) {
 	body, _ := resultJSON(t, r)["body"].(map[string]any)
 	if got, _ := body["text"].(string); got != "  spaced  " {
 		t.Errorf("forwarded text = %q, want the caller's string unmodified", got)
+	}
+}
+
+// The library does not enforce a declared argument type before calling a handler, so a model
+// answering a numeric-looking field with 2024 rather than "2024" reaches fill with a number.
+// Reporting that as a MISSING argument is the same dead end this tool was fixed to remove:
+// the caller sent the argument, is told it did not, sends it the same way again.
+func TestFillNamesAWrongTypedValueInsteadOfCallingItMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		args     map[string]any
+		wantSays string
+	}{
+		{name: "a number", args: map[string]any{"selector": "e5", "value": float64(2024)}, wantSays: "must be a string, got number"},
+		{name: "a boolean", args: map[string]any{"selector": "e5", "value": true}, wantSays: "must be a string, got boolean"},
+		{name: "an object", args: map[string]any{"selector": "e5", "value": map[string]any{"a": 1}}, wantSays: "must be a string, got object"},
+		{name: "genuinely absent", args: map[string]any{"selector": "e5"}, wantSays: "needs a 'value' argument"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("fill posted a request for an unusable value instead of refusing it")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+
+			res := callTool(t, "pinchtab_fill", tc.args, srv)
+
+			if !res.IsError {
+				t.Fatalf("accepted %v", tc.args)
+			}
+			if text := resultText(t, res); !strings.Contains(text, tc.wantSays) {
+				t.Errorf("error = %q, want it to say %q so the caller knows what to change", text, tc.wantSays)
+			}
+		})
+	}
+}
+
+// The clear idiom must keep working, since distinguishing a wrong type from an absent one
+// must not re-refuse the empty string this tool was fixed to accept.
+func TestFillStillSendsAnEmptyStringVerbatim(t *testing.T) {
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		body = string(raw)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	res := callTool(t, "pinchtab_fill", map[string]any{"selector": "e5", "value": ""}, srv)
+
+	if res.IsError {
+		t.Fatalf("an empty value was refused: %s", resultText(t, res))
+	}
+	if !strings.Contains(body, `"text":""`) {
+		t.Errorf("posted %s, want text:\"\" — the documented way to clear a field", body)
 	}
 }
