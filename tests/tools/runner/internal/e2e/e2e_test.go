@@ -1072,11 +1072,17 @@ func TestEmptyLogSuffixMarksZeroByteArtifacts(t *testing.T) {
 // cfg.VerboseBanner and absent from the artifact without it; the netguard allowlist
 // is printed by neither, at any level. Both flags are required together: --verbose
 // contributes only the banner WHILE --log-level is set, and would govern the level again if
-// --log-level were dropped. Bridge services are expected to carry neither, which
-// leaves them at info; that is this guard's scope, not a finding that info is the
-// right level for them.
+// --log-level were dropped.
+//
+// Bridge services carry --log-level debug and NOT --verbose, and the asymmetry is the
+// rule rather than an omission: the bridge holds the CDP session, so it logs what a
+// failing browser scenario most needs, while --verbose contributes only a startup
+// banner the bridge does not have.
 func TestComposeServerServicesNameTheirLogLevel(t *testing.T) {
-	const wantFlags = "pinchtab server --log-level debug --verbose"
+	const (
+		wantFlags = "pinchtab server --log-level debug --verbose"
+		wantLevel = "--log-level debug"
+	)
 
 	for _, tc := range []struct {
 		file    string
@@ -1098,10 +1104,11 @@ func TestComposeServerServicesNameTheirLogLevel(t *testing.T) {
 					}
 				case strings.Contains(svc.command, "pinchtab bridge"):
 					bridges++
-					for _, flag := range []string{"--verbose", "--log-level"} {
-						if strings.Contains(svc.command, flag) {
-							t.Errorf("bridge service %s gained %s, which this guard expects the bridges not to carry — they run at info by scope, not because info is known to be right for them. Raising the bridge level is a separate decision, tracked on PIN-152; if it has been made, update this guard and the compose header together rather than only here: %s", svc.name, flag, svc.command)
-						}
+					if !strings.Contains(svc.command, wantLevel) {
+						t.Errorf("bridge service %s does not run %q, so the process holding the CDP session is the quiet one — target crashes, instance lifecycle and selector resolution are logged there, and a failing scenario needs them explained: %s", svc.name, wantLevel, svc.command)
+					}
+					if strings.Contains(svc.command, "--verbose") {
+						t.Errorf("bridge service %s carries --verbose, whose only contribution is the startup banner — the bridge has none to print, so it adds nothing and makes the bridge rule look identical to the server rule when it is not: %s", svc.name, svc.command)
 					}
 				default:
 					t.Errorf("service %s uses the pinchtab image but runs neither server nor bridge, so no flag rule covers it: %s", svc.name, svc.command)

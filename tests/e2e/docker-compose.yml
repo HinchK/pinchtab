@@ -25,15 +25,6 @@
 # Dropping `--log-level` would not change the level observed today, which is what
 # makes the trap quiet: it would silently hand the level back to a flag whose meaning
 # has already migrated once, which is the drift this file exists to prevent.
-#
-# The `pinchtab bridge` services deliberately pass no log flags and therefore run at
-# info. Read that as a scope boundary, not as a judgement that info is right for
-# them: `pinchtab bridge` accepts `--log-level` today, and the bridge is the process
-# holding the CDP session, so target crashes, instance lifecycle and selector
-# resolution are logged there — exactly what a failing browser scenario needs
-# explained. By the principle stated above they arguably want debug too. Raising them
-# is a separate decision, tracked on PIN-152, because the card that named the server
-# level was scoped to leave the bridges untouched.
 services:
   pinchtab:
     build:

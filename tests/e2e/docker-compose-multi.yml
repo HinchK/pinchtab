@@ -26,14 +26,13 @@
 # makes the trap quiet: it would silently hand the level back to a flag whose meaning
 # has already migrated once, which is the drift this file exists to prevent.
 #
-# The `pinchtab bridge` services deliberately pass no log flags and therefore run at
-# info. Read that as a scope boundary, not as a judgement that info is right for
-# them: `pinchtab bridge` accepts `--log-level` today, and the bridge is the process
-# holding the CDP session, so target crashes, instance lifecycle and selector
-# resolution are logged there — exactly what a failing browser scenario needs
-# explained. By the principle stated above they arguably want debug too. Raising them
-# is a separate decision, tracked on PIN-152, because the card that named the server
-# level was scoped to leave the bridges untouched.
+# The `pinchtab bridge` services run `--log-level debug` and NOT `--verbose`, and the
+# asymmetry with the servers is deliberate. Debug for the same reason the servers have
+# it, only more so: the bridge holds the CDP session, so target crashes, instance
+# lifecycle and selector resolution are logged there — the half a failing browser
+# scenario most needs explained. No `--verbose` because its sole contribution is the
+# startup banner and the bridge has none to print; `pinchtab bridge --help` says so.
+# Adding it would make the two rules look identical when they are not.
 x-pinchtab-base: &pinchtab-base
   # All pinchtab variants share the same image — only the pinchtab service
   # carries `build:` so compose builds it once. The 6 variants differ only
@@ -131,7 +130,7 @@ services:
       - ./config/pinchtab-ghostchrome.json:/fixture-config/pinchtab-ghostchrome.json:ro
     ports:
       - "127.0.0.1:9997:9999"
-    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-ghostchrome.json /data/e2e-config/pinchtab-ghostchrome.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab bridge"]
+    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-ghostchrome.json /data/e2e-config/pinchtab-ghostchrome.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab bridge --log-level debug"]
     healthcheck: *pinchtab-healthcheck
 
   pinchtab-bridge:
@@ -142,7 +141,7 @@ services:
       - ./config/pinchtab-bridge.json:/fixture-config/pinchtab-bridge.json:ro
     ports:
       - "127.0.0.1:9996:9999"
-    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-bridge.json /data/e2e-config/pinchtab-bridge.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab bridge"]
+    command: ["/bin/sh", "-lc", "mkdir -p /data/e2e-config && cp /fixture-config/pinchtab-bridge.json /data/e2e-config/pinchtab-bridge.json && exec /usr/local/bin/docker-entrypoint.sh pinchtab bridge --log-level debug"]
     healthcheck:
       # Bridge-mode pinchtab uses a different auth token. Same tightened
       # cadence as the shared healthcheck anchor above.
