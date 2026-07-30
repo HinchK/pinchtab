@@ -146,7 +146,13 @@ func resolveDefaultCLIBase(cfg *config.RuntimeConfig) string {
 // config file's. The tab probe used the env-only resolvers with a hardcoded 9867
 // fallback, so with a configured port it probed a different server than the command
 // — found nothing listening, assumed the stale tab valid, and refreshed its own
-// freshness window. Same target, same credential, or the probe cannot self-heal.
+// freshness window. Same target, so the probe can self-heal.
+//
+// The credential is the same EXCEPT against a non-loopback base with only the config
+// file's server.token: there the probe DEGRADES to an unauthenticated request rather
+// than exiting, because it runs on every command and must not kill one that would
+// refuse properly at its own site. Either way the config token does not leave the
+// machine; the probe simply learns less.
 var resolveTabStateEndpoint = func() (base, token string) {
 	cfg := config.Load()
 	base = resolveBaseURL(resolveDefaultCLIBase(cfg))
@@ -189,12 +195,18 @@ func resolveCLIToken(cfg *config.RuntimeConfig, base string) (string, error) {
 		apiclient.UseTokenSource("the PINCHTAB_TOKEN environment variable")
 		return t, nil
 	}
+	// The emptiness test comes FIRST: with no server.token there is nothing to withhold, so
+	// refusing would name a secret that does not exist and would break a legitimate flow —
+	// a tokenless server on a LAN or in Docker — for no security gain. That is the same test
+	// the loopback predicate itself was chosen by. With no credential the remote answers its
+	// own honest 401.
+	if cfg.Token == "" {
+		return "", nil
+	}
 	if !loopbackBase(base) {
 		return "", fmt.Errorf("refusing to send the local config's server.token to %s: set PINCHTAB_TOKEN (or PINCHTAB_SESSION) with the credential for that host", base)
 	}
-	if cfg.Token != "" {
-		apiclient.UseTokenSource("server.token in " + cliTokenConfigPath())
-	}
+	apiclient.UseTokenSource("server.token in " + cliTokenConfigPath())
 	return cfg.Token, nil
 }
 

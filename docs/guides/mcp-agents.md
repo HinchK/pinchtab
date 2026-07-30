@@ -111,9 +111,15 @@ proc = subprocess.Popen(
 |----------|---------|-------------|
 | `PINCHTAB_TOKEN` | *(from config)* | Bearer token for auth-protected servers |
 
-For remote servers, use the `--server` flag: `pinchtab --server http://remote:9867 mcp`
+For remote servers, use the `--server` flag with that host's credential — a non-loopback host
+requires `PINCHTAB_TOKEN` (or `PINCHTAB_SESSION`), since the CLI refuses to send the local
+config's `server.token` off the machine:
 
-`PINCHTAB_TOKEN` comes from `server.token` in your PinchTab config file. To copy the current token without printing it to stdout, run `pinchtab config token`.
+```bash
+PINCHTAB_TOKEN=<that-host-token> pinchtab --server http://remote:9867 mcp
+```
+
+`PINCHTAB_TOKEN` comes from `server.token` in your PinchTab config file — that is the credential for your LOCAL server, not for a remote one. To copy the current token without printing it to stdout, run `pinchtab config token`.
 
 ## Typical Agent Workflow
 

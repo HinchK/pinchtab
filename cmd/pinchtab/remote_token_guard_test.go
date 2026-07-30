@@ -130,6 +130,44 @@ func TestTheConfigTokenStillServesEveryLoopbackShape(t *testing.T) {
 	}
 }
 
+// With no server.token there is nothing to withhold, so refusing would name a secret that
+// does not exist AND break a legitimate flow — a tokenless server on a LAN or in Docker,
+// which internal/cli/report/security.go treats as supported-but-warned rather than
+// impossible. Nothing leaves the machine either way, so the refusal buys nothing: exactly
+// the test the loopback predicate was chosen by. The remote answers its own honest 401.
+//
+// This was invisible because every other refusal test sets a config token.
+func TestAnEmptyConfigTokenIsNotRefused(t *testing.T) {
+	clearCredentialEnv(t)
+	cfg := &config.RuntimeConfig{Port: "9867", Token: ""}
+
+	token, err := resolveCLIToken(cfg, "http://203.0.113.9:9867")
+	if err != nil {
+		t.Fatalf("a tokenless config was refused against a remote host: %v — nothing would have been sent, so this is breakage with no security gain", err)
+	}
+	if token != "" {
+		t.Errorf("token = %q, want empty so the remote answers its own 401", token)
+	}
+}
+
+// The refusal survives for the case it exists for: the same remote host WITH a config token.
+// Paired with the test above so a fix that simply deleted the guard cannot pass both.
+func TestAPresentConfigTokenIsStillRefusedForTheSameHost(t *testing.T) {
+	clearCredentialEnv(t)
+	cfg := &config.RuntimeConfig{Port: "9867", Token: "local-secret"}
+
+	token, err := resolveCLIToken(cfg, "http://203.0.113.9:9867")
+	if err == nil {
+		t.Fatal("a config token was handed to a remote host; that is the leak this card closes")
+	}
+	if token != "" {
+		t.Errorf("token = %q returned alongside the refusal", token)
+	}
+	if !strings.Contains(err.Error(), "server.token") {
+		t.Errorf("refusal %q no longer names what it is withholding", err)
+	}
+}
+
 func TestAnEnvCredentialTravelsToAnyHost(t *testing.T) {
 	clearCredentialEnv(t)
 	t.Setenv("PINCHTAB_TOKEN", "remote-secret")
