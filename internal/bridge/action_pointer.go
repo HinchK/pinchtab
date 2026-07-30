@@ -579,6 +579,14 @@ func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[strin
 	scrollX := req.ScrollX
 	scrollY := req.ScrollY
 	if scrollX == 0 && scrollY == 0 {
+		// An absent delta means "one step", which is what a bare scroll has always
+		// answered. An explicit zero is a different request and cannot share that
+		// answer: a caller computing a remaining distance reaches zero exactly when
+		// it wants no movement, and scrolling a default step there is the wrong
+		// direction reported as success.
+		if req.HasScroll {
+			return nil, fmt.Errorf("a zero delta is not a scroll: pass a non-zero scrollX/scrollY, or a selector to scroll into view")
+		}
 		scrollY = 120
 	}
 

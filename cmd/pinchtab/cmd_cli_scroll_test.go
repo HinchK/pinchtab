@@ -76,6 +76,18 @@ func TestScrollRefusesArgumentsItCannotHonour(t *testing.T) {
 			flags: map[string]string{"dy": "0", "dx": "500"},
 		},
 		{
+			// The same request as --dy 0, differently spelled. Keying the refusal to the
+			// flag rather than to the delta let this one through to the default step.
+			name:    "a zero positional",
+			args:    []string{"0"},
+			wantErr: "zero delta",
+		},
+		{
+			name:    "a signed zero positional",
+			args:    []string{"-0"},
+			wantErr: "zero delta",
+		},
+		{
 			name:  "a positional alone",
 			args:  []string{"800"},
 			flags: nil,

@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
@@ -166,16 +168,21 @@ func scrollArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 && byFlag {
 		return fmt.Errorf("give either %q or --dy/--dx, not both", args[0])
 	}
-	// A delta of zero on both axes is indistinguishable from sending no delta at
-	// all, and the server reads that as "scroll down by the default" — so
-	// `--dy 0` would scroll 120px instead of nothing. Dropping the field client
-	// side lands in the same default, so the only honest client-side answer is to
-	// refuse. An explicit zero on ONE axis is fine and passes through.
-	if byFlag && scrollFlagDelta(cmd, "dy") == 0 && scrollFlagDelta(cmd, "dx") == 0 {
-		return fmt.Errorf("a zero delta is not a scroll: the server reads no-delta as its default and would scroll down 120px; pass a non-zero --dy/--dx")
+	// A zero delta is not a scroll, and the refusal is keyed to the DELTA rather than
+	// to how it was spelled: `scroll 0` and `--dy 0` are the same request. The server
+	// refuses it too — this is the local echo that saves a round trip, not the rule.
+	// An explicit zero on ONE axis is a real scroll and passes through.
+	if len(args) == 1 {
+		if px, err := strconv.Atoi(args[0]); err == nil && px == 0 {
+			return errZeroScrollDelta
+		}
+	} else if byFlag && scrollFlagDelta(cmd, "dy") == 0 && scrollFlagDelta(cmd, "dx") == 0 {
+		return errZeroScrollDelta
 	}
 	return nil
 }
+
+var errZeroScrollDelta = errors.New("a zero delta is not a scroll: pass a non-zero count, a direction, or a selector to scroll into view")
 
 // scrollFlagDelta is the value of an int scroll flag, 0 when unset or unreadable.
 func scrollFlagDelta(cmd *cobra.Command, name string) int {

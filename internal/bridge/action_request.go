@@ -80,6 +80,10 @@ type ActionRequest struct {
 
 	ScrollX int `json:"scrollX"`
 	ScrollY int `json:"scrollY"`
+
+	// HasScroll separates an absent delta, which scroll answers with its default
+	// step, from an explicit zero, which is not a scroll at all.
+	HasScroll bool `json:"hasScroll,omitempty"`
 	// DeltaX/DeltaY are explicit mouse-wheel deltas for low-level
 	// mouse-wheel actions. ScrollX/ScrollY remain for backward compatibility.
 	DeltaX int `json:"deltaX,omitempty"`
@@ -159,6 +163,7 @@ func (r *ActionRequest) UnmarshalJSON(data []byte) error {
 	r.Kind = CanonicalActionKind(r.Kind)
 	r.HasXY = r.HasXY || hasJSONKey(raw, "x") || hasJSONKey(raw, "y")
 	r.HasToXY = r.HasToXY || hasJSONKey(raw, "toX") || hasJSONKey(raw, "toY")
+	r.HasScroll = r.HasScroll || hasJSONKey(raw, "scrollX") || hasJSONKey(raw, "scrollY")
 	r.HasText = r.HasText || hasJSONKey(raw, "text") || hasJSONKey(raw, "value")
 	if hasJSONKey(raw, "deltaX") {
 		if err := json.Unmarshal(raw["deltaX"], &r.DeltaX); err != nil {
