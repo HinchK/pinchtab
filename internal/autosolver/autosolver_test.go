@@ -1276,3 +1276,31 @@ func captureLogs(t *testing.T) *levelRecorder {
 	t.Cleanup(func() { slog.SetDefault(previous) })
 	return recorder
 }
+
+// SemanticEngine is exported, so a third-party DetectIntent returning (nil, nil)
+// satisfies the contract — the bundled adapter's FindElement already returns that
+// shape. Every intent read in trySemantic routes through intentTypeOf except, once,
+// the post-step check, which dereferenced the value detectIntent had just handed
+// back. This drives the whole loop with nil intents so that guard has a home.
+func TestTrySemanticSurvivesANilIntentFromTheEngine(t *testing.T) {
+	cfg := DefaultConfig()
+	semantic := &mockSemantic{
+		detectSeq: []*Intent{nil},
+		action:    &SuggestedAction{Action: ActionClick, Selector: "#anything"},
+	}
+
+	as := New(cfg, semantic, nil)
+	page := &mockPage{title: "Verify your identity", url: "https://example.com/gate"}
+
+	solved, entry := as.trySemantic(context.Background(), page, &mockExecutor{}, nil)
+
+	if solved {
+		t.Error("a nil intent cannot be a solved page; the engine reported nothing")
+	}
+	if entry == nil {
+		t.Fatal("no attempt entry recorded")
+	}
+	if entry.Status != StatusFailed {
+		t.Errorf("attempt status = %q, want %q", entry.Status, StatusFailed)
+	}
+}

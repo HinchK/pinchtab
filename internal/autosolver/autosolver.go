@@ -377,7 +377,7 @@ func (as *AutoSolver) trySemantic(ctx context.Context, page Page, executor Actio
 				"error", detectErr)
 		} else {
 			currentIntent = postIntent
-			if currentIntent.Type == IntentNormal {
+			if intentTypeOf(currentIntent) == IntentNormal {
 				return as.finishSemantic(entry, semanticStart, StatusSolved, "")
 			}
 		}
