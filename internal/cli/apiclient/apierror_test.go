@@ -1,6 +1,7 @@
 package apiclient
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -386,4 +387,61 @@ func TestARejectedTokenNamesItsSource(t *testing.T) {
 	if strings.Contains(missing, "came from") {
 		t.Errorf("missing-token render = %q names a provenance for a credential that was never sent", missing)
 	}
+}
+
+// The shape 424 call sites produce, and the one no fixture drove: httpx.Error stamps the
+// generic sentinel on every uncoded refusal, so a code suffix here would append a bare
+// "(error)" to the most common error in the product — noise on the largest error family,
+// added by a change written for the coded one. This fixture is also what stops the next
+// widening of the condition from re-introducing it.
+func TestTheGenericSentinelCodeRendersExactlyAsAnUncodedError(t *testing.T) {
+	const message = `element text extract: no element matches selector "#nope": selector matched no element`
+
+	withSentinel := renderAPIErrorBody(404, []byte(`{"code":"error","error":`+quoteJSON(message)+`}`))
+	withoutCode := renderAPIErrorBody(404, []byte(`{"error":`+quoteJSON(message)+`}`))
+
+	if withSentinel != withoutCode {
+		t.Errorf("a generic-sentinel error renders differently from an uncoded one:\n with %q\n without %q", withSentinel, withoutCode)
+	}
+	if strings.Contains(withSentinel, "(error)") {
+		t.Errorf("the render appends the sentinel, which adds nothing beyond the 404 already printed: %q", withSentinel)
+	}
+	if !strings.Contains(withSentinel, message) {
+		t.Errorf("suppressing the sentinel lost the message: %q", withSentinel)
+	}
+}
+
+// The sentinel is spelled here rather than imported, so the agreement is pinned against the
+// BYTES the server actually sends rather than against a shared symbol. Drives the real
+// httpx.Error, so a rename or a change of the stamped code reds here instead of quietly
+// putting "(some_new_sentinel)" back on 424 responses.
+func TestTheGenericSentinelStillMatchesWhatTheServerSends(t *testing.T) {
+	w := httptest.NewRecorder()
+	httpx.Error(w, 404, errors.New("no element matches selector"))
+
+	var wire struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &wire); err != nil {
+		t.Fatalf("httpx.Error did not produce the error envelope: %v (%s)", err, w.Body.String())
+	}
+	if wire.Code == "" {
+		t.Fatal("httpx.Error stamped no code, so this parity check would compare against nothing")
+	}
+	if wire.Code != genericErrorCode {
+		t.Errorf("httpx.Error now stamps %q but the renderer suppresses %q, so every uncoded refusal would render with a meaningless suffix again — update genericErrorCode", wire.Code, genericErrorCode)
+	}
+	// The other half: a code that is NOT the sentinel must still reach the reader.
+	if !codeAddsInformation("tab_not_found", "unauthorized") {
+		t.Error("a real code was classified as adding nothing; the suppression is too wide")
+	}
+}
+
+func quoteJSON(s string) string {
+	encoded, err := json.Marshal(s)
+	if err != nil {
+		panic(err)
+	}
+	return string(encoded)
 }

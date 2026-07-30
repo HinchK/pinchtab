@@ -133,6 +133,24 @@ func clearCachedTabOnFailure(statusCode int, body []byte) string {
 	return "   The cached current tab is now cleared, so that retry will target the server's current tab.\n"
 }
 
+// genericErrorCode is the code httpx.Error stamps on every UNCODED refusal — the largest
+// error family in the product by a wide margin. It carries no information beyond the status
+// that is already printed, so rendering it appends a bare "(error)" to the most common error
+// shape and leaves a reader wondering what it denotes.
+//
+// Declared here rather than imported: the CLI is a client of the WIRE, not of the server's
+// error helper, so it should not take a runtime dependency on it. TestTheGenericSentinelStill
+// MatchesWhatTheServerSends drives httpx.Error and asserts the wire code is this value, which
+// pins the agreement more tightly than a shared symbol would — it compares the bytes.
+const genericErrorCode = "error"
+
+// codeAddsInformation is the rule the suffix exists for, stated once. A code repeats nothing
+// the reader already has: not the message beside it, and not the generic sentinel that every
+// uncoded refusal carries.
+func codeAddsInformation(code, message string) bool {
+	return code != "" && code != message && code != genericErrorCode
+}
+
 func renderAPIErrorBody(statusCode int, body []byte) string {
 	var errResp struct {
 		Error   string         `json:"error"`
@@ -146,7 +164,7 @@ func renderAPIErrorBody(statusCode int, body []byte) string {
 
 	var b strings.Builder
 	switch {
-	case errResp.Error != "" && errResp.Code != "" && errResp.Code != errResp.Error:
+	case errResp.Error != "" && codeAddsInformation(errResp.Code, errResp.Error):
 		fmt.Fprintf(&b, "Error %d: %s (%s)\n", statusCode, errResp.Error, errResp.Code)
 	case errResp.Error != "":
 		fmt.Fprintf(&b, "Error %d: %s\n", statusCode, errResp.Error)
