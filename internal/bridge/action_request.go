@@ -81,15 +81,10 @@ type ActionRequest struct {
 	ScrollX int `json:"scrollX"`
 	ScrollY int `json:"scrollY"`
 
-	// HasScroll separates an absent delta, which scroll answers with its default
-	// step, from an explicit zero, which is not a scroll at all.
 	HasScroll bool `json:"hasScroll,omitempty"`
-	// DeltaX/DeltaY are explicit mouse-wheel deltas for low-level
-	// mouse-wheel actions. ScrollX/ScrollY remain for backward compatibility.
-	DeltaX int `json:"deltaX,omitempty"`
-	DeltaY int `json:"deltaY,omitempty"`
-	// HasDelta is the DeltaX/DeltaY counterpart of HasScroll: a bare wheel means one
-	// notch down, an explicit zero means no movement, and both leave the fields at 0.
+	// DeltaX/DeltaY are the wheel spelling; ScrollX/ScrollY remain for compatibility.
+	DeltaX   int  `json:"deltaX,omitempty"`
+	DeltaY   int  `json:"deltaY,omitempty"`
 	HasDelta bool `json:"hasDelta,omitempty"`
 	DragX    int  `json:"dragX"`
 	DragY    int  `json:"dragY"`

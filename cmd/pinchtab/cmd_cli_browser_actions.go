@@ -168,10 +168,7 @@ func scrollArgs(cmd *cobra.Command, args []string) error {
 	if len(args) == 1 && byFlag {
 		return fmt.Errorf("give either %q or --dy/--dx, not both", args[0])
 	}
-	// A zero delta is not a scroll, and the refusal is keyed to the DELTA rather than
-	// to how it was spelled: `scroll 0` and `--dy 0` are the same request. The server
-	// refuses it too — this is the local echo that saves a round trip, not the rule.
-	// An explicit zero on ONE axis is a real scroll and passes through.
+	// The server owns this rule; the local copy only saves a round trip.
 	if len(args) == 1 {
 		if px, err := strconv.Atoi(args[0]); err == nil && px == 0 {
 			return errZeroScrollDelta

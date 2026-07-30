@@ -51,6 +51,11 @@ func TestScrollRefusesAnExplicitZeroDeltaButKeepsTheDefaultWhenAbsent(t *testing
 	if !strings.Contains(err.Error(), "zero delta") {
 		t.Errorf("error = %v, want it to name the zero delta", err)
 	}
+	// Scroll and wheel share one resolver, so each must still name its OWN spelling:
+	// telling a scroll caller to pass deltaX names a field its surface does not accept.
+	if !strings.Contains(err.Error(), "scrollX/scrollY") {
+		t.Errorf("error = %v, want it to name the spelling scroll accepts", err)
+	}
 
 	// An absent delta must reach the default step. Resolving the viewport needs a browser
 	// this test does not have, so the assertion is that it got PAST the zero-delta branch
@@ -87,6 +92,10 @@ func TestWheelDeltaRefusesAnExplicitZeroInEitherSpelling(t *testing.T) {
 		if tc.wantErr {
 			if err == nil {
 				t.Errorf("%s: accepted, resolving to (%d,%d) — a zero delta scrolls a default notch nobody asked for", tc.body, gotX, gotY)
+				continue
+			}
+			if !strings.Contains(err.Error(), "deltaX/deltaY") {
+				t.Errorf("%s: error = %v, want it to name the spelling wheel accepts", tc.body, err)
 			}
 			continue
 		}

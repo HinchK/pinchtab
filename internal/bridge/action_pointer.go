@@ -560,23 +560,24 @@ func (b *Bridge) actionMouseWheel(ctx context.Context, req ActionRequest) (map[s
 	return map[string]any{"wheel": true, "x": x, "y": y, "deltaX": deltaX, "deltaY": deltaY}, nil
 }
 
-// wheelDelta resolves a wheel delta from either spelling, deltaX/deltaY or the legacy
-// scrollX/scrollY. An absent delta means one notch down, which is what a bare wheel has
-// always meant. An explicit zero is a different request and cannot share that answer, for
-// the reason a zero scroll cannot: a caller computing a delta reaches zero exactly when it
-// wants no movement. A zero on one axis only is a real scroll on the other.
+const defaultScrollNotch = 120
+
+func resolveScrollDelta(x, y int, explicit bool, spelling string) (int, int, error) {
+	if x != 0 || y != 0 {
+		return x, y, nil
+	}
+	if explicit {
+		return 0, 0, fmt.Errorf("a zero delta is not a scroll: pass a non-zero %s", spelling)
+	}
+	return 0, defaultScrollNotch, nil
+}
+
 func wheelDelta(req ActionRequest) (int, int, error) {
 	deltaX, deltaY := req.DeltaX, req.DeltaY
 	if deltaX == 0 && deltaY == 0 {
 		deltaX, deltaY = req.ScrollX, req.ScrollY
 	}
-	if deltaX != 0 || deltaY != 0 {
-		return deltaX, deltaY, nil
-	}
-	if req.HasDelta || req.HasScroll {
-		return 0, 0, fmt.Errorf("a zero delta is not a scroll: pass a non-zero deltaX/deltaY")
-	}
-	return 0, 120, nil
+	return resolveScrollDelta(deltaX, deltaY, req.HasDelta || req.HasScroll, "deltaX/deltaY")
 }
 
 func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[string]any, error) {
@@ -592,24 +593,14 @@ func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[strin
 		return map[string]any{"scrolled": true}, ScrollByNodeID(ctx, int64(node.BackendNodeID))
 	}
 
-	scrollX := req.ScrollX
-	scrollY := req.ScrollY
-	if scrollX == 0 && scrollY == 0 {
-		// An absent delta means "one step", which is what a bare scroll has always
-		// answered. An explicit zero is a different request and cannot share that
-		// answer: a caller computing a remaining distance reaches zero exactly when
-		// it wants no movement, and scrolling a default step there is the wrong
-		// direction reported as success.
-		if req.HasScroll {
-			return nil, fmt.Errorf("a zero delta is not a scroll: pass a non-zero scrollX/scrollY, or a selector to scroll into view")
-		}
-		scrollY = 120
+	scrollX, scrollY, err := resolveScrollDelta(req.ScrollX, req.ScrollY, req.HasScroll, "scrollX/scrollY, or a selector to scroll into view")
+	if err != nil {
+		return nil, err
 	}
 
 	scrollTargetX := req.X
 	scrollTargetY := req.Y
 	if !req.HasXY {
-		var err error
 		scrollTargetX, scrollTargetY, err = scrollViewportCenter(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("resolve scroll viewport center: %w", err)
