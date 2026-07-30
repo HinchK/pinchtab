@@ -75,12 +75,19 @@ func (pm *ProfileManager) SetInstanceLookup(lookup func(profileID string) (insta
 // profileHolder is the single owner of the in-use rule: the Delete and Reset
 // guards and the published running flag must agree, so all of them consult
 // this and nothing else. Callers hold pm.mu.
+//
+// The two sources are ORed, not tried in order. An orchestrator only knows the
+// instances IT started, so a profile held by a second pinchtab — another server,
+// a `pinchtab bridge`, an always-on instance outside this map — makes the lookup
+// answer not-running with full confidence. Returning there would delete a live
+// profile on the very surface this guard was written for. The pid lock is
+// per-directory truth and sees that holder; it reads not-owned for our own pid,
+// which is what keeps the orchestrator's own temp-profile cleanup working.
 func (pm *ProfileManager) profileHolder(id, dir string) (holder string, held bool) {
 	if pm.instanceLookup != nil {
 		if instanceID, running := pm.instanceLookup(id); running {
 			return instanceID, true
 		}
-		return "", false
 	}
 	if pm.lockOwner != nil {
 		if owned, pid := pm.lockOwner(dir); owned {

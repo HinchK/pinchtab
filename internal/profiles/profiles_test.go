@@ -1567,3 +1567,77 @@ func TestDefaultLockOwnerTreatsAPidFreeDirectoryAsIdle(t *testing.T) {
 		t.Fatalf("expected 200 for a directory with no pinchtab.pid, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// An orchestrator only knows the instances IT started. A profile held by a SECOND pinchtab
+// — another server, a `pinchtab bridge`, an always-on instance outside this map — makes the
+// lookup answer not-running with full confidence, so consulting it alone deletes a live
+// profile on exactly the surface this card was filed against: the one where a lookup IS
+// installed. The two sources are therefore ORed, and this is the direction that proves it.
+func TestAProfileHeldOnlyByThePidLockIsRefusedEvenWhenTheLookupSaysIdle(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, cookies := newHeldProfile(t, pm, "held-by-another-pinchtab")
+	pm.lockOwner = func(string) (bool, int) { return true, 4242 }
+	pm.SetInstanceLookup(func(string) (string, bool) { return "", false })
+
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest("DELETE", "/profiles/"+id, nil),
+		httptest.NewRequest("POST", "/profiles/"+id+"/reset", nil),
+	} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != 409 {
+			t.Errorf("%s %s: got %d, want 409 — an installed lookup that answers not-running must not short-circuit the per-directory lock: %s",
+				req.Method, req.URL.Path, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "4242") {
+			t.Errorf("%s %s: refusal does not name the pid-lock holder: %s", req.Method, req.URL.Path, w.Body.String())
+		}
+	}
+	requireCookiesIntact(t, cookies)
+
+	// The flag half of this card fails in the same case, from the same line.
+	list, err := pm.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range list {
+		if p.Name != "held-by-another-pinchtab" {
+			continue
+		}
+		found = true
+		if !p.Running {
+			t.Errorf("running = false for a profile the pid lock says is held; the published flag and the guard must agree, since a client greys the button out from this field")
+		}
+	}
+	if !found {
+		t.Fatal("the held profile is absent from List, so this assertion would pass vacuously")
+	}
+}
+
+// The other direction, and the one the suite could not express before: the OR must not
+// refuse forever on a stale file. Nothing in the tree ever REMOVES pinchtab.pid — there is
+// no release path — so the file outlives its process and only the liveness and is-pinchtab
+// checks stop a dead pid reading as held. This is what stops a later reader simplifying the
+// OR back out on the grounds that it can only over-refuse.
+func TestAStaleLockWithNoLiveHolderStillDeletes(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, _ := newHeldProfile(t, pm, "stale-lock")
+	// What the real check answers for a pid that is dead, or alive but not pinchtab: the
+	// file is present and readable, and ownership is still refused.
+	pm.lockOwner = func(string) (bool, int) { return false, 999999 }
+	pm.SetInstanceLookup(func(string) (string, bool) { return "", false })
+
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/profiles/"+id, nil))
+	if w.Code != 200 {
+		t.Fatalf("got %d, want 200 — a lock whose holder is gone must not refuse forever; there is no release path, so the file always outlives the process: %s",
+			w.Code, w.Body.String())
+	}
+}
