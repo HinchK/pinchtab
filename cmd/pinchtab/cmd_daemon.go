@@ -16,6 +16,13 @@ var daemonCmd = &cobra.Command{
 	Use:   "daemon [action]",
 	Short: "Manage the background service",
 	Long:  "Start, stop, install, or check the status of the PinchTab background service.",
+	// The one leaf that reads a positional, so it declares its own arity rather than
+	// inheriting the no-argument rule every other leaf gets. One at most: this dispatches
+	// on args[0] and used to drop args[1:] silently, so `daemon status extra` reported the
+	// status it was asked for and said nothing about the word it ignored.
+	Args:          rejectExtraArguments,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		jsonOut, _ := cmd.Flags().GetBool("json")
 		sub := ""

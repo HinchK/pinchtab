@@ -248,3 +248,142 @@ func renderedRefusal(t *testing.T, args ...string) string {
 	}
 	return stream.String() + fmt.Sprintln(err)
 }
+
+// operandTakingLeaves records the leaves whose first argument is DATA, with what that data
+// is. They opt out by declaring a validator that permits a positional — this table is the
+// reason, and like operandNotAVerb it fails both ways: a leaf that stops taking an operand
+// must leave it, and a leaf that starts accepting one must be added deliberately.
+//
+// Only the ones a reader would question are listed. The census below covers every leaf; this
+// table is the record for the handful whose Use string alone does not settle it.
+var operandTakingLeaves = map[string]string{
+	"pinchtab daemon": "the argument is the lifecycle verb (status, install, start…), read from args[0]",
+}
+
+// Cobra defaults a leaf with no Args to ArbitraryArgs: it accepts any positional and hands it
+// to Run, which drops it. `pinchtab screenshot shot.png` therefore exited 0 having written an
+// auto-named file elsewhere, which an agent cannot detect. Walks the command TREE, never a
+// list of names — a hand-written list is how eleven groups came to be missing the sibling fix.
+func TestEveryLeafRefusesAStrayArgument(t *testing.T) {
+	installUnknownSubcommandGuard(rootCmd)
+
+	leaves := commandLeaves(rootCmd)
+	if len(leaves) < 100 {
+		t.Fatalf("found only %d leaf commands, so this census is not walking the command tree", len(leaves))
+	}
+
+	refusing := 0
+	for _, leaf := range leaves {
+		path := leaf.CommandPath()
+		if leaf.Args == nil {
+			t.Errorf("%s has no argument validator, so cobra accepts any positional and Run drops it", path)
+			continue
+		}
+		takesOperand := leaf.Args(leaf, []string{"zzz-not-an-argument"}) == nil
+
+		if reason, exempt := operandTakingLeaves[path]; exempt {
+			if !takesOperand {
+				t.Errorf("%s refuses a positional, but it is recorded as taking one because %s", path, reason)
+			}
+			continue
+		}
+		if takesOperand {
+			continue
+		}
+		refusing++
+	}
+	if refusing < 50 {
+		t.Fatalf("only %d leaves refuse a stray argument; the sweep covered less than the tree it was measured against", refusing)
+	}
+	t.Logf("leaf census: %d leaves, %d refuse a stray argument, %d take an operand", len(leaves), refusing, len(leaves)-refusing)
+}
+
+// The refusal a leaf gives has the same two-line shape as a group's: the token and what to do.
+// Asserted on the RENDERED output, because every assertion on the error VALUE is blind to the
+// usage block and to cobra printing the message a second time — which is how `version bogus`
+// grew to fourteen lines unnoticed.
+func TestALeafRefusalRendersOnceWithoutTheUsageBlock(t *testing.T) {
+	for _, tc := range []struct {
+		args  []string
+		wants []string
+	}{
+		// The card's headline case: the stray token IS the path, so the remedy names the flag.
+		{args: []string{"screenshot", "shot.png"}, wants: []string{`unexpected argument "shot.png"`, "-o shot.png"}},
+		{args: []string{"pdf", "out.pdf"}, wants: []string{"-o out.pdf"}},
+		// A leaf with no output flag is pointed at its own help rather than a guessed flag.
+		{args: []string{"title", "zzz-stray"}, wants: []string{`unexpected argument "zzz-stray"`, `"pinchtab title --help"`}},
+		// Already declared NoArgs before this card, and rendered fourteen lines because it
+		// lacked the silence flags: the guard covers it too.
+		{args: []string{"version", "zzz-stray"}, wants: []string{"zzz-stray"}},
+		// The one leaf that takes an operand still refuses a SECOND one.
+		{args: []string{"daemon", "status", "zzz-stray"}, wants: []string{`unexpected argument "zzz-stray"`}},
+	} {
+		invocation := "pinchtab " + strings.Join(tc.args, " ")
+		rendered := renderedRefusal(t, tc.args...)
+
+		lines := strings.Split(strings.TrimSpace(rendered), "\n")
+		// The message itself must appear once. Counting the TOKEN instead would be wrong
+		// here: a remedy that says `did you mean -o shot.png?` names it a second time on
+		// purpose, and that is the sentence's whole value.
+		if got := strings.Count(rendered, lines[0]); got != 1 {
+			t.Errorf("`%s` printed its first line %d times, want once:\n%s", invocation, got, rendered)
+		}
+		if strings.Contains(rendered, "Usage:") {
+			t.Errorf("`%s` printed the usage block:\n%s", invocation, rendered)
+		}
+		if len(lines) > 2 {
+			t.Errorf("`%s` rendered %d lines, want at most the token and what to do:\n%s", invocation, len(lines), rendered)
+		}
+		for _, want := range tc.wants {
+			if !strings.Contains(rendered, want) {
+				t.Errorf("`%s` does not say %q:\n%s", invocation, want, rendered)
+			}
+		}
+	}
+}
+
+// A leaf that takes an operand must be left alone entirely — the guard classifies by asking
+// the validator, so a command whose Args permits a positional keeps accepting it.
+func TestOperandTakingLeavesStillAcceptTheirArgument(t *testing.T) {
+	installUnknownSubcommandGuard(rootCmd)
+
+	for _, tc := range []struct{ path, arg string }{
+		{path: "pinchtab nav", arg: "https://example.com"},
+		{path: "pinchtab click", arg: "e5"},
+		{path: "pinchtab close", arg: "tab-1"},
+		{path: "pinchtab daemon", arg: "status"},
+	} {
+		leaf := findLeaf(rootCmd, tc.path)
+		if leaf == nil {
+			t.Errorf("%s is no longer a leaf command; re-point this row rather than deleting it", tc.path)
+			continue
+		}
+		if err := leaf.Args(leaf, []string{tc.arg}); err != nil {
+			t.Errorf("%s refused its own argument %q: %v", tc.path, tc.arg, err)
+		}
+	}
+}
+
+func commandLeaves(root *cobra.Command) []*cobra.Command {
+	var leaves []*cobra.Command
+	var walk func(cmd *cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		if !cmd.HasSubCommands() && cmd.HasParent() {
+			leaves = append(leaves, cmd)
+		}
+		for _, sub := range cmd.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	return leaves
+}
+
+func findLeaf(root *cobra.Command, path string) *cobra.Command {
+	for _, leaf := range commandLeaves(root) {
+		if leaf.CommandPath() == path {
+			return leaf
+		}
+	}
+	return nil
+}
