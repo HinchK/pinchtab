@@ -328,19 +328,22 @@ func fromSeaportalGroups(groups []seaportal.PageGroup) []PageGroup {
 // here rather than a silent divergence with nothing failing.
 const ThinContentChars = 160
 
-// forwardableRecommendations are the upstream recommendations that survive the browser
-// phase, matched on the stable noun in each.
+// regeneratedRecommendations are the upstream recommendations this package rebuilds
+// from the final pages, matched on the stable phrase in each — the errors/4xx line and
+// the thin-content line.
 //
 // THE RULE, recorded where the choice is made, so the next upstream recommendation is
 // classified rather than guessed at: a recommendation derived from PAGE CONTENT must be
 // regenerated after enrichment, because the browser phase changes exactly that; one
 // derived from CRAWL SCOPE is forwarded, because the browser phase changes nothing about
-// which URLs were sampled. Both sitemap lines are scope; the errors and thin-content
-// lines are content, and both are regenerated below from the final pages.
+// which URLs were sampled. Both sitemap lines are scope and forward by matching nothing
+// here; the errors and thin-content lines are content, and both are regenerated below
+// from the final pages.
 //
 // An unrecognised recommendation is FORWARDED, since dropping advice that is still true
-// is the worse failure. Classify a new one here when it appears.
-var forwardableRecommendations = []string{"sitemap"}
+// is the worse failure — which is why this list names what is DROPPED, so a new upstream
+// line takes the forwarding default until it is classified here.
+var regeneratedRecommendations = []string{"extractable text", "returned errors"}
 
 // summarize rolls the FINAL pages up. Every field including the prose comes from this one
 // slice: the recommendations used to be carried in verbatim from the HTTP crawl, so the
@@ -424,12 +427,12 @@ func contentChars(p Page) int {
 }
 
 func regeneratedLocally(rec string) bool {
-	for _, forwardable := range forwardableRecommendations {
-		if strings.Contains(rec, forwardable) {
-			return false
+	for _, phrase := range regeneratedRecommendations {
+		if strings.Contains(rec, phrase) {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // clampConcurrency normalizes a requested concurrency into [1, MaxConcurrency].

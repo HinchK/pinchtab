@@ -713,3 +713,25 @@ func TestPreviewCountsWithheldBodiesByTheirRecordedLength(t *testing.T) {
 		t.Errorf("preview counted withheld bodies as thin: %q", thinRec)
 	}
 }
+
+func TestAnUnrecognisedInheritedRecommendationIsForwardedNotDropped(t *testing.T) {
+	unknown := "robots.txt disallows 3 of the discovered paths; consider --ignore-robots"
+	crawl := crawlAdvising([]string{unknown},
+		seaportal.PageObject{URL: "https://example.com/", Status: 200, Markdown: longMarkdown},
+	)
+
+	report, err := Run(context.Background(), Input{URL: "https://example.com"}, RunOptions{NoBrowser: true}, crawl, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	found := false
+	for _, rec := range report.Summary.Recommendations {
+		if rec == unknown {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("an inherited recommendation matching neither the regenerated phrases nor the sitemap lines was silently swallowed; the recorded rule says unrecognised advice FORWARDS, since dropping advice that is still true is the worse failure\n got %v", report.Summary.Recommendations)
+	}
+}
