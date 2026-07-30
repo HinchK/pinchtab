@@ -2,6 +2,11 @@ package audit
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -184,41 +189,199 @@ func TestReportJSONHasNoVisibleKeyForInteractiveElements(t *testing.T) {
 }
 
 // The SDK mirrors these structs by hand so the public surface never imports
-// internal packages, which means nothing but this guard keeps a field removed
-// from one side from surviving on the other. Every payload struct whose fields
-// are primitives is listed; the containers that hold them differ by package
-// qualification, and AuditInput deliberately differs, so they cannot be compared
-// this way.
-func TestAuditPayloadTypesMatchTheirSDKMirrors(t *testing.T) {
-	shape := func(v any) []string {
-		rt := reflect.TypeOf(v)
-		var out []string
-		for i := 0; i < rt.NumField(); i++ {
-			f := rt.Field(i)
+// internal packages, which means nothing but this guard keeps a field removed from
+// one side from surviving on the other.
+//
+// There are two tiers because there are two comparable axes, not because one list
+// grew awkward. A struct whose fields are all primitives can be compared on name +
+// TYPE + tag — a changed primitive type is a decode failure, the one divergence that
+// actually breaks a consumer. A struct holding mirrored structs cannot: its field
+// types read as audit.ConsoleLogEntry on one side and pinchtabaudit.ConsoleLogEntry
+// on the other, which is package qualification rather than divergence. Those are
+// compared on name + tag, which still catches a field added or removed on one side —
+// and they are the top-level payload shapes, so they are the likeliest to gain one.
+type mirrorPair struct {
+	// internalName and sdkName are the declared type names. They are carried
+	// explicitly rather than derived because two pairs are not name-equal, and the
+	// census below credits a shared name only when a pair claims it on both sides.
+	internalName string
+	sdkName      string
+	internal     any
+	sdk          any
+}
+
+// mirrorPairsWithTypes are compared on name + type + tag: every field is a
+// primitive, a slice of primitives, or a time, so no field type is package-qualified.
+var mirrorPairsWithTypes = []mirrorPair{
+	{"InteractiveElement", "InteractiveElement", InteractiveElement{}, pinchtabaudit.InteractiveElement{}},
+	{"ConsoleLogEntry", "ConsoleLogEntry", ConsoleLogEntry{}, pinchtabaudit.ConsoleLogEntry{}},
+	{"NetworkRequest", "NetworkRequest", NetworkRequest{}, pinchtabaudit.NetworkRequest{}},
+	{"BrokenAsset", "BrokenAsset", BrokenAsset{}, pinchtabaudit.BrokenAsset{}},
+	{"SecurityFinding", "SecurityFinding", SecurityFinding{}, pinchtabaudit.SecurityFinding{}},
+	{"A11yFinding", "A11yFinding", A11yFinding{}, pinchtabaudit.A11yFinding{}},
+	{"VisualDiffResult", "VisualDiffResult", VisualDiffResult{}, pinchtabaudit.VisualDiffResult{}},
+	{"AuditOptions", "AuditOptions", AuditOptions{}, pinchtabaudit.AuditOptions{}},
+	// Not name-equal: the SDK drops the Browser prefix it has no other timings to
+	// distinguish from. A name-equality census would report both as unguarded.
+	{"BrowserTimingMetrics", "TimingMetrics", BrowserTimingMetrics{}, pinchtabaudit.TimingMetrics{}},
+	// Also not name-equal, and for a sharper reason: the SDK's AuditInput is the
+	// REQUEST shape, so the report's input block needed its own mirror.
+	{"AuditInput", "AuditReportInput", AuditInput{}, pinchtabaudit.AuditReportInput{}},
+}
+
+// mirrorPairsWithoutTypes are compared on name + tag only, because their field types
+// are package-qualified mirrors of the structs above.
+var mirrorPairsWithoutTypes = []mirrorPair{
+	{"BrowserPageData", "BrowserPageData", BrowserPageData{}, pinchtabaudit.BrowserPageData{}},
+	{"PageResult", "PageResult", PageResult{}, pinchtabaudit.PageResult{}},
+	{"PageAudit", "PageAudit", PageAudit{}, pinchtabaudit.PageAudit{}},
+	{"AuditReport", "AuditReport", AuditReport{}, pinchtabaudit.AuditReport{}},
+}
+
+// unmirroredSharedNames are type names both packages export that are deliberately NOT
+// mirrors, each with its own reason. One blanket rationale is what let a live
+// divergence hide here before: it covered a deliberate difference, two accidental
+// omissions and an unchosen tag at once.
+var unmirroredSharedNames = map[string]string{
+	"AuditInput": "the two same-named types describe opposite directions: internal AuditInput is the report's input block, mirrored by the SDK's AuditReportInput and guarded as that pair, while the SDK's AuditInput carries SeaportalResults — raw bytes a caller sends and the server never echoes back",
+	"PageOptions": "internal resolves each collector to a bool; the SDK uses *bool so nil means " +
+		"keep the server default, which is a deliberately different wire contract rather than a drifted mirror",
+	"RunOptions": "an in-process options struct on both sides, never marshalled: internal carries no json tags at all and the SDK nests *PageOptions",
+}
+
+func mirrorShape(v any, withTypes bool) []string {
+	rt := reflect.TypeOf(v)
+	var out []string
+	for i := 0; i < rt.NumField(); i++ {
+		f := rt.Field(i)
+		if withTypes {
 			out = append(out, f.Name+" "+f.Type.String()+" "+f.Tag.Get("json"))
+			continue
 		}
-		return out
+		out = append(out, f.Name+" "+f.Tag.Get("json"))
+	}
+	return out
+}
+
+func TestAuditPayloadTypesMatchTheirSDKMirrors(t *testing.T) {
+	for _, tier := range []struct {
+		name      string
+		pairs     []mirrorPair
+		withTypes bool
+	}{
+		{"name+type+tag", mirrorPairsWithTypes, true},
+		{"name+tag", mirrorPairsWithoutTypes, false},
+	} {
+		for _, pair := range tier.pairs {
+			t.Run(tier.name+"/"+pair.internalName, func(t *testing.T) {
+				got := mirrorShape(pair.internal, tier.withTypes)
+				want := mirrorShape(pair.sdk, tier.withTypes)
+				if len(got) == 0 {
+					t.Fatalf("%s has no fields; the guard would pass vacuously", pair.internalName)
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("%s diverges from its SDK mirror %s\n internal: %v\n      sdk: %v",
+						pair.internalName, pair.sdkName, got, want)
+				}
+			})
+		}
+	}
+}
+
+// The census that closes the class. One hardcoded struct became nine, and nothing
+// stopped a tenth mirrored struct from being added to both packages and covered by
+// neither. Every type name exported by BOTH packages must be claimed by a pair on
+// both sides or carry a reason in unmirroredSharedNames; a name in neither fails.
+func TestEverySharedAuditTypeNameIsClaimedOrExcused(t *testing.T) {
+	internalNames := exportedStructNames(t, ".")
+	sdkNames := exportedStructNames(t, filepath.Join("..", "..", "pkg", "pinchtabaudit"))
+
+	claimedInternal := map[string]bool{}
+	claimedSDK := map[string]bool{}
+	for _, pair := range append(append([]mirrorPair{}, mirrorPairsWithTypes...), mirrorPairsWithoutTypes...) {
+		if !internalNames[pair.internalName] {
+			t.Errorf("pair names internal type %q, which internal/audit does not declare", pair.internalName)
+		}
+		if !sdkNames[pair.sdkName] {
+			t.Errorf("pair names SDK type %q, which pkg/pinchtabaudit does not declare", pair.sdkName)
+		}
+		claimedInternal[pair.internalName] = true
+		claimedSDK[pair.sdkName] = true
 	}
 
-	for name, pair := range map[string][2]any{
-		"InteractiveElement": {InteractiveElement{}, pinchtabaudit.InteractiveElement{}},
-		"ConsoleLogEntry":    {ConsoleLogEntry{}, pinchtabaudit.ConsoleLogEntry{}},
-		"NetworkRequest":     {NetworkRequest{}, pinchtabaudit.NetworkRequest{}},
-		"BrokenAsset":        {BrokenAsset{}, pinchtabaudit.BrokenAsset{}},
-		"SecurityFinding":    {SecurityFinding{}, pinchtabaudit.SecurityFinding{}},
-		"A11yFinding":        {A11yFinding{}, pinchtabaudit.A11yFinding{}},
-		"VisualDiffResult":   {VisualDiffResult{}, pinchtabaudit.VisualDiffResult{}},
-		"TimingMetrics":      {BrowserTimingMetrics{}, pinchtabaudit.TimingMetrics{}},
-		"AuditOptions":       {AuditOptions{}, pinchtabaudit.AuditOptions{}},
-	} {
-		t.Run(name, func(t *testing.T) {
-			got, want := shape(pair[0]), shape(pair[1])
-			if len(got) == 0 {
-				t.Fatalf("%s has no fields; the guard would pass vacuously", name)
-			}
-			if !reflect.DeepEqual(got, want) {
-				t.Errorf("%s diverges from the SDK mirror\n internal: %v\n      sdk: %v", name, got, want)
-			}
-		})
+	var shared int
+	for name := range internalNames {
+		if !sdkNames[name] {
+			continue
+		}
+		shared++
+		if claimedInternal[name] && claimedSDK[name] {
+			continue
+		}
+		if unmirroredSharedNames[name] != "" {
+			continue
+		}
+		t.Errorf("%s is exported by both internal/audit and pkg/pinchtabaudit but is in no comparison tier "+
+			"and has no reason in unmirroredSharedNames; add it to one", name)
 	}
+	if shared == 0 {
+		t.Fatal("no shared type names found; this census would pass vacuously")
+	}
+
+	for name := range unmirroredSharedNames {
+		if !internalNames[name] || !sdkNames[name] {
+			t.Errorf("unmirroredSharedNames excuses %q, which is no longer exported by both packages", name)
+		}
+		// An excuse that also names a guarded pair is the next version of the blanket
+		// rationale: it reads as covered from either table, so deleting the pair later
+		// looks safe. AuditInput is excused for its NAME while internal AuditInput is
+		// paired with the SDK's AuditReportInput, which is why the check is symmetry.
+		if claimedInternal[name] && claimedSDK[name] {
+			t.Errorf("%q is both excused in unmirroredSharedNames and compared as a pair; keep one, or deleting the pair will read as covered", name)
+		}
+	}
+}
+
+// exportedStructNames scans a package directory for `type X struct` declarations.
+// Reflection cannot enumerate a package, and the mirror lives in two of them.
+func exportedStructNames(t *testing.T, dir string) map[string]bool {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+
+	names := map[string]bool{}
+	fset := token.NewFileSet()
+	var scanned int
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, parser.SkipObjectResolution)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		scanned++
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok || !ts.Name.IsExported() {
+					continue
+				}
+				if _, ok := ts.Type.(*ast.StructType); ok {
+					names[ts.Name.Name] = true
+				}
+			}
+		}
+	}
+	if scanned == 0 {
+		t.Fatalf("no production files scanned in %s; the census would pass vacuously", dir)
+	}
+	return names
 }
