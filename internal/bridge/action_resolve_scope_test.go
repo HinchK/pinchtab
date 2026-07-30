@@ -63,9 +63,9 @@ func TestResolveWrapperUnwrapsToTheSameLeafForEveryForm(t *testing.T) {
 			scope := &stubScope{nodeID: 42}
 			sel := selector.Parse(tc.raw)
 
-			got, err := resolveWrapper(context.Background(), scope, sel, nil)
+			got, err := resolveParsed(context.Background(), scope, sel, nil, 0, false)
 			if err != nil {
-				t.Fatalf("resolveWrapper(%q): %v", tc.raw, err)
+				t.Fatalf("resolveParsed(%q): %v", tc.raw, err)
 			}
 			if got != 42 {
 				t.Errorf("node id = %d, want 42", got)
@@ -84,7 +84,7 @@ func TestResolveWrapperRoutesRefsThroughTheScope(t *testing.T) {
 	outside := errors.New("outside")
 	scope := &stubScope{nodeID: 7, refErr: outside}
 
-	_, err := resolveWrapper(context.Background(), scope, selector.Parse("first:ref:e0"), nil)
+	_, err := resolveParsed(context.Background(), scope, selector.Parse("first:ref:e0"), nil, 0, false)
 
 	if !errors.Is(err, outside) {
 		t.Fatalf("err = %v, want the scope's own ref error", err)
@@ -111,7 +111,7 @@ func TestResolveWrapperRejectionsUnchanged(t *testing.T) {
 		t.Run(tc.raw, func(t *testing.T) {
 			scope := &stubScope{nodeID: 7}
 
-			_, err := resolveWrapper(context.Background(), scope, selector.Parse(tc.raw), nil)
+			_, err := resolveParsed(context.Background(), scope, selector.Parse(tc.raw), nil, 0, false)
 
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("err = %v, want %q", err, tc.want)
@@ -257,6 +257,12 @@ func TestWrapperArmsAreWiredToTheirOwnScope(t *testing.T) {
 	}
 	src := string(raw)
 
+	// The property, not the argument spelling: each entry point must hand its
+	// wrapper arm ITS OWN scope and never mention the other. Pinning the full call
+	// text made this red for any signature change — which is what happened when
+	// resolveWrapper and its duplicate wrapper arms collapsed into resolveParsed.
+	const dispatch = "resolveParsed(ctx, "
+
 	entries := []struct {
 		entry string
 		want  string
@@ -264,19 +270,49 @@ func TestWrapperArmsAreWiredToTheirOwnScope(t *testing.T) {
 	}{
 		{
 			entry: "func ResolveUnifiedSelectorInFrame(",
-			want:  "resolveWrapper(ctx, frameScope{frameID}, sel, refCache)",
+			want:  "frameScope{frameID}",
 			other: "nodeScope{",
 		},
 		{
 			entry: "func ResolveUnifiedSelectorWithinNode(",
-			want:  "resolveWrapper(ctx, nodeScope{scopeBackendNodeID}, sel, refCache)",
+			want:  "nodeScope{scopeBackendNodeID}",
 			other: "frameScope{",
 		},
 	}
 
-	if sites := strings.Count(src, "resolveWrapper(ctx, "); sites != len(entries) {
-		t.Fatalf("action_resolve.go hands the wrapper recursion a scope at %d sites but this guard checks %d — a scope entry point nobody listed here is unguarded, which is how the swap this test exists to catch comes back. Add the new entry point to the table; if resolveWrapper has been replaced, pin the same property (each entry point passes its OWN scope and never the other) against whatever replaced it rather than deleting this test",
-			sites, len(entries))
+	// The census is by OWNER rather than by call count, because resolveNested also
+	// dispatches here — it is the parse-then-dispatch hop, and it passes the scope
+	// it was given rather than constructing one. Any other function reaching
+	// resolveParsed is an unguarded scope decision, which is how the swap this test
+	// exists to catch comes back.
+	allowed := map[string]bool{
+		"ResolveUnifiedSelectorInFrame":    true,
+		"ResolveUnifiedSelectorWithinNode": true,
+		"resolveNested":                    true,
+	}
+	callers := map[string]bool{}
+	for _, chunk := range strings.Split(src, "\nfunc ") {
+		if !strings.Contains(chunk, dispatch) {
+			continue
+		}
+		name := chunk[:strings.IndexAny(chunk, "(")]
+		if idx := strings.LastIndex(name, ") "); idx >= 0 {
+			name = name[idx+2:]
+		}
+		callers[strings.TrimSpace(name)] = true
+	}
+	if len(callers) == 0 {
+		t.Fatalf("nothing in action_resolve.go calls %s — this guard would pass vacuously; if the dispatcher was renamed, pin the same property against its replacement rather than deleting this test", dispatch)
+	}
+	for name := range callers {
+		if !allowed[name] {
+			t.Errorf("%s dispatches to %s but is not a listed scope owner — add it to this guard's table so its scope is pinned too", name, dispatch)
+		}
+	}
+	for name := range allowed {
+		if !callers[name] {
+			t.Errorf("%s no longer dispatches to %s; this guard's table is stale", name, dispatch)
+		}
 	}
 
 	for _, tc := range entries {
@@ -284,11 +320,19 @@ func TestWrapperArmsAreWiredToTheirOwnScope(t *testing.T) {
 		if end := strings.Index(body, "\nfunc "); end >= 0 {
 			body = body[:end]
 		}
-		if !strings.Contains(body, tc.want) {
-			t.Errorf("%s no longer hands its wrapper arm %s — a dialog-scoped first:/last:/nth: would search the wrong root", tc.entry, tc.want)
+		if !strings.Contains(body, dispatch+tc.want) {
+			t.Errorf("%s no longer hands its wrapper arm %s%s — a dialog-scoped first:/last:/nth: would search the wrong root", tc.entry, dispatch, tc.want)
 		}
-		if strings.Contains(body, "resolveWrapper(ctx, "+tc.other) {
+		if strings.Contains(body, dispatch+tc.other) {
 			t.Errorf("%s hands its wrapper arm a %s: the scopes are swapped", tc.entry, tc.other)
+		}
+		// The starting index/fromEnd is the other half of the wrapper wiring, and it
+		// is invisible to the stub table below: that table calls the dispatcher
+		// directly, so it never reads what an ENTRY POINT passes. An entry point
+		// starting at fromEnd=true makes every first: resolve like last:, which only
+		// the browser-backed scope tests would notice — and they skip here.
+		if !strings.Contains(body, dispatch+tc.want+", sel, refCache, 0, false)") {
+			t.Errorf("%s no longer starts its wrapper arm at index 0, fromEnd false — a wrapper must derive its own index from the grammar, not inherit one from the entry point", tc.entry)
 		}
 	}
 }

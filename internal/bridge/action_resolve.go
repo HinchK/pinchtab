@@ -688,15 +688,26 @@ func errHandlerLayerKind(kind selector.Kind) error {
 	return fmt.Errorf("%s selectors must be resolved at the handler layer via semantic", kind)
 }
 
-func resolveNested(ctx context.Context, scope resolveScope, raw string, refCache *RefCache, index int, fromEnd bool) (int64, error) {
-	inner := selector.Parse(raw)
-	switch inner.Kind {
+// resolveParsed is the one switch over selector kinds: it turns a
+// first:/last:/nth: wrapper into the index/fromEnd pair the recursion carries, and
+// hands anything else to the scope. The wrapper arms used to exist twice, split on
+// whether the selector arrived parsed or raw — the grammar the scope refactor set
+// out to stop duplicating was the part still duplicated. Parsing is now the only
+// difference, and it lives in resolveNested.
+//
+// There is no "unknown selector kind" default. The old parsed-input copy had one and
+// no input could reach it: both entry points dispatch here only from a
+// case selector.KindFirst, selector.KindLast, selector.KindNth arm, and those arms
+// are still the narrow kind check. Keeping a second switch alive to hold an
+// unreachable error would be this duplication wearing a different hat.
+func resolveParsed(ctx context.Context, scope resolveScope, sel selector.Selector, refCache *RefCache, index int, fromEnd bool) (int64, error) {
+	switch sel.Kind {
 	case selector.KindFirst:
-		return resolveNested(ctx, scope, inner.Value, refCache, 0, false)
+		return resolveNested(ctx, scope, sel.Value, refCache, 0, false)
 	case selector.KindLast:
-		return resolveNested(ctx, scope, inner.Value, refCache, 0, true)
+		return resolveNested(ctx, scope, sel.Value, refCache, 0, true)
 	case selector.KindNth:
-		nth, nestedRaw, err := selector.ParseNth(inner.Value)
+		nth, nestedRaw, err := selector.ParseNth(sel.Value)
 		if err != nil {
 			return 0, err
 		}
@@ -705,31 +716,16 @@ func resolveNested(ctx context.Context, scope resolveScope, raw string, refCache
 		if fromEnd || index != 0 {
 			return 0, fmt.Errorf("ref selector cannot be used with last/nth")
 		}
-		return scope.resolveRef(ctx, inner, refCache)
+		return scope.resolveRef(ctx, sel, refCache)
 	case selector.KindSemantic:
 		return 0, errSemanticAtResolver()
 	default:
-		return scope.resolveAt(ctx, inner, index, fromEnd)
+		return scope.resolveAt(ctx, sel, index, fromEnd)
 	}
 }
 
-// resolveWrapper turns a first:/last:/nth: wrapper into the index the shared
-// recursion carries. Both entry points dispatch their wrapper kinds here.
-func resolveWrapper(ctx context.Context, scope resolveScope, sel selector.Selector, refCache *RefCache) (int64, error) {
-	switch sel.Kind {
-	case selector.KindFirst:
-		return resolveNested(ctx, scope, sel.Value, refCache, 0, false)
-	case selector.KindLast:
-		return resolveNested(ctx, scope, sel.Value, refCache, 0, true)
-	case selector.KindNth:
-		index, rawSelector, err := selector.ParseNth(sel.Value)
-		if err != nil {
-			return 0, err
-		}
-		return resolveNested(ctx, scope, rawSelector, refCache, index, false)
-	default:
-		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)
-	}
+func resolveNested(ctx context.Context, scope resolveScope, raw string, refCache *RefCache, index int, fromEnd bool) (int64, error) {
+	return resolveParsed(ctx, scope, selector.Parse(raw), refCache, index, fromEnd)
 }
 
 func ResolveXPathToNodeID(ctx context.Context, xpath string) (int64, error) {
@@ -816,7 +812,7 @@ func ResolveUnifiedSelectorInFrame(ctx context.Context, sel selector.Selector, r
 		return 0, errHandlerLayerKind(sel.Kind)
 
 	case selector.KindFirst, selector.KindLast, selector.KindNth:
-		return resolveWrapper(ctx, frameScope{frameID}, sel, refCache)
+		return resolveParsed(ctx, frameScope{frameID}, sel, refCache, 0, false)
 
 	default:
 		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)
@@ -847,7 +843,7 @@ func ResolveUnifiedSelectorWithinNode(ctx context.Context, sel selector.Selector
 		return 0, errHandlerLayerKind(sel.Kind)
 
 	case selector.KindFirst, selector.KindLast, selector.KindNth:
-		return resolveWrapper(ctx, nodeScope{scopeBackendNodeID}, sel, refCache)
+		return resolveParsed(ctx, nodeScope{scopeBackendNodeID}, sel, refCache, 0, false)
 
 	default:
 		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)
