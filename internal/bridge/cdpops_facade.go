@@ -106,6 +106,10 @@ func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int) error {
 	return bridgecdpops.DragByNodeID(ctx, nodeID, dx, dy)
 }
 
+func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64) error {
+	return bridgecdpops.DragBetweenPoints(ctx, x, y, endX, endY)
+}
+
 func HoverByCoordinate(ctx context.Context, x, y float64) error {
 	return bridgecdpops.HoverByCoordinate(ctx, x, y)
 }

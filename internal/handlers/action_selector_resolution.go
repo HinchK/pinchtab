@@ -79,6 +79,25 @@ func (h *Handlers) resolveActionRequestSelector(ctx context.Context, tabID strin
 	return actionSelectorResolution{status: http.StatusConflict}, fmt.Errorf("topmost dialog changed twice during selector resolution; retry after the page settles")
 }
 
+// resolveActionRequestDestination resolves a drag's ToSelector the same way the source is
+// resolved, so a destination can be a ref, a CSS selector or a semantic one — the target
+// form exists to say "onto that element", and refs are what a snapshot hands an agent. It
+// runs a scratch request through the source resolver rather than reimplementing the frame
+// and modal scoping, and reports refMissing so the caller answers 404 with the recovery
+// hint instead of dragging to (0,0).
+func (h *Handlers) resolveActionRequestDestination(ctx context.Context, tabID string, req *bridge.ActionRequest) (actionSelectorResolution, error) {
+	if req.ToSelector == "" || req.ToNodeID != 0 {
+		return actionSelectorResolution{}, nil
+	}
+	destination := bridge.ActionRequest{Kind: req.Kind, TabID: req.TabID, Selector: req.ToSelector}
+	resolution, err := h.resolveActionRequestSelector(ctx, tabID, &destination)
+	if err != nil {
+		return resolution, fmt.Errorf("drag destination: %w", err)
+	}
+	req.ToNodeID = destination.NodeID
+	return resolution, nil
+}
+
 func (h *Handlers) resolveActionRequestSelectorInScope(
 	ctx context.Context,
 	tabID, frameID string,

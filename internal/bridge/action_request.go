@@ -87,6 +87,19 @@ type ActionRequest struct {
 	DragX  int `json:"dragX"`
 	DragY  int `json:"dragY"`
 
+	// ToSelector is a drag's DESTINATION, in the same unified selector vocabulary as
+	// Selector (ref, CSS, text:), resolved to ToNodeID by the handler. It is what makes
+	// "drag this onto that" one action: assembling it from four pointer requests moved the
+	// pointer in a single jump, which Chrome never reads as the start of a drag, so an
+	// HTML5 draggable saw nothing while every request answered OK. ToX/ToY are the same
+	// destination given as a point, and HasToXY separates an absent destination from the
+	// legitimate one at (0,0).
+	ToSelector string  `json:"toSelector,omitempty"`
+	ToNodeID   int64   `json:"toNodeId,omitempty"`
+	ToX        float64 `json:"toX,omitempty"`
+	ToY        float64 `json:"toY,omitempty"`
+	HasToXY    bool    `json:"hasToXY,omitempty"`
+
 	WaitNav bool   `json:"waitNav"`
 	Fast    bool   `json:"fast"`
 	Owner   string `json:"owner"`
@@ -149,6 +162,7 @@ func (r *ActionRequest) UnmarshalJSON(data []byte) error {
 	*r = ActionRequest(alias)
 	r.Kind = CanonicalActionKind(r.Kind)
 	r.HasXY = r.HasXY || hasJSONKey(raw, "x") || hasJSONKey(raw, "y")
+	r.HasToXY = r.HasToXY || hasJSONKey(raw, "toX") || hasJSONKey(raw, "toY")
 	r.HasText = r.HasText || hasJSONKey(raw, "text") || hasJSONKey(raw, "value")
 	if hasJSONKey(raw, "deltaX") {
 		if err := json.Unmarshal(raw["deltaX"], &r.DeltaX); err != nil {

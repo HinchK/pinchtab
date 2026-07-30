@@ -361,10 +361,19 @@ func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int) error {
 	if err != nil {
 		return err
 	}
+	return DragBetweenPoints(ctx, x, y, x+float64(dx), y+float64(dy))
+}
 
-	endX := x + float64(dx)
-	endY := y + float64(dy)
-	dist := math.Sqrt(float64(dx*dx + dy*dy))
+// DragBetweenPoints is the one drag implementation, and the interpolation is the whole of
+// it: Chrome starts an HTML5 drag only after sustained movement follows the press, so a
+// single jump from source to destination never fires dragstart. That is why the CLI's
+// four-request from->to sequence — move, down, ONE move, up — silently did nothing on a
+// draggable element while reporting success, and why the destination has to be resolved
+// into one action rather than assembled from the pointer primitives.
+func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64) error {
+	dx := endX - x
+	dy := endY - y
+	dist := math.Sqrt(dx*dx + dy*dy)
 	steps := int(dist / 20)
 	if steps < 3 {
 		steps = 3
@@ -386,9 +395,7 @@ func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int) error {
 	}
 	for i := 1; i <= steps; i++ {
 		t := float64(i) / float64(steps)
-		mx := x + t*float64(dx)
-		my := y + t*float64(dy)
-		if err := dispatchMouseMove(ctx, mx, my, input.Left, 1); err != nil {
+		if err := dispatchMouseMove(ctx, x+t*dx, y+t*dy, input.Left, 1); err != nil {
 			return err
 		}
 	}

@@ -606,6 +606,9 @@ func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[strin
 }
 
 func (b *Bridge) actionDrag(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	if req.hasDragDestination() {
+		return b.dragToDestination(ctx, req)
+	}
 	if req.DragX == 0 && req.DragY == 0 {
 		return nil, fmt.Errorf("dragX or dragY required for drag")
 	}
@@ -628,6 +631,60 @@ func (b *Bridge) actionDrag(ctx context.Context, req ActionRequest) (map[string]
 		return map[string]any{"dragged": true, "dragX": req.DragX, "dragY": req.DragY}, nil
 	}
 	return nil, fmt.Errorf("need selector, ref, or nodeId")
+}
+
+// dragToDestination is the target form: source and destination in one action, so the
+// interpolated move sequence Chrome needs to recognise a drag happens between them. The
+// zero-offset refusal above does not apply here — a drop onto an overlapping target is a
+// legitimate request, and it is the destination, not a delta, that says where to go.
+func (b *Bridge) dragToDestination(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	fromX, fromY, err := dragPointFor(ctx, dragEnd{nodeID: req.NodeID, selector: req.Selector, x: req.X, y: req.Y, hasPoint: req.HasXY})
+	if err != nil {
+		return nil, fmt.Errorf("drag source: %w", err)
+	}
+	toX, toY, err := dragPointFor(ctx, dragEnd{nodeID: req.ToNodeID, selector: req.ToSelector, x: req.ToX, y: req.ToY, hasPoint: req.HasToXY})
+	if err != nil {
+		return nil, fmt.Errorf("drag destination: %w", err)
+	}
+	if err := DragBetweenPoints(ctx, fromX, fromY, toX, toY); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"dragged": true,
+		"fromX":   fromX,
+		"fromY":   fromY,
+		"toX":     toX,
+		"toY":     toY,
+	}, nil
+}
+
+// dragEnd is one end of a target drag. Both ends accept the same three vocabularies, so
+// they resolve through one function rather than two bodies that can drift apart.
+type dragEnd struct {
+	nodeID   int64
+	selector string
+	x, y     float64
+	hasPoint bool
+}
+
+func dragPointFor(ctx context.Context, end dragEnd) (float64, float64, error) {
+	switch {
+	case end.nodeID > 0:
+		return PointerPointForNode(ctx, end.nodeID, true)
+	case end.selector != "":
+		node, err := firstNodeBySelector(ctx, end.selector)
+		if err != nil {
+			return 0, 0, err
+		}
+		return PointerPointForNode(ctx, int64(node.BackendNodeID), true)
+	case end.hasPoint:
+		return end.x, end.y, nil
+	}
+	return 0, 0, fmt.Errorf("need selector, ref, nodeId, or coordinates")
+}
+
+func (r ActionRequest) hasDragDestination() bool {
+	return r.ToNodeID > 0 || r.ToSelector != "" || r.HasToXY
 }
 
 func (b *Bridge) actionHumanizedClick(ctx context.Context, req ActionRequest) (result map[string]any, err error) {

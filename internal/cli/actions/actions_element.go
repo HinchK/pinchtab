@@ -358,12 +358,9 @@ func actionBodyForTarget(kind string, target dragTarget) map[string]any {
 }
 
 func Drag(client *http.Client, base, token string, args []string, cmd *cobra.Command) {
-	// Two modes:
-	//   1. pinchtab drag <selector> --drag-x N --drag-y N
-	//        → single HTTP "drag" action with pixel offsets (dragX/dragY).
-	//   2. pinchtab drag <from> <to>
-	//        → synthesized mouse-move → mouse-down → mouse-move → mouse-up
-	//          sequence. Each target may be "selector" or "x,y" coords.
+	// Two modes, both ONE "drag" action: the offset form (dragX/dragY) and the target form
+	// (toSelector/toX/toY). The target form used to be four separate pointer requests, which
+	// moved the pointer in a single jump — never a drag as far as Chrome is concerned.
 	hasDragX := cmd.Flags().Changed("drag-x")
 	hasDragY := cmd.Flags().Changed("drag-y")
 
@@ -388,20 +385,21 @@ func Drag(client *http.Client, base, token string, args []string, cmd *cobra.Com
 		cli.Fatal("Usage: pinchtab drag <from> <to>  or  pinchtab drag <selector> --drag-x <n> --drag-y <n>")
 	}
 
-	from := parseDragTarget(args[0])
-	to := parseDragTarget(args[1])
-
-	mouseDown := map[string]any{"kind": bridge.ActionMouseDown}
-	mouseUp := map[string]any{"kind": bridge.ActionMouseUp}
+	body := actionBodyForTarget(bridge.ActionDrag, parseDragTarget(args[0]))
+	setDragDestinationBody(body, parseDragTarget(args[1]))
 	if button, _ := cmd.Flags().GetString("button"); button != "" {
-		mouseDown["button"] = button
-		mouseUp["button"] = button
+		body["button"] = button
 	}
+	postAction(client, base, token, cmd, body)
+}
 
-	postAction(client, base, token, cmd, actionBodyForTarget(bridge.ActionMouseMove, from))
-	postAction(client, base, token, cmd, mouseDown)
-	postAction(client, base, token, cmd, actionBodyForTarget(bridge.ActionMouseMove, to))
-	postAction(client, base, token, cmd, mouseUp)
+func setDragDestinationBody(body map[string]any, target dragTarget) {
+	if target.hasXY {
+		body["toX"] = target.x
+		body["toY"] = target.y
+		return
+	}
+	body["toSelector"] = target.selector
 }
 
 func ActionSimple(client *http.Client, base, token, kind string, args []string, cmd *cobra.Command) {

@@ -398,7 +398,35 @@ func TestMouseWheelSupportsPositionalDeltaY(t *testing.T) {
 	}
 }
 
-func TestDragPostsMouseSequence(t *testing.T) {
+// The from->to form used to post four independent pointer requests, and four requests
+// cannot interpolate: the pointer jumped from source to destination in one move, which
+// Chrome never reads as the start of a drag, so an HTML5 draggable saw nothing while all
+// four answered OK. The destination has to travel WITH the source in one action.
+func TestDragPostsOneActionCarryingItsDestination(t *testing.T) {
+	m := newMockServer()
+	defer m.close()
+	client := m.server.Client()
+
+	cmd := newActionCmd()
+	Drag(client, m.base(), "", []string{"e5", "e9"}, cmd)
+
+	if len(m.requests) != 1 {
+		t.Fatalf("expected 1 request, got %d; a drag assembled from several requests cannot interpolate the pointer", len(m.requests))
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(m.lastBody), &body)
+	if body["kind"] != "drag" {
+		t.Errorf("kind = %v, want drag", body["kind"])
+	}
+	if body["ref"] != "e5" {
+		t.Errorf("source = %+v, want ref e5", body)
+	}
+	if body["toSelector"] != "e9" {
+		t.Errorf("destination = %+v, want toSelector e9", body)
+	}
+}
+
+func TestDragToCoordinatesPostsThemAsTheDestination(t *testing.T) {
 	m := newMockServer()
 	defer m.close()
 	client := m.server.Client()
@@ -406,27 +434,13 @@ func TestDragPostsMouseSequence(t *testing.T) {
 	cmd := newActionCmd()
 	Drag(client, m.base(), "", []string{"e5", "400,320"}, cmd)
 
-	if len(m.requests) != 4 {
-		t.Fatalf("expected 4 requests, got %d", len(m.requests))
+	var body map[string]any
+	_ = json.Unmarshal([]byte(m.lastBody), &body)
+	if body["toX"] != float64(400) || body["toY"] != float64(320) {
+		t.Errorf("destination = %+v, want toX=400 toY=320", body)
 	}
-
-	var bodies []map[string]any
-	for _, req := range m.requests {
-		var body map[string]any
-		_ = json.Unmarshal([]byte(req.Body), &body)
-		bodies = append(bodies, body)
-	}
-	if bodies[0]["kind"] != "mouse-move" || bodies[0]["ref"] != "e5" {
-		t.Fatalf("unexpected first request: %+v", bodies[0])
-	}
-	if bodies[1]["kind"] != "mouse-down" {
-		t.Fatalf("unexpected second request: %+v", bodies[1])
-	}
-	if bodies[2]["kind"] != "mouse-move" || bodies[2]["x"] != float64(400) || bodies[2]["y"] != float64(320) {
-		t.Fatalf("unexpected third request: %+v", bodies[2])
-	}
-	if bodies[3]["kind"] != "mouse-up" {
-		t.Fatalf("unexpected fourth request: %+v", bodies[3])
+	if _, ok := body["toSelector"]; ok {
+		t.Errorf("destination = %+v, want no toSelector when the target is a coordinate pair", body)
 	}
 }
 

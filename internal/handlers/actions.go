@@ -198,6 +198,15 @@ func decodeActionRequest(w http.ResponseWriter, r *http.Request) (bridge.ActionR
 		var hasXYParam bool
 		d.Bool("hasXY", &hasXYParam)
 		req.HasXY = req.HasXY || hasXYParam
+		req.ToSelector = q.Get("toSelector")
+		if d.present("toX") {
+			d.Float("toX", &req.ToX)
+			req.HasToXY = true
+		}
+		if d.present("toY") {
+			d.Float("toY", &req.ToY)
+			req.HasToXY = true
+		}
 		req.Button = q.Get("button")
 		d.Bool("dismissBanners", &req.DismissBanners)
 		d.Bool("dismissKnownInterstitials", &req.DismissKnownInterstitials)
@@ -333,6 +342,15 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	selectorResolution, err := h.resolveActionRequestSelector(tCtx, resolvedTabID, &req)
 	if err != nil {
 		h.errorWithCrashContext(w, selectorResolution.httpStatus(), err)
+		return
+	}
+	destinationResolution, err := h.resolveActionRequestDestination(tCtx, resolvedTabID, &req)
+	if err != nil {
+		h.errorWithCrashContext(w, destinationResolution.httpStatus(), err)
+		return
+	}
+	if destinationResolution.refMissing {
+		httpx.Error(w, 404, fmt.Errorf("drag destination %s not found - take a /snapshot first", req.ToSelector))
 		return
 	}
 	refMissing := selectorResolution.refMissing

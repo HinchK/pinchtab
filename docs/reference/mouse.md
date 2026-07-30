@@ -46,7 +46,14 @@ Notes:
 - `mouse move` accepts either coordinates or a unified selector.
 - `mouse down` and `mouse up` accept an optional selector. Without one, they use the current pointer position.
 - `mouse wheel` accepts either a delta form (`<dy> [--dx <n>]`) or an optional selector. Without a selector, it uses the current pointer position.
-- `drag <from> <to>` accepts selector/ref targets or `x,y` coordinate pairs.
+- `drag <from> <to>` accepts selector/ref targets or `x,y` coordinate pairs on either side.
+- `drag` has two forms and they differ only in how the end of the drag is expressed: a
+  target (`drag <from> <to>`, `toSelector`/`toX`/`toY`) or an offset (`--drag-x/--drag-y`,
+  `dragX`/`dragY`). Both are one action that interpolates the pointer between the two
+  points, which is what makes HTML5 drag-and-drop work — Chrome starts a drag only after
+  sustained movement follows the press, so a single jump fires no `dragstart` at all.
+  Assembling a drag yourself out of `mouse move`/`mouse down`/`mouse up` has that problem:
+  use `drag` for anything with a `draggable` source.
 - `button` supports `left`, `right`, and `middle`.
 - Pointer move uses a bounded CDP `mouseMoved` dispatch first. If headless Chromium stalls that dispatch, PinchTab falls back to DOM mouse events so hover and mouse-move flows remain responsive.
 

@@ -88,14 +88,19 @@ var dragCmd = &cobra.Command{
 	Short: "Drag from one target to another (or by pixel offset)",
 	Long: `Drag a DOM element.
 
-Two forms:
+Two forms, both one HTTP "drag" action. They differ in how the endpoint of the
+drag is expressed — a target or an offset — and both drive the interpolated
+pointer sequence HTML5 drag-and-drop needs, so a draggable element fires
+dragstart and the destination receives drop.
+
   pinchtab drag <from> <to>
-      Synthesizes mouse-move → mouse-down → mouse-move → mouse-up.
-      Each target is a selector (CSS, ref, text:) or an "x,y" coord pair.
+      TARGET form: drag onto another element. Each target is a selector (CSS,
+      ref, text:) or an "x,y" coord pair. Symmetric with the HTTP /action body
+      {"kind":"drag","selector":"...","toSelector":"..."}.
 
   pinchtab drag <selector> --drag-x <n> --drag-y <n>
-      Single-step HTTP "drag" action with pixel offsets from the element's
-      current position. Symmetric with the HTTP /action body
+      OFFSET form: drag by a pixel delta from the element's current position,
+      for handles and sliders with no element to drop onto. Symmetric with
       {"kind":"drag","selector":"...","dragX":N,"dragY":N}.`,
 	Args: cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
