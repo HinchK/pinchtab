@@ -61,6 +61,18 @@ type Endpoint struct {
 	TabScoped  bool       // true = auto-generates /tabs/{id}/... variant
 }
 
+// frontDoorLocalPaths are the shorthand paths the orchestrator front door answers
+// ITSELF instead of proxying to an instance. Proxying a diagnostic endpoint hides
+// the front door's own numbers: it is the only layer that sees auth rejections and
+// unrouted paths, so forwarding the read leaves no way for a client to see them.
+// Declared here rather than as an Endpoint field because the catalogue below is
+// written positionally, and a new field would rewrite every unrelated entry.
+// Tab-scoped variants are unaffected: /tabs/{id}/metrics is a browser measurement
+// and still belongs to the instance.
+var frontDoorLocalPaths = map[string]bool{
+	"/metrics": true,
+}
+
 // Route returns the "METHOD /path" string used for mux registration.
 func (e Endpoint) Route() string {
 	return e.Method + " " + e.Path
@@ -198,12 +210,27 @@ func Core() []Endpoint {
 	return out
 }
 
-// ShorthandRoutes returns all non-capability-gated shorthand routes
-// as "METHOD /path" strings, suitable for mux registration.
+// ShorthandRoutes returns the non-capability-gated shorthand routes the front
+// door PROXIES, as "METHOD /path" strings suitable for mux registration.
+// FrontDoorLocal endpoints are excluded: the front door registers its own
+// handler for those, and registering both would panic on a duplicate pattern.
 func ShorthandRoutes() []string {
 	var routes []string
 	for _, ep := range coreEndpoints {
-		if ep.Capability == CapNone {
+		if ep.Capability == CapNone && !frontDoorLocalPaths[ep.Path] {
+			routes = append(routes, ep.Route())
+		}
+	}
+	return routes
+}
+
+// FrontDoorLocalRoutes returns the routes the front door must register itself.
+// It is the other half of ShorthandRoutes: together they cover every CapNone
+// endpoint exactly once, which the routes test pins.
+func FrontDoorLocalRoutes() []string {
+	var routes []string
+	for _, ep := range coreEndpoints {
+		if ep.Capability == CapNone && frontDoorLocalPaths[ep.Path] {
 			routes = append(routes, ep.Route())
 		}
 	}

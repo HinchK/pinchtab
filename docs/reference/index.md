@@ -19,6 +19,7 @@ Note: this index is generated and should be checked against the code when comman
 - [Hover](./hover.md)
 - [Instances](./instances.md)
 - [Keyboard](./keyboard.md)
+- [Metrics](./metrics.md)
 - [Mouse](./mouse.md)
 - [Navigate](./navigate.md)
 - [PDF](./pdf.md)

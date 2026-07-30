@@ -4,6 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/pinchtab/pinchtab/internal/bridge"
 )
 
 const maxRecentFailures = 20
@@ -33,16 +35,58 @@ func recordFailureEvent(ev FailureEvent) {
 	}
 }
 
-// FailureSnapshot returns recent failure diagnostics for /health and /metrics.
-func FailureSnapshot() map[string]any {
+// Layer names the process a set of counters describes. Server mode runs TWO
+// counter sets in two processes — the orchestrator front door, which is the only
+// one that sees auth rejections and unrouted paths, and each browser-control
+// instance — so every number a client reads has to say which one it came from.
+// They are never summed: one requestsTotal meaning two layers is a number an
+// operator cannot act on.
+const (
+	LayerFrontDoor = "frontDoor"
+	LayerInstance  = "instance"
+)
+
+// FailureSnapshot returns recent failure diagnostics for /health and /metrics,
+// labelled with the layer that recorded them. The label is repeated on each event
+// as well as on the block, so an event stays self-describing when it is copied
+// out of the response it arrived in.
+func FailureSnapshot(layer string) map[string]any {
 	failureMu.Lock()
 	recent := append([]FailureEvent(nil), recentFailures...)
 	failureMu.Unlock()
 
-	return map[string]any{
-		"requestsFailed": atomic.LoadUint64(&metricRequestsFailed),
-		"recent":         recent,
+	events := make([]map[string]any, 0, len(recent))
+	for _, ev := range recent {
+		events = append(events, map[string]any{
+			"time":      ev.Time,
+			"requestId": ev.RequestID,
+			"method":    ev.Method,
+			"path":      ev.Path,
+			"status":    ev.Status,
+			"type":      ev.Type,
+			"layer":     layer,
+		})
 	}
+
+	return map[string]any{
+		"layer":          layer,
+		"requestsFailed": atomic.LoadUint64(&metricRequestsFailed),
+		"recent":         events,
+	}
+}
+
+// DiagnosticsSnapshot is the whole observability payload for one process: its own
+// counters plus the failure and crash logs it recorded. Both modes serve it, so
+// the two cannot drift into exposing different keys — the divergence this closes
+// was exactly that.
+func DiagnosticsSnapshot(layer string) map[string]any {
+	snapshot := map[string]any{
+		"layer":   layer,
+		"metrics": SnapshotMetrics(),
+	}
+	snapshot["failures"] = FailureSnapshot(layer)
+	snapshot["crashes"] = bridge.CrashSnapshot()
+	return snapshot
 }
 
 func hasFailureDiagnostics() bool {
@@ -50,6 +94,13 @@ func hasFailureDiagnostics() bool {
 	recentCount := len(recentFailures)
 	failureMu.Unlock()
 	return atomic.LoadUint64(&metricRequestsFailed) > 0 || recentCount > 0
+}
+
+// ResetObservabilityForTests clears the process counters and failure log. It is
+// exported because the front-door chain lives in internal/server, and the
+// counters it must be proven to move are owned here.
+func ResetObservabilityForTests() {
+	resetObservabilityForTests()
 }
 
 func resetObservabilityForTests() {
