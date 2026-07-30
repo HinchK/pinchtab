@@ -25,10 +25,6 @@ func writeOutputFile(path string, autoNamed bool, buf []byte) (string, error) {
 	return path, os.WriteFile(path, buf, 0600)
 }
 
-// printSaved is the confirmation every artifact-saving command prints once it has a
-// file: the path actually used and the byte count. download, pdf and screenshot (twice)
-// each open-coded the identical sentence.
-//
 // capture's lowercase "saved" and record's "Saved → %s" are deliberately NOT routed
 // here. They are different sentences for different shapes — capture prints a save line
 // alongside the snapshot that is half of what it returned, and record has no byte count

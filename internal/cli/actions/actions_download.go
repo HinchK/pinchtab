@@ -41,11 +41,6 @@ func Download(client *http.Client, base, token string, args []string, output, ta
 		return
 	}
 
-	// The envelope is the only way to get the bytes out when there is no file, so it
-	// stays for the -o-less case. With -o the caller asked for a file, and printing it
-	// too meant the confirmation arrived AFTER a blob whose "data" field is truncated
-	// for display — base64 that cannot be decoded, from a command that had just written
-	// the whole thing to disk.
 	if output == "" {
 		printDownloadResult(result)
 		return

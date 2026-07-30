@@ -33,10 +33,6 @@ func TestDownloadTruncatesPrintedBase64(t *testing.T) {
 	}
 }
 
-// With -o the caller asked for a file, so stdout is the confirmation and nothing else.
-// The envelope used to print first, and its "data" field is truncated for display — so
-// the command emitted undecodable base64 and then, below it, the sentence saying the
-// whole payload was already on disk.
 func TestDownloadWithOutputConfirmsTheFileAndPrintsNoEnvelope(t *testing.T) {
 	data := []byte(strings.Repeat("image-bytes-", 40))
 	encoded := base64.StdEncoding.EncodeToString(data)
@@ -77,8 +73,6 @@ func TestDownloadWithOutputConfirmsTheFileAndPrintsNoEnvelope(t *testing.T) {
 	}
 }
 
-// The wording is the one every artifact-saving command uses, so download's confirmation
-// must be indistinguishable from screenshot's and pdf's apart from the path and size.
 func TestTheSaveConfirmationIsTheSameSentenceEverywhere(t *testing.T) {
 	dir := t.TempDir()
 
@@ -122,9 +116,6 @@ func TestTheSaveConfirmationIsTheSameSentenceEverywhere(t *testing.T) {
 	}
 }
 
-// The census: the sentence had four identical open-coded copies. Find the owner by its
-// declaration so moving printSaved to another file does not break this, and require the
-// literal at least once — a rename would otherwise make the ban pass over nothing.
 func TestTheSaveConfirmationHasOneOwner(t *testing.T) {
 	const sentence = `"Saved %s (%d bytes)"`
 
