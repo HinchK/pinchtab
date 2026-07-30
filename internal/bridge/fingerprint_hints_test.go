@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -24,12 +25,9 @@ import (
 func TestRotatedIdentitySendsClientHintsThatAgreeWithTheUserAgent(t *testing.T) {
 	chromePath := testbrowser.Path(t)
 
-	var mu sync.Mutex
-	var last http.Header
+	captured := newHeaderCapture()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		last = r.Header.Clone()
-		mu.Unlock()
+		captured.record(r)
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte("<title>hints</title>"))
 	}))
@@ -52,19 +50,27 @@ func TestRotatedIdentitySendsClientHintsThatAgreeWithTheUserAgent(t *testing.T) 
 		_ = os.RemoveAll(profile)
 	})
 
-	load := func() http.Header {
+	// Each load fetches its OWN path and reads back the headers recorded for that path, so a
+	// row cannot be handed a request it did not cause. The slot this replaces was written by
+	// every request the server saw, and Chrome fetches /favicon.ico after each load — from
+	// the browser process, which bypasses Network.setUserAgentOverride, so those carry the
+	// default HeadlessChrome UA. Under load that fetch could land between a row's navigation
+	// and its read, and the row asserted on it.
+	load := func(path string) http.Header {
 		t.Helper()
-		if err := chromedp.Run(ctx, chromedp.Navigate(server.URL)); err != nil {
+		if err := chromedp.Run(ctx, chromedp.Navigate(server.URL+path)); err != nil {
 			t.Fatal(err)
 		}
-		mu.Lock()
-		defer mu.Unlock()
-		return last
+		headers, ok := captured.forPath(path)
+		if !ok {
+			t.Fatalf("navigation to %s completed but no request for that path was recorded; the capture saw %v — this is a capture fault, not a header mismatch", path, captured.paths())
+		}
+		return headers
 	}
 
 	// An un-rotated tab is the baseline the fix must not spend: it sends the hints it sends
 	// today, so nothing here can be satisfied by moving where they come from.
-	baseline := load()
+	baseline := load("/baseline")
 	for _, header := range []string{"Sec-Ch-Ua", "Sec-Ch-Ua-Mobile", "Sec-Ch-Ua-Platform"} {
 		if baseline.Get(header) == "" {
 			t.Fatalf("an un-rotated tab sent no %s, so this browser does not emit client hints on %s and the test cannot tell the fix from the fixture", header, server.URL)
@@ -108,7 +114,7 @@ func TestRotatedIdentitySendsClientHintsThatAgreeWithTheUserAgent(t *testing.T) 
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 
-		headers := load()
+		headers := load("/" + tc.name)
 		if got := headers.Get("User-Agent"); got != tc.userAgent {
 			t.Errorf("%s: User-Agent = %q, want %q", tc.name, got, tc.userAgent)
 		}
@@ -129,4 +135,89 @@ func TestRotatedIdentitySendsClientHintsThatAgreeWithTheUserAgent(t *testing.T) 
 			t.Errorf("%s: sec-ch-ua-mobile = %q, want ?0", tc.name, got)
 		}
 	}
+}
+
+// headerCapture records the request headers per PATH rather than keeping one last-seen
+// slot. The slot it replaces is what made the test above intermittently assert on a
+// request it never made.
+type headerCapture struct {
+	mu     sync.Mutex
+	byPath map[string]http.Header
+}
+
+func newHeaderCapture() *headerCapture {
+	return &headerCapture{byPath: map[string]http.Header{}}
+}
+
+func (c *headerCapture) record(r *http.Request) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.byPath[r.URL.Path] = r.Header.Clone()
+}
+
+// forPath answers only for a path that was actually requested. Reporting not-found is the
+// point: the alternative — handing back whatever else arrived — is the defect, and a caller
+// that reads too early should hear about it rather than assert on a stranger's headers.
+func (c *headerCapture) forPath(path string) (http.Header, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	headers, ok := c.byPath[path]
+	return headers, ok
+}
+
+func (c *headerCapture) paths() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seen := make([]string, 0, len(c.byPath))
+	for path := range c.byPath {
+		seen = append(seen, path)
+	}
+	sort.Strings(seen)
+	return seen
+}
+
+// The reported failure, reproduced without a browser: a favicon fetch arriving after a
+// row's own navigation used to overwrite the single captured slot, so the row asserted on
+// a request that never had any override applied and read back the browser's own
+// HeadlessChrome default. This runs everywhere, including where no browser is installed
+// and the test above skips.
+func TestALaterRequestOnAnotherPathCannotOverwriteARowsHeaders(t *testing.T) {
+	const rowUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36"
+	const faviconUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/150.0.0.0 Safari/537.36"
+
+	captured := newHeaderCapture()
+	captured.record(requestWithUA(t, "/mac/chrome", rowUA))
+	captured.record(requestWithUA(t, "/favicon.ico", faviconUA))
+
+	headers, ok := captured.forPath("/mac/chrome")
+	if !ok {
+		t.Fatal("the row's own request was not recorded")
+	}
+	if got := headers.Get("User-Agent"); got != rowUA {
+		t.Errorf("the row reads User-Agent %q, want %q — a request on another path overwrote it, which is exactly the intermittent failure this capture exists to remove", got, rowUA)
+	}
+}
+
+// The control the card asked for, and the one that separates the two causes it could not
+// tell apart: reading before the row's own navigation must report NOTHING rather than the
+// previous row's headers. A stale read then fails as a capture fault instead of passing
+// silently, or failing as a header mismatch that sends the reader after a fingerprint
+// regression that is not there.
+func TestAPathThatWasNeverRequestedReportsNothingRatherThanTheLastRow(t *testing.T) {
+	captured := newHeaderCapture()
+	captured.record(requestWithUA(t, "/windows/edge", "edge-ua"))
+
+	if _, ok := captured.forPath("/mac/chrome"); ok {
+		t.Error("a path that was never requested answered with headers; the row would assert on the previous row's request")
+	}
+	if headers, ok := captured.forPath("/windows/edge"); !ok || headers.Get("User-Agent") != "edge-ua" {
+		t.Error("the path that WAS requested must still answer, or this capture reports nothing for everything and the guard above passes vacuously")
+	}
+}
+
+func requestWithUA(t *testing.T, path, userAgent string) *http.Request {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, path, nil)
+	r.Header.Set("User-Agent", userAgent)
+	return r
 }
