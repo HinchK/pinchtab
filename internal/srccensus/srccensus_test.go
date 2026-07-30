@@ -2,6 +2,9 @@ package srccensus
 
 import (
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -456,7 +459,13 @@ func TestEveryModuleRootWalkerObtainsItsEnumerationFromSrccensus(t *testing.T) {
 			continue
 		}
 		walkers++
-		if strings.Contains(file.Text, "srccensus.") {
+
+		consults, err := callsSrccensus(file.Name, file.Text)
+		if err != nil {
+			t.Errorf("%s: cannot parse, so this guard can neither clear nor flag it: %v", file.Name, err)
+			continue
+		}
+		if consults {
 			continue
 		}
 		t.Errorf("%s enumerates files from the module root with its own walk and never consults srccensus; obtain the file list from srccensus.Tree or srccensus.TestTree, or — for a subject Tree cannot see — inherit the directory exclusions via srccensus.ExcludedDir. A hand-rolled walk loses the nested-checkout skip, and a worktree's copies then red this census with paths that vanish, or silently double its counts", file.Name)
@@ -473,4 +482,98 @@ func containsAnyMarker(text string, markers []string) bool {
 		}
 	}
 	return false
+}
+
+// callsSrccensus reports whether the file makes a real CALL to an exported srccensus
+// function. The exemption has to be a call rather than a mention: a substring test on the
+// package name is satisfied by a COMMENT, and a comment explaining why a walker does not use
+// srccensus is exactly what a conscientious author writes — so the guard's own recommended
+// remediation style was also its bypass. A regexp for the call spelling has the same hole one
+// step along, since a comment can quote a call.
+//
+// Parsing also derives the accepted set instead of listing it: safelog consults Load while
+// the converted censuses call Tree, and a hardcoded set would have to be extended for the
+// next legitimate entry point.
+//
+// The asymmetry with the DETECTOR above is deliberate. Anchors and enumerators stay
+// text-matched, where over-matching costs a visible false alarm; the exemption is exact,
+// because over-exempting is silent.
+func callsSrccensus(name, src string) (bool, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), name, src, 0)
+	if err != nil {
+		return false, err
+	}
+
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		selector, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		pkg, ok := selector.X.(*ast.Ident)
+		if !ok || pkg.Name != "srccensus" || !selector.Sel.IsExported() {
+			return true
+		}
+		found = true
+		return false
+	})
+	return found, nil
+}
+
+// The exemption above was a substring test on the package name, and a COMMENT satisfied it:
+// a hand-rolled module-root walk plus "// unlike srccensus.Tree, this walks by hand" passed
+// with the walk still in place. That bypass is not adversarial — a comment explaining why a
+// walker does not use srccensus is what a careful author writes — so it is recorded here
+// rather than only in the review that found it, and the quoted-call form is included because
+// a regexp on the call spelling would still have accepted it.
+func TestConsultingSrccensusMeansCallingItNotMentioningIt(t *testing.T) {
+	const walk = `package p
+
+import (
+	"io/fs"
+	"path/filepath"
+	"testing"
+)
+
+func TestWalk(t *testing.T) {
+	_ = filepath.WalkDir(filepath.Join("..", ".."), func(path string, d fs.DirEntry, err error) error { return nil })
+}
+`
+	for _, tc := range []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"bare walk", walk, false},
+		{"comment naming the package", walk + "\n// unlike srccensus.Tree, this walks by hand.\n", false},
+		{"comment quoting a call", walk + "\n// we do not call srccensus.Tree(t, root, 100) here.\n", false},
+		{"string holding a call", walk + "\nvar note = \"srccensus.Tree(t, root, 100)\"\n", false},
+		{"real call", strings.Replace(walk,
+			"func TestWalk(t *testing.T) {",
+			"func TestWalk(t *testing.T) {\n\t_ = srccensus.Tree(t, \"../..\", 1)", 1), true},
+		{"real call to another entry point", strings.Replace(walk,
+			"func TestWalk(t *testing.T) {",
+			"func TestWalk(t *testing.T) {\n\t_ = srccensus.Load(t, \"../..\", 1)", 1), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := callsSrccensus("probe_test.go", tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("callsSrccensus = %v, want %v — the exemption must turn on a real call, since mentions are what an author writes when explaining a deliberate hand-rolled walk", got, tc.want)
+			}
+		})
+	}
+}
+
+// A file the guard cannot parse must be REPORTED, never silently exempt.
+func TestAnUnparseableWalkerIsNotSilentlyExempt(t *testing.T) {
+	if _, err := callsSrccensus("broken_test.go", "package p\nfunc TestX( {\n"); err == nil {
+		t.Error("an unparseable file returned no error, so the guard would clear it without reading it")
+	}
 }
