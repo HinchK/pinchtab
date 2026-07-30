@@ -115,16 +115,29 @@ func TestUnconditionalSolversAreAvailableWithNoConfig(t *testing.T) {
 // re-implementations of one rule before, in a package that could not see this one.
 func TestRegistrableFollowsTheSameKeyRuleAsAvailable(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		cfg  autosolver.Config
+		name           string
+		cfg            autosolver.Config
+		wantRegistered map[string]bool
 	}{
-		{"no keys", autosolver.Config{}},
-		{"one key", autosolver.Config{APIKeys: map[string]string{autosolver.CapsolverSolverName: "k"}}},
-		{"blank key", autosolver.Config{APIKeys: map[string]string{autosolver.CapsolverSolverName: " "}}},
+		{"no keys", autosolver.Config{}, map[string]bool{
+			autosolver.CapsolverSolverName:  false,
+			autosolver.TwoCaptchaSolverName: false,
+		}},
+		{"one key", autosolver.Config{APIKeys: map[string]string{autosolver.CapsolverSolverName: "k"}}, map[string]bool{
+			autosolver.CapsolverSolverName:  true,
+			autosolver.TwoCaptchaSolverName: false,
+		}},
+		{"blank key", autosolver.Config{APIKeys: map[string]string{autosolver.CapsolverSolverName: " "}}, map[string]bool{
+			autosolver.CapsolverSolverName:  false,
+			autosolver.TwoCaptchaSolverName: false,
+		}},
 		{"both keys", autosolver.Config{APIKeys: map[string]string{
 			autosolver.CapsolverSolverName:  "k",
 			autosolver.TwoCaptchaSolverName: "k2",
-		}}},
+		}}, map[string]bool{
+			autosolver.CapsolverSolverName:  true,
+			autosolver.TwoCaptchaSolverName: true,
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			registered := []string{}
@@ -132,12 +145,12 @@ func TestRegistrableFollowsTheSameKeyRuleAsAvailable(t *testing.T) {
 				registered = append(registered, solver.Name())
 			}
 			for _, gated := range autosolver.KeyGatedSolvers() {
-				wantRegistered := tc.cfg.APIKey(gated.Name) != ""
+				wantRegistered := tc.wantRegistered[gated.Name]
 				if got := slices.Contains(registered, gated.Name); got != wantRegistered {
-					t.Errorf("%q registered = %v, want %v (available = %v)", gated.Name, got, wantRegistered, IsAvailable(gated.Name, tc.cfg))
+					t.Errorf("%q registered = %v, want %v (available = %v); the literal expectation is what pins the key rule, a whitespace-only key counts as unset", gated.Name, got, wantRegistered, IsAvailable(gated.Name, tc.cfg))
 				}
 				if slices.Contains(registered, gated.Name) != IsAvailable(gated.Name, tc.cfg) {
-					t.Errorf("%q: registration and availability disagree under %v", gated.Name, tc.cfg.APIKeys)
+					t.Errorf("%q: registration and availability disagree under %v; this consistency check catches the two implementations diverging, NOT a key-rule change — a trim removed from the shared accessor moves both sides together, only the literal wantRegistered reds on that", gated.Name, tc.cfg.APIKeys)
 				}
 			}
 		})
