@@ -195,48 +195,97 @@ func TestDaemonAndAutoStartLaunchWithoutLogLevelFlags(t *testing.T) {
 	}
 }
 
-// resolveLogLevel is only load-bearing if the command routes through it. A unit
-// test on the helper cannot see a Run body that assigns cfg.LogLevel itself, and
-// that assignment — `cfg.LogLevel = logLevel`, unconditional — is exactly the bug
-// this card fixed. So the source is the assertion: the flag reaches the runtime
-// config in one place, inside the helper that knows the precedence.
-func TestServerCommandAssignsTheLogLevelOnlyInsideResolveLogLevel(t *testing.T) {
-	raw, err := os.ReadFile("cmd_server.go")
-	if err != nil {
-		t.Fatal(err)
+// resolveLogLevel is only load-bearing if the commands route through it. A unit test
+// on the helper cannot see a Run body that settles the level itself, and there are two
+// ways to do that: assigning cfg.LogLevel (which bypasses the precedence) or calling
+// safelog.SetLevel directly (which overrides the resolved threshold for the whole
+// process). Both are banned everywhere in the package except the file that declares
+// the resolver, and the census is over a glob so a new cmd_*.go is covered on arrival
+// rather than when someone remembers to list it.
+//
+// KNOWN LIMIT, recorded so it is not rediscovered as new: the exemption is
+// FILE-scoped. cmd_server.go carries safelog.SetLevel three times inside
+// applyLogLevel, so a stray call added elsewhere in that same file is still permitted
+// — the coarse-scope problem this guard narrows, surviving in the owning file. The
+// honest fix is asserting the patterns occur only within the
+// resolveLogLevel/applyLogLevel pair, which needs real function-body extraction; a
+// hand-rolled brace matcher is the anti-pattern the AST-based shared guard is being
+// introduced to remove, so this waits for it rather than growing one here.
+func TestTheCommandPackageSettlesTheLogLevelInOnePlace(t *testing.T) {
+	files := commandSourceFiles(t)
+	if len(files) < 2 {
+		t.Fatalf("scanned %d command files; the census matched almost nothing and would pass vacuously", len(files))
 	}
-	src := string(raw)
 
-	const assignment = ".LogLevel = "
-	assignments := 0
-	scanned := 0
-	for _, path := range commandSourceFiles(t) {
+	sources := make(map[string]string, len(files))
+	for _, path := range files {
 		body, err := os.ReadFile(path) // #nosec G304 -- files listed from this package's own directory.
 		if err != nil {
 			t.Fatal(err)
 		}
-		scanned++
-		if n := strings.Count(string(body), assignment); n > 0 && filepath.Base(path) != "cmd_server.go" {
-			t.Errorf("%s assigns %s%d time(s); the level is settled only inside resolveLogLevel, so a command that spawns or becomes a server must pass its flag there instead", filepath.Base(path), assignment, n)
-		}
-		assignments += strings.Count(string(body), assignment)
-	}
-	if scanned < 2 {
-		t.Fatalf("scanned %d command files; the census matched almost nothing and would pass vacuously", scanned)
-	}
-	if assignments != 1 {
-		t.Fatalf("the command package assigns %s%d times, want exactly 1 (inside resolveLogLevel)", assignment, assignments)
+		sources[filepath.Base(path)] = string(body)
 	}
 
-	helper := src[strings.Index(src, "func resolveLogLevel("):]
+	// The declaring file is found rather than hardcoded, so moving the owner needs no
+	// test edit — the same staleness this census replaced.
+	const declaration = "func resolveLogLevel("
+	declarations := 0
+	owner := ""
+	for name, src := range sources {
+		if n := strings.Count(src, declaration); n > 0 {
+			declarations += n
+			owner = name
+		}
+	}
+	if declarations != 1 {
+		t.Fatalf("found %d %s declarations in the command package, want exactly 1 — a second copy means the two commands no longer share one precedence", declarations, declaration)
+	}
+
+	// Each pattern is banned outside the owner and required at least once inside it:
+	// a census that finds the pattern nowhere would pass while the rule it states has
+	// silently stopped applying to anything.
+	for _, banned := range []struct {
+		pattern string
+		why     string
+	}{
+		{".LogLevel = ", "the level is settled only inside resolveLogLevel, so a command that spawns or becomes a server must pass its flag there instead"},
+		{"safelog.SetLevel(", "a raw level set overrides the resolved threshold for the whole process, so a command that never resolves a level must not touch it"},
+	} {
+		found := 0
+		for name, src := range sources {
+			n := strings.Count(src, banned.pattern)
+			found += n
+			if n > 0 && name != owner {
+				t.Errorf("%s contains %q %d time(s); %s", name, banned.pattern, n, banned.why)
+			}
+		}
+		if found == 0 {
+			t.Errorf("no command file contains %q; the census has nothing to guard and would pass vacuously", banned.pattern)
+		}
+	}
+
+	// The one assignment must sit inside the resolver, not merely inside its file.
+	helper := sources[owner][strings.Index(sources[owner], declaration):]
 	if end := strings.Index(helper, "\nfunc "); end >= 0 {
 		helper = helper[:end]
 	}
-	if !strings.Contains(helper, assignment) {
+	if !strings.Contains(helper, ".LogLevel = ") {
 		t.Error("the one cfg.LogLevel assignment is outside resolveLogLevel; the flag can bypass the precedence again")
 	}
-	if !strings.Contains(src, "resolveLogLevel(cfg, logLevel, verbose)") {
-		t.Error("the server command no longer calls resolveLogLevel with the flag and the verbose flag")
+
+	// The positive half: an absence-only census would pass happily if both commands
+	// stopped resolving the level at all, which is the defect these guards were built
+	// for. Matched on the call rather than an argument spelling, so a legitimate
+	// signature change does not red this for no defect.
+	for _, caller := range []string{"cmd_server.go", "cmd_bridge.go"} {
+		src, ok := sources[caller]
+		if !ok {
+			t.Errorf("%s is no longer in the command package; this guard names it as a resolveLogLevel caller", caller)
+			continue
+		}
+		if strings.Count(src, "resolveLogLevel(") <= strings.Count(src, declaration) {
+			t.Errorf("%s no longer calls resolveLogLevel, so its --log-level and server.logLevel are silently ignored", caller)
+		}
 	}
 }
 

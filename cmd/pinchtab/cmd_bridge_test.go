@@ -158,45 +158,18 @@ func TestBridgeResolvesTheConfiguredLogLevel(t *testing.T) {
 	}
 }
 
-// Parity with the server is a structural property, not a coincidence of two
-// tables: both commands hand their (flag, config) pair to the same function, and
-// neither decides anything itself. Asserting the resolved levels match would pass
-// even if the bridge grew its own copy, so the source is where this is pinned —
-// exactly one precedence function in the package, no second copy in the bridge.
+// Parity with the server is a structural property, not a coincidence of two tables:
+// both commands hand their (flag, config) pair to the same function, and neither
+// decides anything itself. Asserting the resolved levels match would pass even if the
+// bridge grew its own copy, so the source is where this is pinned.
+//
+// The source half now lives in TestTheCommandPackageSettlesTheLogLevelInOnePlace,
+// which censuses the whole package by glob: one resolveLogLevel declaration, both
+// commands calling it, and neither banned pattern outside the declaring file. Checking
+// cmd_bridge.go by name here as well left every other command file unguarded for
+// safelog.SetLevel — a stray call in cmd_server_ensure.go compiled green. What stays
+// below is what only the bridge can assert: its own flag surface.
 func TestBridgeAndServerResolveTheLogLevelThroughOneFunction(t *testing.T) {
-	bridgeSrc, err := os.ReadFile("cmd_bridge.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	serverSrc, err := os.ReadFile("cmd_server.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if !strings.Contains(string(bridgeSrc), "resolveLogLevel(cfg, bridgeLogLevel, false)") {
-		t.Error("cmd_bridge.go no longer resolves the log level, so server.logLevel is silently ignored in the bridge")
-	}
-	if !strings.Contains(string(serverSrc), "resolveLogLevel(cfg, logLevel, verbose)") {
-		t.Error("cmd_server.go no longer routes through resolveLogLevel")
-	}
-	for _, own := range []string{"cfg.LogLevel = ", "safelog.SetLevel("} {
-		if strings.Contains(string(bridgeSrc), own) {
-			t.Errorf("cmd_bridge.go contains %q — the bridge decides the level itself instead of sharing the server's precedence", own)
-		}
-	}
-
-	declarations := 0
-	for _, name := range []string{"cmd_bridge.go", "cmd_server.go", "cmd_server_ensure.go", "cmd_server_background.go", "root.go"} {
-		raw, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		declarations += strings.Count(string(raw), "func resolveLogLevel(")
-	}
-	if declarations != 1 {
-		t.Errorf("found %d resolveLogLevel declarations across the command files, want exactly 1", declarations)
-	}
-
 	if bridgeCmd.Flags().Lookup("log-level") == nil {
 		t.Error("bridge has no --log-level flag, so it cannot override the configured level the way --bind and --port do")
 	}
