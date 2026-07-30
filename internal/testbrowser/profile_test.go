@@ -86,7 +86,7 @@ func TestNoBrowserProfileIsPointedAtATestTempDir(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			if name := d.Name(); name == ".git" || name == "node_modules" || name == "dist" {
+			if skipCensusDir(path, root, d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -121,6 +121,23 @@ func TestNoBrowserProfileIsPointedAtATestTempDir(t *testing.T) {
 	}
 }
 
+// skipCensusDir decides which directories the census must not descend into. A name list
+// alone is not enough: a git worktree created inside the repo carries a .git FILE under an
+// arbitrary name, so it looks like an ordinary directory while holding a second copy of
+// every source file. The census would then report those copies as fresh violations, against
+// module-relative paths that will vanish with the worktree — and on a shared tree that reds
+// this package for whoever runs it next. The repo root carries .git too, so it is exempt.
+func skipCensusDir(path, root, name string) bool {
+	if name == ".git" || name == "node_modules" || name == "dist" {
+		return true
+	}
+	if path == root {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(path, ".git"))
+	return err == nil
+}
+
 func isSelectorCall(fun ast.Expr, pkg, name string) bool {
 	sel, ok := fun.(*ast.SelectorExpr)
 	if !ok || sel.Sel.Name != name {
@@ -150,5 +167,54 @@ func moduleRoot(t *testing.T) string {
 			t.Fatal("no go.mod above the test's working directory; the census cannot find the module root")
 		}
 		dir = parent
+	}
+}
+
+// The census walks from the module root, so anything that puts a SECOND copy of the tree
+// inside the repo becomes a second set of findings. A git worktree does exactly that under
+// an arbitrary name, carrying a .git FILE rather than a directory, so a name list cannot see
+// it — and the violations it reports name paths that vanish with the worktree, which sends
+// the reader to fix a file that was never the problem.
+func TestCensusSkipsDirectoriesThatCarryTheirOwnGitMarker(t *testing.T) {
+	root := t.TempDir()
+
+	worktreeFile := filepath.Join(root, "wt-anything")
+	if err := os.MkdirAll(worktreeFile, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(worktreeFile, ".git"), []byte("gitdir: /elsewhere\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	worktreeDir := filepath.Join(root, "clone-anything")
+	if err := os.MkdirAll(filepath.Join(worktreeDir, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ordinary := filepath.Join(root, "internal")
+	if err := os.MkdirAll(ordinary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// The repo root carries .git too and must never be skipped, or the census covers nothing.
+	if err := os.MkdirAll(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name string
+		path string
+		want bool
+	}{
+		{name: "a nested worktree, .git as a file", path: worktreeFile, want: true},
+		{name: "a nested clone, .git as a directory", path: worktreeDir, want: true},
+		{name: "an ordinary source directory", path: ordinary, want: false},
+		{name: "the module root itself", path: root, want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := skipCensusDir(tc.path, root, filepath.Base(tc.path)); got != tc.want {
+				t.Errorf("skipCensusDir(%s) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
 	}
 }
