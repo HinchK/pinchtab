@@ -177,11 +177,7 @@ func (bc *BridgeClient) ProxyWithTabID(w http.ResponseWriter, r *http.Request, p
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	for key, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(key, v)
-		}
-	}
+	httpx.CopyProxiedResponseHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
 }
@@ -202,13 +198,11 @@ func (bc *BridgeClient) ProxyToTab(w http.ResponseWriter, r *http.Request, port,
 	}
 
 	for key, values := range r.Header {
-		switch key {
-		case "Host", "Connection", "Keep-Alive", "Proxy-Authenticate",
-			"Proxy-Authorization", "Te", "Trailers", "Transfer-Encoding", "Upgrade":
-		default:
-			for _, v := range values {
-				proxyReq.Header.Add(key, v)
-			}
+		if httpx.IsHopByHopHeader(key) {
+			continue
+		}
+		for _, v := range values {
+			proxyReq.Header.Add(key, v)
 		}
 	}
 
@@ -219,11 +213,7 @@ func (bc *BridgeClient) ProxyToTab(w http.ResponseWriter, r *http.Request, port,
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	for key, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(key, v)
-		}
-	}
+	httpx.CopyProxiedResponseHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
 }

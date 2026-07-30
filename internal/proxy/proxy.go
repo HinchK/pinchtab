@@ -32,18 +32,6 @@ type Options struct {
 	OnResponse func(origReq *http.Request, body []byte)
 }
 
-var hopByHopHeaders = map[string]struct{}{
-	"connection":          {},
-	"keep-alive":          {},
-	"proxy-authenticate":  {},
-	"proxy-authorization": {},
-	"te":                  {},
-	"trailers":            {},
-	"transfer-encoding":   {},
-	"upgrade":             {},
-	"host":                {},
-}
-
 var strippedProxyRequestHeaders = map[string]struct{}{
 	"cookie":            {},
 	"forwarded":         {},
@@ -97,7 +85,7 @@ func Forward(w http.ResponseWriter, r *http.Request, targetURL *url.URL, opts Op
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	copyHeaders(w.Header(), resp.Header)
+	httpx.CopyProxiedResponseHeaders(w.Header(), resp.Header)
 
 	// Enrich activity from response headers (always available, regardless of body size).
 	enrichActivityFromHeaders(r, resp.Header)
@@ -175,24 +163,12 @@ func isWebSocketUpgrade(r *http.Request) bool {
 	return false
 }
 
-func copyHeaders(dst, src http.Header) {
-	for k, vv := range src {
-		if _, skip := hopByHopHeaders[strings.ToLower(k)]; skip {
-			continue
-		}
-		for _, v := range vv {
-			dst.Add(k, v)
-		}
-	}
-}
-
 func copyRequestHeaders(dst, src http.Header) {
 	for k, vv := range src {
-		lower := strings.ToLower(k)
-		if _, skip := hopByHopHeaders[lower]; skip {
+		if httpx.IsHopByHopHeader(k) {
 			continue
 		}
-		if _, skip := strippedProxyRequestHeaders[lower]; skip {
+		if _, skip := strippedProxyRequestHeaders[strings.ToLower(k)]; skip {
 			continue
 		}
 		for _, v := range vv {

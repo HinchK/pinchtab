@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+
+	"github.com/pinchtab/pinchtab/internal/httpx"
 	"testing"
 )
 
@@ -160,5 +162,38 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 				t.Errorf("isWebSocketUpgrade() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestHTTP_DoesNotDoubleTheOuterChainsResponseHeaders(t *testing.T) {
+	owned := httpx.OuterChainResponseHeaders()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, name := range owned {
+			w.Header().Set(name, "instance-"+name)
+		}
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	req := httptest.NewRequest("GET", "/tabs", nil)
+	rec := httptest.NewRecorder()
+	for _, name := range owned {
+		rec.Header().Set(name, "outer-"+name)
+	}
+
+	HTTP(rec, req, srv.URL+"/tabs")
+
+	if rec.Code != 200 {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	for _, name := range owned {
+		got := rec.Header().Values(name)
+		if len(got) != 1 {
+			t.Errorf("%s = %v, want exactly one value — the second is minted by the instance and appears in no log the outer process writes", name, got)
+			continue
+		}
+		if got[0] != "outer-"+name {
+			t.Errorf("%s = %q, want the outer chain's value, which is the one it logged", name, got[0])
+		}
 	}
 }
