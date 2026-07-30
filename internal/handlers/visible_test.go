@@ -1,13 +1,22 @@
 package handlers
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/dom"
+	"github.com/chromedp/cdproto/runtime"
+	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
 func TestHandleGetVisible_MissingRef(t *testing.T) {
@@ -144,4 +153,123 @@ type visibleMockBridge struct {
 
 func (m *visibleMockBridge) GetRefCache(tabID string) *bridge.RefCache {
 	return m.refCache
+}
+
+// visibleFixtureHTML pairs each positioned case with an identically-styled twin that differs
+// only in WHERE the CSS was written, since that is the only input the defect turned on, and
+// adds the hidden cases as negative controls so a guard loosened too far is caught.
+const visibleFixtureHTML = `<style>
+#fixedByStylesheet { position: fixed; top:10px; left:10px; width:120px; height:40px }
+#stickyByStylesheet { position: sticky; top:0; width:120px; height:40px }
+#opaqueByStylesheet { position: fixed; top:200px; left:10px; width:120px; height:40px; opacity: 0 }
+</style>
+<div id="fixedByStylesheet">fixed by stylesheet</div>
+<div id="fixedInline" style="position:fixed; top:80px; left:10px; width:120px; height:40px">fixed inline</div>
+<div id="stickyByStylesheet">sticky by stylesheet</div>
+<div id="stickyInline" style="position:sticky; top:0; width:120px; height:40px">sticky inline</div>
+<div id="normalFlow" style="width:120px; height:40px">normal flow</div>
+<div id="opaqueByStylesheet">fixed but transparent</div>
+<div id="displayNone" style="display:none">display none</div>
+<div id="visibilityHidden" style="visibility:hidden; width:120px; height:40px">visibility hidden</div>
+<div id="opacityZero" style="opacity:0; width:120px; height:40px">opacity zero</div>
+<div id="zeroSize" style="width:0; height:0">zero size</div>`
+
+// runElementVisibleJS drives the production predicate against a real element, because the
+// defect lived entirely inside the browser: the endpoint's own plumbing was never wrong.
+func runElementVisibleJS(t *testing.T, ctx context.Context, selector string) bool {
+	t.Helper()
+
+	var nodes []*cdp.Node
+	if err := chromedp.Run(ctx, chromedp.Nodes(selector, &nodes, chromedp.ByQuery)); err != nil {
+		t.Fatalf("%s: %v", selector, err)
+	}
+	if len(nodes) == 0 {
+		t.Fatalf("%s matched nothing in the fixture", selector)
+	}
+
+	var visible bool
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		object, err := dom.ResolveNode().WithBackendNodeID(nodes[0].BackendNodeID).Do(ctx)
+		if err != nil {
+			return err
+		}
+		result, exception, err := runtime.CallFunctionOn(elementVisibleJS).WithObjectID(object.ObjectID).WithReturnByValue(true).Do(ctx)
+		if err != nil {
+			return err
+		}
+		if exception != nil {
+			return exception
+		}
+		return json.Unmarshal(result.Value, &visible)
+	})); err != nil {
+		t.Fatalf("%s: %v", selector, err)
+	}
+	return visible
+}
+
+// offsetParent is null for every fixed element, so the branch that rescues that case decided
+// the answer on its own — and while it read the inline style attribute it only rescued an
+// element whose author wrote position in a style= attribute. A modal, cookie banner or
+// toolbar positioned by a stylesheet rule reported not visible with real on-screen geometry.
+func TestTheVisibleEndpointReadsThePositionCSSComputed(t *testing.T) {
+	chromePath := testbrowser.Path(t)
+
+	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
+		chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(chromePath),
+		chromedp.UserDataDir(t.TempDir()),
+		chromedp.Flag("headless", true),
+		chromedp.Flag("no-sandbox", true),
+	)...)
+	ctx, cancelBrowser := chromedp.NewContext(alloc)
+	ctx, cancelTimeout := context.WithTimeout(ctx, 30*time.Second)
+	t.Cleanup(func() {
+		cancelTimeout()
+		cancelBrowser()
+		cancelAlloc()
+	})
+
+	url := "data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(visibleFixtureHTML))
+	if err := chromedp.Run(ctx, chromedp.Navigate(url)); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		selector string
+		want     bool
+		why      string
+	}{
+		{selector: "#fixedByStylesheet", want: true, why: "fixed by a stylesheet rule: the case that reported not visible while on screen"},
+		{selector: "#fixedInline", want: true, why: "fixed by the style attribute: what worked before, and must not regress"},
+		{selector: "#stickyByStylesheet", want: true, why: "sticky by a stylesheet rule"},
+		{selector: "#stickyInline", want: true, why: "sticky by the style attribute"},
+		{selector: "#normalFlow", want: true, why: "an ordinary in-flow element never needed the positioned branch"},
+		{selector: "#displayNone", want: false, why: "display:none"},
+		{selector: "#visibilityHidden", want: false, why: "visibility:hidden"},
+		{selector: "#opacityZero", want: false, why: "opacity:0"},
+		{selector: "#opaqueByStylesheet", want: false, why: "fixed and positioned, but transparent: reaching the positioned branch must not skip the hidden checks"},
+		{selector: "#zeroSize", want: false, why: "zero-size box"},
+	} {
+		if got := runElementVisibleJS(t, ctx, tc.selector); got != tc.want {
+			t.Errorf("%s reported visible=%v, want %v — %s", tc.selector, got, tc.want, tc.why)
+		}
+	}
+}
+
+// The browser-backed table above does not run where no browser is installed, and this is the
+// invariant it exists to protect: the position must come from the computed style, and from
+// the one call the predicate already makes rather than a second one.
+func TestTheVisiblePredicateNeverReadsTheInlineStyleAttribute(t *testing.T) {
+	if strings.Contains(elementVisibleJS, "el.style.") {
+		t.Errorf("the visible predicate reads the inline style attribute:\n%s", elementVisibleJS)
+	}
+	if !strings.Contains(elementVisibleJS, "style.position") {
+		t.Errorf("the visible predicate no longer consults a position at all, so a fixed element falls to offsetParent alone:\n%s", elementVisibleJS)
+	}
+	if got := strings.Count(elementVisibleJS, "getComputedStyle"); got != 1 {
+		t.Errorf("getComputedStyle appears %d times, want exactly 1; the position must come from the call the predicate already makes:\n%s", got, elementVisibleJS)
+	}
+	if strings.Index(elementVisibleJS, "getComputedStyle") > strings.Index(elementVisibleJS, "style.position") {
+		t.Errorf("style.position is read before getComputedStyle assigns it:\n%s", elementVisibleJS)
+	}
 }

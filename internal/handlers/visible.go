@@ -31,14 +31,22 @@ func (h *Handlers) HandleTabGetVisible(w http.ResponseWriter, r *http.Request) {
 	h.withPathTabID(w, r, h.HandleGetVisible)
 }
 
-// getElementVisible resolves a unified selector to a DOM node and checks whether it is visible.
-func (h *Handlers) getElementVisible(ctx context.Context, tabID, sel string) (bool, error) {
-	return callOnResolvedElement[bool](h, ctx, tabID, sel, `function() {
+// elementVisibleJS asks whether CSS renders an element. The position comes from the
+// computed style, not el.style: el.style is the inline attribute alone, and offsetParent is
+// null for every fixed element by design — so the branch that exists to rescue that case
+// only fired when the author happened to write position in a style= attribute, and a modal,
+// banner or toolbar positioned by a class or stylesheet rule was reported not visible while
+// sitting on screen with real geometry.
+const elementVisibleJS = `function() {
   var el = this;
-  if (!el.offsetParent && el.style.position !== 'fixed' && el.style.position !== 'sticky') return false;
   var style = window.getComputedStyle(el);
+  if (!el.offsetParent && style.position !== 'fixed' && style.position !== 'sticky') return false;
   if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
   var rect = el.getBoundingClientRect();
   return rect.width > 0 && rect.height > 0;
-}`, nil)
+}`
+
+// getElementVisible resolves a unified selector to a DOM node and checks whether it is visible.
+func (h *Handlers) getElementVisible(ctx context.Context, tabID, sel string) (bool, error) {
+	return callOnResolvedElement[bool](h, ctx, tabID, sel, elementVisibleJS, nil)
 }
