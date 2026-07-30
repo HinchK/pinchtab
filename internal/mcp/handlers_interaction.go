@@ -192,7 +192,10 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			if value == "" {
 				return mcp.NewToolResultError("required parameter 'value' is missing"), nil
 			}
-			payload["value"] = value
+			// "text" is the field actionFill reads. Posting the same string under "value"
+			// reached a real ActionRequest field that fill ignores, so the write was empty
+			// and the tool still answered filled:true.
+			payload["text"] = value
 		}
 
 		body, code, err := c.Post(ctx, routedPathWithBody(r, "/action", payload), payload)

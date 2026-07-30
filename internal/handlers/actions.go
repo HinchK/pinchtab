@@ -199,6 +199,7 @@ func decodeActionRequest(w http.ResponseWriter, r *http.Request) (bridge.ActionR
 		req.Selector = q.Get("selector")
 		req.Text = q.Get("text")
 		req.Value = q.Get("value")
+		req.HasText = d.present("text") || d.present("value")
 		req.Key = q.Get("key")
 		req.DialogAction = strings.ToLower(strings.TrimSpace(q.Get("dialogAction")))
 		req.DialogText = q.Get("dialogText")
@@ -269,6 +270,13 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := bridge.ValidateSubmitAction(req.Kind, req); err != nil {
 		httpx.ErrorCode(w, http.StatusBadRequest, "invalid_submit_action", err.Error(), false, nil)
+		return
+	}
+	// Here rather than only inside the bridge action: the ghost-chrome proxy answers
+	// fill from its static browser before the Chrome action runs, so a check living in
+	// actionFill alone would be bypassed for one provider.
+	if err := bridge.ValidateFillAction(req.Kind, req); err != nil {
+		httpx.ErrorCode(w, http.StatusBadRequest, "missing_fill_text", err.Error(), false, nil)
 		return
 	}
 	h.recordActionRequest(r, req)

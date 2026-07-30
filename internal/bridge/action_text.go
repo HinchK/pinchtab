@@ -37,21 +37,25 @@ func (b *Bridge) actionType(ctx context.Context, req ActionRequest) (map[string]
 }
 
 func (b *Bridge) actionFill(ctx context.Context, req ActionRequest) (map[string]any, error) {
-	result := textEntryResult("filled", req.Text)
+	text, _ := FillText(req)
+	result := textEntryResult("filled", text)
 	if req.Selector != "" {
 		if err := chromedp.Run(ctx,
 			chromedp.Focus(req.Selector, chromedp.ByQuery),
-			chromedp.SetValue(req.Selector, req.Text, chromedp.ByQuery),
+			chromedp.SetValue(req.Selector, text, chromedp.ByQuery),
 		); err != nil {
 			return nil, err
 		}
 		return finishFill(ctx, result, req.Submit)
 	}
 	if req.NodeID > 0 {
-		if err := FillByNodeID(ctx, req.NodeID, req.Text); err != nil {
+		if err := FillByNodeID(ctx, req.NodeID, text); err != nil {
 			return nil, err
 		}
-		if actual, err := ReadInputValue(ctx, req.NodeID); err == nil && req.Text != "" && actual != req.Text {
+		// Compared against what was asked for rather than against "", so a clear that
+		// did not land is reported too. ValidateFillAction has already refused the
+		// nothing-was-supplied case, which is what used to disable this check.
+		if actual, err := ReadInputValue(ctx, req.NodeID); err == nil && actual != text {
 			result["warning"] = "fill may not have been picked up by the page (e.g. React controlled input); try 'type' instead"
 		}
 		return finishFill(ctx, result, req.Submit)

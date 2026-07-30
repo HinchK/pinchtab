@@ -186,6 +186,10 @@ Action targeting fields:
 - `dialogAction` and `dialogText`
 - `humanize`
 
+`fill` and `type` write the string in `text`; `fill` also accepts it as `value`, which is the
+field `select` reads. A `fill` carrying neither is rejected — send `"text": ""` to clear a
+field, so clearing stays distinct from a request whose text never arrived.
+
 `humanize` is a per-action override for input style. When omitted, actions use `instanceDefaults.humanize`, which defaults to `false`. Use `kind:"click"` or `kind:"type"` with `humanize:true` when a page needs the slower human-like pointer or typing path.
 
 Pointer fallback behavior:

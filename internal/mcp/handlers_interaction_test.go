@@ -466,3 +466,55 @@ func TestCoordinatesReachTheWireOnlyForTheToolsThatDeclareThem(t *testing.T) {
 		})
 	}
 }
+
+// pinchtab_fill posted the caller's string under "value", a real ActionRequest field that
+// actionFill does not read, so the write was empty and the tool answered filled:true with
+// len:0. The tool surface is the only place this is visible — the bridge action was always
+// correct, and no unit test at that layer could see it.
+func TestHandleFillForwardsTheFieldTheFillActionReads(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	r := callTool(t, "pinchtab_fill", map[string]any{
+		"ref":   "e0",
+		"value": "FILLED",
+	}, srv)
+
+	body, _ := resultJSON(t, r)["body"].(map[string]any)
+	if got, _ := body["text"].(string); got != "FILLED" {
+		t.Fatalf("forwarded text = %q, want the caller's value; payload was %v", got, body)
+	}
+	if _, leftover := body["value"]; leftover {
+		t.Errorf("payload still carries a value key that fill ignores: %v", body)
+	}
+}
+
+// The discriminator: two tools, the same client argument name, and opposite consumers —
+// actionSelect reads Value, actionFill reads Text. Both must post to the field their own
+// action reads, which is what a shared "value" key silently got wrong for one of them.
+func TestFillAndSelectEachPostToTheFieldTheirActionReads(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	fill, _ := resultJSON(t, callTool(t, "pinchtab_fill", map[string]any{"ref": "e0", "value": "ZZZ"}, srv))["body"].(map[string]any)
+	sel, _ := resultJSON(t, callTool(t, "pinchtab_select", map[string]any{"ref": "e1", "value": "y"}, srv))["body"].(map[string]any)
+
+	if got, _ := fill["text"].(string); got != "ZZZ" {
+		t.Errorf("fill payload = %v, want text=ZZZ", fill)
+	}
+	if got, _ := sel["value"].(string); got != "y" {
+		t.Errorf("select payload = %v, want value=y", sel)
+	}
+}
+
+// The other spelling still works, since the tool has always accepted both.
+func TestHandleFillAcceptsTheTextSpellingToo(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	r := callTool(t, "pinchtab_fill", map[string]any{"ref": "e0", "text": "FROM_TEXT"}, srv)
+	body, _ := resultJSON(t, r)["body"].(map[string]any)
+	if got, _ := body["text"].(string); got != "FROM_TEXT" {
+		t.Fatalf("forwarded text = %q, want FROM_TEXT; payload was %v", got, body)
+	}
+}

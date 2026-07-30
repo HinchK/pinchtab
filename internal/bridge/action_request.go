@@ -34,10 +34,22 @@ type ActionRequest struct {
 	Kind     string `json:"kind"`
 	Ref      string `json:"ref,omitempty"`
 	Selector string `json:"selector,omitempty"`
-	Text     string `json:"text"`
-	Key      string `json:"key"`
-	Value    string `json:"value"`
-	NodeID   int64  `json:"nodeId"`
+
+	// Text/Value use omitempty, and HasText records that one of them was
+	// SUPPLIED, for the same reason X/Y do below: an empty fill is a
+	// legitimate request to clear the field, so absent and empty must not
+	// share a representation. While they did, `fill` could not refuse a
+	// request whose text never arrived — it wrote "" and answered
+	// filled:true, len:0 — and its read-back verification, gated on a
+	// non-empty Text, switched itself off in exactly that case. Re-marshaling
+	// without omitempty would re-introduce "text":"" and make every forwarded
+	// request look supplied.
+	Text    string `json:"text,omitempty"`
+	Value   string `json:"value,omitempty"`
+	HasText bool   `json:"hasText,omitempty"`
+
+	Key    string `json:"key"`
+	NodeID int64  `json:"nodeId"`
 
 	// X/Y use omitempty so that re-marshaling an ActionRequest without
 	// explicit coordinates (e.g. when the tab-scoped handler forwards to
@@ -137,6 +149,7 @@ func (r *ActionRequest) UnmarshalJSON(data []byte) error {
 	*r = ActionRequest(alias)
 	r.Kind = CanonicalActionKind(r.Kind)
 	r.HasXY = r.HasXY || hasJSONKey(raw, "x") || hasJSONKey(raw, "y")
+	r.HasText = r.HasText || hasJSONKey(raw, "text") || hasJSONKey(raw, "value")
 	if hasJSONKey(raw, "deltaX") {
 		if err := json.Unmarshal(raw["deltaX"], &r.DeltaX); err != nil {
 			return err
@@ -200,6 +213,37 @@ func ValidateSubmitAction(kind string, req ActionRequest) error {
 	}
 }
 
+// FillText is the one owner of what a fill writes: text, falling back to value,
+// the same tolerance actionSelect has had in the other direction. Both are
+// published request fields and no surface declared which one fill reads, so a
+// caller sending the other spelling wrote nothing and was told it succeeded.
+//
+// The second return says whether anything was asked for at all, which is not the
+// same as a non-empty answer: a supplied empty string clears the field.
+func FillText(req ActionRequest) (string, bool) {
+	if req.Text != "" {
+		return req.Text, true
+	}
+	if req.Value != "" {
+		return req.Value, true
+	}
+	return "", req.HasText
+}
+
+// ValidateFillAction refuses a fill that carries no text under any spelling. That
+// request used to write "" and answer filled:true with len:0 — indistinguishable
+// from clearing a field on purpose, which is why it stayed invisible. Clearing
+// stays available by sending the key explicitly.
+func ValidateFillAction(kind string, req ActionRequest) error {
+	if CanonicalActionKind(kind) != ActionFill {
+		return nil
+	}
+	if _, supplied := FillText(req); !supplied {
+		return fmt.Errorf(`fill requires "text" (or "value"); send "text": "" to clear the field`)
+	}
+	return nil
+}
+
 func hasJSONKey(raw map[string]json.RawMessage, key string) bool {
 	_, ok := raw[key]
 	return ok
@@ -212,6 +256,9 @@ func (b *Bridge) ExecuteAction(ctx context.Context, kind string, req ActionReque
 		req.Kind = kind
 	}
 	if err := ValidateSubmitAction(kind, req); err != nil {
+		return nil, err
+	}
+	if err := ValidateFillAction(kind, req); err != nil {
 		return nil, err
 	}
 	if kind == ActionClick && b.effectiveHumanize(req) && strings.TrimSpace(req.Mode) != "" {
