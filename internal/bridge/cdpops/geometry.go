@@ -8,41 +8,6 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-// GetElementCenter returns the center coordinates of an element using DOM.getBoxModel.
-func GetElementCenter(ctx context.Context, backendNodeID int64) (x, y float64, err error) {
-	var result json.RawMessage
-	err = chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.getBoxModel", map[string]any{
-			"backendNodeId": backendNodeID,
-		}, &result)
-	}))
-	if err != nil {
-		return 0, 0, err
-	}
-
-	var box struct {
-		Model struct {
-			Content []float64 `json:"content"`
-		} `json:"model"`
-	}
-	if err = json.Unmarshal(result, &box); err != nil {
-		return 0, 0, err
-	}
-
-	if len(box.Model.Content) < 4 {
-		return 0, 0, fmt.Errorf("invalid box model: expected at least 4 coordinates")
-	}
-
-	x = (box.Model.Content[0] + box.Model.Content[2] + box.Model.Content[4] + box.Model.Content[6]) / 4
-	y = (box.Model.Content[1] + box.Model.Content[3] + box.Model.Content[5] + box.Model.Content[7]) / 4
-
-	if x == 0 && y == 0 {
-		return GetElementCenterJS(ctx, backendNodeID)
-	}
-
-	return x, y, nil
-}
-
 // GetElementCenterJS resolves the DOM node and evaluates getBoundingClientRect().
 func GetElementCenterJS(ctx context.Context, backendNodeID int64) (float64, float64, error) {
 	var resolveResult json.RawMessage
@@ -97,10 +62,6 @@ func GetElementCenterJS(ctx context.Context, backendNodeID int64) (float64, floa
 	return callRes.Result.Value.X, callRes.Result.Value.Y, nil
 }
 
-// ScrollIntoViewIfNeeded scrolls the element into view. Measuring the resulting
-// box is deliberately not done here: getBoundingClientRect in the element's own
-// context is frame-relative, so the caller measures through the shared
-// document-relative box-model path instead.
 func ScrollIntoViewIfNeeded(ctx context.Context, nodeID int64) error {
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.scrollIntoViewIfNeeded", map[string]any{"backendNodeId": nodeID}, nil)

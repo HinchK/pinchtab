@@ -51,9 +51,6 @@ func getElementCenterJS(ctx context.Context, backendNodeID int64) (float64, floa
 
 // ScrollIntoViewAndGetBox scrolls the element into view and reports the box it
 // ended up at, in the same top-level viewport space /box and /capture report.
-// It shared /box's defect until now: measuring with getBoundingClientRect in the
-// element's own context returns frame-relative coordinates for anything inside
-// an iframe.
 func ScrollIntoViewAndGetBox(ctx context.Context, nodeID int64) (map[string]any, error) {
 	if err := bridgecdpops.ScrollIntoViewIfNeeded(ctx, nodeID); err != nil {
 		return nil, err
