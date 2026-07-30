@@ -233,12 +233,37 @@ func (s Selector) SemanticQuery() (string, bool) {
 			return s.String(), true
 		}
 	case KindNth:
-		_, raw, err := ParseNth(s.Value)
+		index, raw, err := ParseNth(s.Value)
 		if err == nil && rawSelectorCanUseSemantic(raw) {
-			return s.String(), true
+			return fmt.Sprintf("%s%d:%s", nthPrefix, index+semanticNthOffset, raw), true
 		}
 	}
 	return "", false
+}
+
+// semanticNthOffset translates PinchTab's zero-based nth into the one-based nth the
+// semantic matcher publishes. It is an adapter between two documented grammars, not an
+// off-by-one to be simplified away: the matcher's README states that nth:<n> is 1-based,
+// nth:1 selects the first ordered candidate and nth:0 is not the first match, while this
+// project documents nth as zero-based for every selector kind. Both remain correct; the
+// boundary converts. Removing it makes the documented nth:0 match nothing.
+const semanticNthOffset = 1
+
+const nthPrefix = "nth:"
+
+// SemanticNthBase splits a positional nth wrapper over a semantic form into the
+// caller's ZERO-based index and the bare query underneath it, for a caller that has to
+// say how many matches the unwrapped selector had. It answers false for every other
+// selector, including first:/last:, which cannot be out of range while any match exists.
+func (s Selector) SemanticNthBase() (index int, base string, ok bool) {
+	if s.Kind != KindNth {
+		return 0, "", false
+	}
+	index, raw, err := ParseNth(s.Value)
+	if err != nil || !rawSelectorCanUseSemantic(raw) {
+		return 0, "", false
+	}
+	return index, raw, true
 }
 
 func rawSelectorCanUseSemantic(raw string) bool {

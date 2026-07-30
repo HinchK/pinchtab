@@ -70,7 +70,7 @@ func (h *Handlers) applySemanticActionSelectorInScope(ctx context.Context, tabID
 		return true, fmt.Errorf("semantic selector: %w", err)
 	}
 	if result.BestRef == "" {
-		return true, fmt.Errorf("semantic selector %q: no matching element found", query)
+		return true, h.emptySemanticMatchError(ctx, sel, query, descs)
 	}
 
 	if scopeBackendNodeID != 0 {
@@ -138,6 +138,7 @@ func semanticSelectorHTTPStatus(err error) int {
 	case strings.Contains(msg, "not configured"):
 		return http.StatusNotImplemented
 	case strings.Contains(msg, "no matching element found"),
+		strings.Contains(msg, "is out of range"),
 		strings.Contains(msg, "no node is available"):
 		return http.StatusNotFound
 	case strings.Contains(msg, "no snapshot available"),
@@ -146,4 +147,33 @@ func semanticSelectorHTTPStatus(err error) int {
 	default:
 		return http.StatusInternalServerError
 	}
+}
+
+// emptySemanticMatchError distinguishes an empty page from an index nobody can satisfy.
+// A positional nth: wrapper that runs off the end of the match set otherwise reports
+// "no matching element found" while the elements are plainly there, which reads as a
+// broken page rather than a bad index. The message names the index the CALLER wrote —
+// zero-based, the spelling this project publishes — never the translated one the matcher
+// received.
+func (h *Handlers) emptySemanticMatchError(ctx context.Context, sel selector.Selector, query string, descs []semantic.ElementDescriptor) error {
+	index, base, ok := sel.SemanticNthBase()
+	if !ok {
+		return fmt.Errorf("semantic selector %q: no matching element found", query)
+	}
+	matches := h.countSemanticMatches(ctx, base, descs)
+	if matches == 0 {
+		return fmt.Errorf("semantic selector %q: no matching element found", sel.String())
+	}
+	return fmt.Errorf("semantic selector %q: index %d is out of range, %q matched %d element(s)", sel.String(), index, base, matches)
+}
+
+func (h *Handlers) countSemanticMatches(ctx context.Context, base string, descs []semantic.ElementDescriptor) int {
+	result, err := h.Matcher.Find(ctx, base, descs, semantic.FindOptions{
+		Threshold: 0.3,
+		TopK:      len(descs),
+	})
+	if err != nil {
+		return 0
+	}
+	return len(result.Matches)
 }

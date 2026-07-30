@@ -371,7 +371,7 @@ func TestSelector_SemanticQuery(t *testing.T) {
 		{"testid:submit", "testid:submit", true},
 		{"first:text:Submit", "", false},
 		{"last:role:button Save", "last:role:button Save", true},
-		{"nth:2:label:Email", "nth:2:label:Email", true},
+		{"nth:2:label:Email", "nth:3:label:Email", true},
 		{"first:button", "", false},
 		{"last:css:button", "", false},
 		{"nth:2:button", "", false},
@@ -402,14 +402,19 @@ func TestPositionalWrapperOverSemanticFormReachesTheMatcherWithItsIndex(t *testi
 
 	for _, prefix := range semanticPrefixes {
 		bare := prefix + "Save"
-		for _, wrapped := range []string{"first:" + bare, "last:" + bare, "nth:0:" + bare, "nth:2:" + bare} {
-			query, ok := Parse(wrapped).SemanticQuery()
+		for _, tc := range []struct{ wrapped, want string }{
+			{"first:" + bare, "first:" + bare},
+			{"last:" + bare, "last:" + bare},
+			{"nth:0:" + bare, "nth:1:" + bare},
+			{"nth:2:" + bare, "nth:3:" + bare},
+		} {
+			query, ok := Parse(tc.wrapped).SemanticQuery()
 			if !ok {
-				t.Errorf("%s no longer routes to the semantic matcher, so the wrapper it carries is never applied", wrapped)
+				t.Errorf("%s no longer routes to the semantic matcher, so the wrapper it carries is never applied", tc.wrapped)
 				continue
 			}
-			if query != wrapped {
-				t.Errorf("SemanticQuery(%q) = %q: the wrapper must reach the matcher intact, since the semantic engine parses the index itself and stripping it here drops the position the caller asked for", wrapped, query)
+			if query != tc.want {
+				t.Errorf("SemanticQuery(%q) = %q, want %q: the wrapper must reach the matcher with its index, translated into the one-based nth the matcher publishes", tc.wrapped, query, tc.want)
 			}
 		}
 	}
@@ -664,5 +669,46 @@ func TestParseMixedCasePrefixesMatchTheirLowercaseForm(t *testing.T) {
 
 	if got := Parse("CSS:#id"); got.Kind != KindCSS || got.Value != "#id" {
 		t.Errorf(`Parse("CSS:#id") = %+v, want css #id`, got)
+	}
+}
+
+// TestTheSemanticNthOffsetIsAnAdapterNotAnOffByOne states why the +1 exists, so it is
+// not "simplified" away by someone who sees the arithmetic and assumes a bug. The two
+// bases are both documented: this project publishes nth as zero-based for every
+// selector kind, and the semantic matcher's README publishes nth as one-based, where
+// nth:0 is not the first match. Deleting the offset makes the documented nth:0 select
+// nothing on the whole semantic family.
+func TestTheSemanticNthOffsetIsAnAdapterNotAnOffByOne(t *testing.T) {
+	if semanticNthOffset != 1 {
+		t.Fatalf("semanticNthOffset = %d, want 1: PinchTab's public nth is zero-based and the matcher's is one-based", semanticNthOffset)
+	}
+
+	query, ok := Parse("nth:0:role:button Save").SemanticQuery()
+	if !ok {
+		t.Fatal("nth over a semantic form must reach the matcher")
+	}
+	if query != "nth:1:role:button Save" {
+		t.Errorf("the public first match nth:0 arrives as %q; the matcher treats nth:0 as out of range, so it must arrive as nth:1", query)
+	}
+}
+
+func TestSemanticNthBaseReportsTheCallersOwnIndex(t *testing.T) {
+	for _, tc := range []struct {
+		input     string
+		wantIndex int
+		wantBase  string
+		wantOK    bool
+	}{
+		{"nth:0:role:button Save", 0, "role:button Save", true},
+		{"nth:2:label:Email", 2, "label:Email", true},
+		{"first:role:button", 0, "", false},
+		{"last:role:button", 0, "", false},
+		{"nth:2:css:button", 0, "", false},
+		{"role:button", 0, "", false},
+	} {
+		index, base, ok := Parse(tc.input).SemanticNthBase()
+		if ok != tc.wantOK || index != tc.wantIndex || base != tc.wantBase {
+			t.Errorf("SemanticNthBase(%q) = (%d, %q, %v), want (%d, %q, %v)", tc.input, index, base, ok, tc.wantIndex, tc.wantBase, tc.wantOK)
+		}
 	}
 }
