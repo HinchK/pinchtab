@@ -3,8 +3,6 @@ package handlers
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/selector"
@@ -25,7 +23,7 @@ func (h *Handlers) applySemanticActionSelectorInScope(ctx context.Context, tabID
 		return false, nil
 	}
 	if h.Matcher == nil {
-		return true, fmt.Errorf("semantic selectors require a matcher (not configured)")
+		return true, ErrSemanticMatcherUnavailable
 	}
 
 	var (
@@ -91,7 +89,10 @@ func (h *Handlers) applySemanticActionSelectorInScope(ctx context.Context, tabID
 	}
 	target, ok := cache.Lookup(result.BestRef)
 	if !ok || target.BackendNodeID == 0 {
-		return true, fmt.Errorf("semantic selector %q matched ref %s but no node is available", query, result.BestRef)
+		// The snapshot named a ref the cache no longer holds: from the caller's side
+		// that is a stale selector, not a broken server, so it carries the not-found
+		// sentinel like the other misses.
+		return true, fmt.Errorf("%w: semantic selector %q matched ref %s but no node is available", ErrElementNotFound, query, result.BestRef)
 	}
 	req.Ref = result.BestRef
 	req.NodeID = target.BackendNodeID
@@ -129,26 +130,6 @@ func scopeSemanticNodesByFrame(nodes []bridge.A11yNode, frameID string) []bridge
 	return filtered
 }
 
-func semanticSelectorHTTPStatus(err error) int {
-	if err == nil {
-		return http.StatusOK
-	}
-	msg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(msg, "not configured"):
-		return http.StatusNotImplemented
-	case strings.Contains(msg, "no matching element found"),
-		strings.Contains(msg, "is out of range"),
-		strings.Contains(msg, "no node is available"):
-		return http.StatusNotFound
-	case strings.Contains(msg, "no snapshot available"),
-		strings.Contains(msg, "no elements found"):
-		return http.StatusInternalServerError
-	default:
-		return http.StatusInternalServerError
-	}
-}
-
 // emptySemanticMatchError distinguishes an empty page from an index nobody can satisfy.
 // A positional nth: wrapper that runs off the end of the match set otherwise reports
 // "no matching element found" while the elements are plainly there, which reads as a
@@ -158,13 +139,13 @@ func semanticSelectorHTTPStatus(err error) int {
 func (h *Handlers) emptySemanticMatchError(ctx context.Context, sel selector.Selector, query string, descs []semantic.ElementDescriptor) error {
 	index, base, ok := sel.SemanticNthBase()
 	if !ok {
-		return fmt.Errorf("semantic selector %q: no matching element found", query)
+		return fmt.Errorf("%w: semantic selector %q: no matching element found", ErrElementNotFound, query)
 	}
 	matches := h.countSemanticMatches(ctx, base, descs)
 	if matches == 0 {
-		return fmt.Errorf("semantic selector %q: no matching element found", sel.String())
+		return fmt.Errorf("%w: semantic selector %q: no matching element found", ErrElementNotFound, sel.String())
 	}
-	return fmt.Errorf("semantic selector %q: index %d is out of range, %q matched %d element(s)", sel.String(), index, base, matches)
+	return fmt.Errorf("%w: semantic selector %q: index %d is out of range, %q matched %d element(s)", ErrElementNotFound, sel.String(), index, base, matches)
 }
 
 func (h *Handlers) countSemanticMatches(ctx context.Context, base string, descs []semantic.ElementDescriptor) int {

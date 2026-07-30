@@ -90,7 +90,7 @@ func (h *Handlers) resolveActionRequestSelectorInScope(
 
 	if handled, err := h.applySemanticActionSelectorInScope(ctx, tabID, frameID, modalNodeID, sel, req); handled {
 		if err != nil {
-			return actionSelectorResolution{status: semanticSelectorHTTPStatus(err)}, err
+			return actionSelectorResolution{status: statusForElementErr(err)}, err
 		}
 		return actionSelectorResolution{}, nil
 	}

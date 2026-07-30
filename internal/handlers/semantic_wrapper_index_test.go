@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -93,8 +94,12 @@ func TestAnOutOfRangeWrapperIndexSaysSoInsteadOfNoMatch(t *testing.T) {
 	if strings.Contains(msg, "nth:8") {
 		t.Errorf("refusal %q names the translated one-based index; it must name what the caller sent", msg)
 	}
-	if status := semanticSelectorHTTPStatus(err); status != 404 {
-		t.Errorf("out-of-range refusal maps to HTTP %d, want 404 rather than a 500 that reads as a server fault", status)
+	// The status itself is asserted at the HTTP boundary in semantic_status_test.go —
+	// a mapper can be correct while nobody calls it, which is exactly what happened
+	// here. What this layer owns is that the refusal CARRIES the sentinel every caller
+	// maps from.
+	if !errors.Is(err, ErrElementNotFound) {
+		t.Errorf("out-of-range refusal does not wrap ErrElementNotFound, so every caller has to recognise it by wording")
 	}
 }
 
