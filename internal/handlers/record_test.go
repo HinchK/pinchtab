@@ -112,7 +112,7 @@ func TestRecorderStart_AlreadyRecording(t *testing.T) {
 func TestHandleRecordStop_NoRecording(t *testing.T) {
 	// A real StateDir: the stop path reserves its output name on disk, so an empty
 	// StateDir would write into the package directory.
-	cfg := &config.RuntimeConfig{StateDir: t.TempDir()}
+	cfg := &config.RuntimeConfig{StateDir: t.TempDir(), AllowScreencast: true}
 	h := New(&mockBridge{}, cfg, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/record/stop", nil)
@@ -125,7 +125,7 @@ func TestHandleRecordStop_NoRecording(t *testing.T) {
 }
 
 func TestHandleRecordStatus_Inactive(t *testing.T) {
-	cfg := &config.RuntimeConfig{}
+	cfg := &config.RuntimeConfig{AllowScreencast: true}
 	h := New(&mockBridge{}, cfg, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/record/status", nil)

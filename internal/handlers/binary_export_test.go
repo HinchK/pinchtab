@@ -271,7 +271,9 @@ func TestSnapshotFileBranchRoutesTheGeneratedNameThroughTheUniqueHelper(t *testi
 // started writing into the package directory.
 func TestARefusedRecordStopLeavesNoReservedFile(t *testing.T) {
 	stateDir := t.TempDir()
-	h := New(&mockBridge{}, &config.RuntimeConfig{StateDir: stateDir}, nil, nil, nil)
+	// Screencast on: this pins the reserve-then-release path, which is only reachable
+	// once the capability guard has let the request through.
+	h := New(&mockBridge{}, &config.RuntimeConfig{StateDir: stateDir, AllowScreencast: true}, nil, nil, nil)
 
 	req := httptest.NewRequest("POST", "/record/stop", nil)
 	w := httptest.NewRecorder()

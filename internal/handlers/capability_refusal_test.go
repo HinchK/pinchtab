@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -405,5 +406,113 @@ func TestTheConfigWriteAloneDoesNotClearTheRefusal(t *testing.T) {
 	h.HandleGetCookies(w, httptest.NewRequest(http.MethodGet, "/cookies", nil))
 	if _, code, _ := decodeRefusal(t, "GET /cookies after config write only", w); code != "cookies_disabled" {
 		t.Fatalf("code = %q; the running config picked the edit up without a restart, so the remedy should stop naming one", code)
+	}
+}
+
+// recordRoutes is the whole record family, driven together on purpose: all three are
+// CapScreencast in the catalogue, so the orchestrator front locks all three, and the
+// asymmetry this pins is that only start once carried the in-handler guard the bridge
+// mux relies on. Asserting them as a set is what stops a fourth route arriving guarded
+// on one front only.
+//
+// If this is ever widened into a guard-PRESENCE census over the package, it must follow
+// ensureCookiesEnabled and ensureStateExportEnabled as well: those two wrappers delegate
+// to writeCapabilityDisabled, so grepping for the owner alone reports the cookies and
+// state families — eleven routes — as unguarded when they are not.
+var recordRoutes = []struct {
+	method string
+	path   string
+	body   string
+}{
+	{http.MethodPost, "/record/start", `{}`},
+	{http.MethodPost, "/record/stop", `{}`},
+	{http.MethodGet, "/record/status", ``},
+}
+
+func recordMux(t *testing.T, allowScreencast bool, stateDir string) *http.ServeMux {
+	t.Helper()
+
+	h := New(&mockBridge{}, &config.RuntimeConfig{AllowScreencast: allowScreencast, StateDir: stateDir}, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func() {})
+	return mux
+}
+
+func serveRecord(mux *http.ServeMux, method, path, body string) *httptest.ResponseRecorder {
+	w := httptest.NewRecorder()
+	var r *http.Request
+	if body == "" {
+		r = httptest.NewRequest(method, path, nil)
+	} else {
+		r = httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+	}
+	mux.ServeHTTP(w, r)
+	return w
+}
+
+// The bridge mux registers these three handlers directly, with no route-level lock, so an
+// in-handler guard is the only enforcement on that surface — and stop and status had none
+// while start refused. Wire change this pins: both move from 200/400 to 403 when
+// screencast is disabled.
+func TestEveryRecordRouteRefusesWithTheSharedScreencastCodeThroughTheMux(t *testing.T) {
+	mux := recordMux(t, false, t.TempDir())
+	screencast, _ := routes.Meta(routes.CapScreencast)
+
+	for _, route := range recordRoutes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			w := serveRecord(mux, route.method, route.path, route.body)
+			_, code, details := decodeRefusal(t, route.method+" "+route.path, w)
+
+			if code != screencast.DisabledCode {
+				t.Errorf("code = %q, want %q — one capability must not answer two ways across its own routes", code, screencast.DisabledCode)
+			}
+			if got, _ := details["remedy"].(string); got != remedyFor(screencast.Setting) {
+				t.Errorf("remedy = %q, want the shared one", got)
+			}
+		})
+	}
+}
+
+// Distinct from TestARefusedRecordStopLeavesNoReservedFile, which pins the RELEASE path: a
+// stop refused for having no active recording reserves a name and gives it back. This one
+// pins that a capability-refused stop never reserves at all.
+//
+// Stop reserved a real output path BEFORE discovering there was no active recording, so a
+// disabled capability drove a create-then-remove in a server-controlled directory. The
+// guard has to sit above that work, which only the directory can show — a 403 alone is
+// also produced by a guard placed after the reservation.
+func TestAStopRefusedByTheCapabilityGuardNeverReservesAFile(t *testing.T) {
+	stateDir := t.TempDir()
+
+	if w := serveRecord(recordMux(t, false, stateDir), http.MethodPost, "/record/stop", `{}`); w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403: %s", w.Code, w.Body.String())
+	}
+
+	entries, err := os.ReadDir(filepath.Join(stateDir, "recordings"))
+	if err == nil && len(entries) > 0 {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			names = append(names, entry.Name())
+		}
+		t.Errorf("a refused stop left %v in the recordings directory; the guard must sit above recordingsOutputPath, not after it", names)
+	}
+}
+
+// The positive control, without which a guard that refuses everything would pass every
+// assertion above. With screencast enabled none of the three may answer with the
+// capability refusal — what they answer instead is browser/state dependent and not this
+// test's business.
+func TestRecordRoutesAreNotRefusedWhenScreencastIsEnabled(t *testing.T) {
+	mux := recordMux(t, true, t.TempDir())
+	screencast, _ := routes.Meta(routes.CapScreencast)
+
+	for _, route := range recordRoutes {
+		t.Run(route.method+" "+route.path, func(t *testing.T) {
+			w := serveRecord(mux, route.method, route.path, route.body)
+			if strings.Contains(w.Body.String(), screencast.DisabledCode) {
+				t.Errorf("status = %d body = %s; screencast is enabled, so the capability guard must not fire", w.Code, w.Body.String())
+			}
+		})
 	}
 }

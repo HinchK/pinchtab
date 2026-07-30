@@ -104,6 +104,11 @@ func (h *Handlers) HandleRecordStart(w http.ResponseWriter, r *http.Request) {
 // and the endpoint returns the path immediately. If discard is true, frames are
 // dropped without encoding. Use /record/status to check encoding progress.
 func (h *Handlers) HandleRecordStop(w http.ResponseWriter, r *http.Request) {
+	if !h.Config.AllowScreencast {
+		h.writeCapabilityDisabled(w, routes.CapScreencast)
+		return
+	}
+
 	var req struct {
 		Discard bool `json:"discard"`
 	}
@@ -171,6 +176,10 @@ func (h *Handlers) recordingsOutputPath() (string, error) {
 
 // HandleRecordStatus returns the current recording status.
 func (h *Handlers) HandleRecordStatus(w http.ResponseWriter, r *http.Request) {
+	if !h.Config.AllowScreencast {
+		h.writeCapabilityDisabled(w, routes.CapScreencast)
+		return
+	}
 	httpx.JSON(w, 200, h.recorder.status())
 }
 
