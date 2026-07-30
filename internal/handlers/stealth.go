@@ -54,6 +54,15 @@ func (h *Handlers) HandleFingerprintRotate(w http.ResponseWriter, r *http.Reques
 	tCtx, tCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer tCancel()
 
+	// The locale override goes first because it is the one that fails: Chrome answers
+	// "Another locale override is already in effect" often enough to matter, and applying
+	// the UA before it left the tab wearing half a new identity with no way back.
+	if fp.Language != "" {
+		if err := h.Bridge.SetLocaleOverride(tCtx, fp.Language); err != nil {
+			httpx.Error(w, 500, fmt.Errorf("setLocaleOverride: %w", err))
+			return
+		}
+	}
 	if err := h.Bridge.SetUserAgentOverride(tCtx, bridge.UserAgentOverrideParams{
 		UserAgent:      fp.UserAgent,
 		Platform:       fp.Platform,
@@ -61,12 +70,6 @@ func (h *Handlers) HandleFingerprintRotate(w http.ResponseWriter, r *http.Reques
 	}); err != nil {
 		httpx.Error(w, 500, fmt.Errorf("setUserAgentOverride: %w", err))
 		return
-	}
-	if fp.Language != "" {
-		if err := h.Bridge.SetLocaleOverride(tCtx, fp.Language); err != nil {
-			httpx.Error(w, 500, fmt.Errorf("setLocaleOverride: %w", err))
-			return
-		}
 	}
 	if timezoneID := timezoneIDFromOffset(fp.TimezoneOffset); timezoneID != "" {
 		if err := h.Bridge.SetTimezoneOverride(tCtx, timezoneID); err != nil {

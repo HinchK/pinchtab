@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"reflect"
 	"sort"
@@ -990,5 +991,62 @@ func TestThePlatformAndMatrixVocabulariesAgree(t *testing.T) {
 	}
 	if got := stealth.HostFingerprintOS(); !owned[got] {
 		t.Fatalf("HostFingerprintOS() = %q, which is not one of the keys it owns", got)
+	}
+}
+
+// rotateOrderBridge records the override calls a rotation makes, in the order it makes
+// them, and can fail the locale override the way Chrome intermittently does.
+type rotateOrderBridge struct {
+	*mockBridge
+	calls     []string
+	localeErr error
+}
+
+func (m *rotateOrderBridge) SetUserAgentOverride(ctx context.Context, p bridge.UserAgentOverrideParams) error {
+	m.calls = append(m.calls, "userAgent")
+	return nil
+}
+
+func (m *rotateOrderBridge) SetLocaleOverride(ctx context.Context, locale string) error {
+	m.calls = append(m.calls, "locale")
+	return m.localeErr
+}
+
+func rotate(t *testing.T, mb *rotateOrderBridge, body string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	h := New(mb, &config.RuntimeConfig{}, nil, nil, nil)
+	w := httptest.NewRecorder()
+	h.HandleFingerprintRotate(w, httptest.NewRequest("POST", "/fingerprint/rotate", bytes.NewReader([]byte(body))))
+	return w
+}
+
+// The locale override is the one that fails — Chrome answers "Another locale override is
+// already in effect" often enough to matter — so it goes first. Applying the UA before it
+// left the tab wearing half a new identity, with no rollback and no correct meaning.
+func TestRotateAppliesTheFailureProneLocaleOverrideBeforeTheUserAgent(t *testing.T) {
+	mb := &rotateOrderBridge{mockBridge: &mockBridge{}}
+
+	if w := rotate(t, mb, `{"os":"windows","browser":"edge","tabId":"tab1"}`); w.Code != 200 {
+		t.Fatalf("rotate returned %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(mb.calls) < 2 || mb.calls[0] != "locale" || mb.calls[1] != "userAgent" {
+		t.Fatalf("rotate applied %v, want the locale override before the user agent", mb.calls)
+	}
+}
+
+func TestAFailedLocaleOverrideLeavesTheUserAgentUntouched(t *testing.T) {
+	mb := &rotateOrderBridge{mockBridge: &mockBridge{}, localeErr: errors.New("Another locale override is already in effect (-32000)")}
+
+	w := rotate(t, mb, `{"os":"windows","browser":"edge","tabId":"tab1"}`)
+
+	if w.Code != 500 {
+		t.Fatalf("rotate returned %d, want 500 when the locale override fails", w.Code)
+	}
+	for _, call := range mb.calls {
+		if call == "userAgent" {
+			t.Fatalf("rotate applied %v after the locale override failed, so the tab is half-rotated with no way back", mb.calls)
+		}
 	}
 }

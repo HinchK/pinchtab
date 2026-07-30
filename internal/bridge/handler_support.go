@@ -188,13 +188,17 @@ func (b *Bridge) SetUserAgentOverride(ctx context.Context, params UserAgentOverr
 	if strings.TrimSpace(params.UserAgent) == "" {
 		return fmt.Errorf("user agent override must not be empty")
 	}
+	override := userAgentOverrideAction(params, b.browserVersion())
 	return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		p := emulation.SetUserAgentOverride(params.UserAgent).WithPlatform(params.Platform)
-		if params.AcceptLanguage != "" {
-			p = p.WithAcceptLanguage(params.AcceptLanguage)
-		}
-		return p.Do(ctx)
+		return override.Do(ctx)
 	}))
+}
+
+func (b *Bridge) browserVersion() string {
+	if b.Config == nil {
+		return ""
+	}
+	return b.Config.BrowserVersion
 }
 
 func (b *Bridge) SetLocaleOverride(ctx context.Context, locale string) error {

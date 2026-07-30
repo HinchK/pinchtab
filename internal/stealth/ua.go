@@ -51,6 +51,47 @@ func ReducedBrowserVersion(chromeVersion string) string {
 	return major + ".0.0.0"
 }
 
+// The Sec-CH-UA brand vocabulary. A Chromium build sends its own vendor brand next to
+// "Chromium" and a GREASE placeholder, and the vendor brand is what a detector
+// cross-checks against the UA string: Edge sends "Microsoft Edge" where Chrome sends
+// "Google Chrome", so an Edg/ UA shipping Chrome brands describes a browser that cannot
+// exist.
+const (
+	BrandChrome        = "Google Chrome"
+	BrandEdge          = "Microsoft Edge"
+	brandChromium      = "Chromium"
+	brandGrease        = "Not(A:Brand"
+	greaseMajorVersion = "99"
+	greaseFullVersion  = "99.0.0.0"
+)
+
+// brandList is the brand vocabulary a UA claims, read back out of the string the same way
+// the platform is. A UA naming no Chromium build gets no brands at all: real Safari sends
+// no Sec-CH-UA header, so brands there are the tell rather than the cover, and the callers
+// that build CDP metadata omit it entirely rather than describing a Chrome that is not
+// there.
+func brandList(ua, version, greaseVersion string) []BrandVersion {
+	vendor, ok := chromiumVendorBrand(ua)
+	if !ok {
+		return nil
+	}
+	return []BrandVersion{
+		{Brand: brandGrease, Version: greaseVersion},
+		{Brand: vendor, Version: version},
+		{Brand: brandChromium, Version: version},
+	}
+}
+
+func chromiumVendorBrand(ua string) (string, bool) {
+	switch {
+	case strings.Contains(ua, "Edg/"):
+		return BrandEdge, true
+	case strings.Contains(ua, "Chrome/"):
+		return BrandChrome, true
+	}
+	return "", false
+}
+
 // The platform vocabulary of the persona: the same values UserAgentDataProfile
 // reports and PlatformVersionFor is keyed on, so a caller names a platform once
 // and every UA fact follows from it.
@@ -228,16 +269,8 @@ func BuildPersona(userAgent, chromeVersion string) BrowserPersona {
 		architecture = "arm"
 	}
 
-	brands := []BrandVersion{
-		{Brand: "Not(A:Brand", Version: "99"},
-		{Brand: "Google Chrome", Version: major},
-		{Brand: "Chromium", Version: major},
-	}
-	fullVersionList := []BrandVersion{
-		{Brand: "Not(A:Brand", Version: "99.0.0.0"},
-		{Brand: "Google Chrome", Version: chromeVersionOrFallback(chromeVersion)},
-		{Brand: "Chromium", Version: chromeVersionOrFallback(chromeVersion)},
-	}
+	brands := brandList(ua, major, greaseMajorVersion)
+	fullVersionList := brandList(ua, chromeVersionOrFallback(chromeVersion), greaseFullVersion)
 
 	return BrowserPersona{
 		UserAgent:         ua,

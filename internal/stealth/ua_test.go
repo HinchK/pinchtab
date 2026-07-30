@@ -510,3 +510,69 @@ func TestBuildPersonaPlatformVersionMatchesPlatform(t *testing.T) {
 		t.Fatalf("host persona platformVersion = %q, want %q", persona.UserAgentData.PlatformVersion, PlatformVersionFor(uaDataPlatform))
 	}
 }
+
+// The brand list is where the UA string and the client hints have to agree. A detector
+// cross-checking the two sees a browser that cannot exist when they disagree, which is
+// louder than either being wrong alone — so the vendor brand is read out of the UA rather
+// than fixed at Chrome, and a UA naming no Chromium build claims no brands at all.
+func TestPersonaBrandsNameTheBrowserTheUserAgentClaims(t *testing.T) {
+	const version = "144.0.7559.133"
+	windowsChrome := ChromeUserAgent(PlatformWindows, ReducedBrowserVersion(version))
+
+	for _, tc := range []struct {
+		name      string
+		userAgent string
+		want      []string
+	}{
+		{
+			name:      "chrome",
+			userAgent: windowsChrome,
+			want:      []string{"Not(A:Brand", "Google Chrome", "Chromium"},
+		},
+		{
+			name:      "edge",
+			userAgent: EdgeUserAgent(windowsChrome, ReducedBrowserVersion(version)),
+			want:      []string{"Not(A:Brand", "Microsoft Edge", "Chromium"},
+		},
+		{
+			// Real Safari implements no UA-CH at all, so brands here would be the tell.
+			name:      "safari",
+			userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+			want:      nil,
+		},
+	} {
+		persona := BuildPersona(tc.userAgent, version)
+
+		for _, list := range [][]BrandVersion{persona.UserAgentData.Brands, persona.UserAgentData.FullVersionList} {
+			if len(list) != len(tc.want) {
+				t.Errorf("%s: brands = %v, want %v", tc.name, list, tc.want)
+				continue
+			}
+			for i, want := range tc.want {
+				if list[i].Brand != want {
+					t.Errorf("%s: brand %d = %q, want %q", tc.name, i, list[i].Brand, want)
+				}
+				if list[i].Version == "" {
+					t.Errorf("%s: brand %q carries no version", tc.name, list[i].Brand)
+				}
+			}
+		}
+	}
+}
+
+// The two lists differ in one way only, and it is the way real Chrome differs: sec-ch-ua
+// carries majors, the full version list carries builds.
+func TestPersonaBrandVersionsAreMajorInBrandsAndFullInTheVersionList(t *testing.T) {
+	persona := BuildPersona(ChromeUserAgent(PlatformMacOS, ReducedBrowserVersion("144.0.7559.133")), "144.0.7559.133")
+
+	for _, brand := range persona.UserAgentData.Brands {
+		if brand.Brand == BrandChrome && brand.Version != "144" {
+			t.Errorf("sec-ch-ua %s version = %q, want the major 144", brand.Brand, brand.Version)
+		}
+	}
+	for _, brand := range persona.UserAgentData.FullVersionList {
+		if brand.Brand == BrandChrome && brand.Version != "144.0.7559.133" {
+			t.Errorf("fullVersionList %s version = %q, want the full build", brand.Brand, brand.Version)
+		}
+	}
+}

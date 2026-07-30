@@ -22,33 +22,43 @@ func BuildUserAgentOverride(userAgent, chromeVersion string) *emulation.SetUserA
 		return nil
 	}
 
-	brands := make([]*emulation.UserAgentBrandVersion, 0, len(persona.UserAgentData.Brands))
-	for _, brand := range persona.UserAgentData.Brands {
-		brands = append(brands, &emulation.UserAgentBrandVersion{
-			Brand:   brand.Brand,
-			Version: brand.Version,
-		})
-	}
-	fullVersionList := make([]*emulation.UserAgentBrandVersion, 0, len(persona.UserAgentData.FullVersionList))
-	for _, brand := range persona.UserAgentData.FullVersionList {
-		fullVersionList = append(fullVersionList, &emulation.UserAgentBrandVersion{
-			Brand:   brand.Brand,
-			Version: brand.Version,
-		})
-	}
-
-	return emulation.SetUserAgentOverride(persona.UserAgent).
+	override := emulation.SetUserAgentOverride(persona.UserAgent).
 		WithAcceptLanguage(persona.AcceptLanguage).
-		WithPlatform(persona.NavigatorPlatform).
-		WithUserAgentMetadata(&emulation.UserAgentMetadata{
-			Platform:        persona.UserAgentData.Platform,
-			PlatformVersion: persona.UserAgentData.PlatformVersion,
-			Architecture:    persona.UserAgentData.Architecture,
-			Bitness:         persona.UserAgentData.Bitness,
-			Mobile:          persona.UserAgentData.Mobile,
-			Brands:          brands,
-			FullVersionList: fullVersionList,
+		WithPlatform(persona.NavigatorPlatform)
+	if metadata := personaUserAgentMetadata(persona); metadata != nil {
+		override = override.WithUserAgentMetadata(metadata)
+	}
+	return override
+}
+
+// personaUserAgentMetadata is the UA-CH half of a persona, or nil for a persona that
+// claims no Chromium brand. Nil is the honest answer there rather than an omission:
+// Chrome stops emitting Sec-CH-UA when setUserAgentOverride carries no metadata, and a
+// non-Chromium identity sends none of those headers either.
+func personaUserAgentMetadata(persona BrowserPersona) *emulation.UserAgentMetadata {
+	if len(persona.UserAgentData.Brands) == 0 {
+		return nil
+	}
+	return &emulation.UserAgentMetadata{
+		Platform:        persona.UserAgentData.Platform,
+		PlatformVersion: persona.UserAgentData.PlatformVersion,
+		Architecture:    persona.UserAgentData.Architecture,
+		Bitness:         persona.UserAgentData.Bitness,
+		Mobile:          persona.UserAgentData.Mobile,
+		Brands:          brandVersions(persona.UserAgentData.Brands),
+		FullVersionList: brandVersions(persona.UserAgentData.FullVersionList),
+	}
+}
+
+func brandVersions(brands []BrandVersion) []*emulation.UserAgentBrandVersion {
+	converted := make([]*emulation.UserAgentBrandVersion, 0, len(brands))
+	for _, brand := range brands {
+		converted = append(converted, &emulation.UserAgentBrandVersion{
+			Brand:   brand.Brand,
+			Version: brand.Version,
 		})
+	}
+	return converted
 }
 
 func BuildLocaleOverride(userAgent, chromeVersion string) *emulation.SetLocaleOverrideParams {
