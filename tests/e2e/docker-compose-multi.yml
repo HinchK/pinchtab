@@ -6,9 +6,16 @@
 # "debug"), and the level silently moved with it. `--log-level` wins over any
 # config file, so nothing under tests/e2e/config/ can override it.
 #
-# `--verbose` is kept alongside for the startup banner, which is the sole place the
-# log states the guard posture and the allowed-domain list — the fact that explains
-# a scenario failing on a blocked fixture host.
+# `--verbose` is kept alongside for the two things it alone puts in the artifact,
+# both gated on cfg.VerboseBanner in internal/server/server.go: the startup banner,
+# whose security line reads `security  ELEVATED`, and cli.LogSecurityWarnings — four
+# `category=security` WARN lines (sensitive_endpoints_enabled, non_loopback_bind,
+# idpi_warn_mode, attach_external_hosts with its `allowHosts` list) that vanish
+# entirely without the flag. The warnings are the diagnostic half; the attach
+# `allowHosts` list is the attach trust boundary, NOT the netguard allowed domains.
+# Nothing in the server log prints the netguard allowlist at any level — `Guard: UP`
+# and `Allowed domains:` come from cmd_wizard.go, the interactive setup wizard, and
+# never reach a `docker compose logs` capture.
 #
 # Both flags must stay, and the reason is a precedence detail worth stating exactly.
 # `--verbose` contributes ONLY the banner *while* `--log-level` is set: applyLogLevel

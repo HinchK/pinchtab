@@ -1068,9 +1068,10 @@ func TestEmptyLogSuffixMarksZeroByteArtifacts(t *testing.T) {
 // level used to be borrowed from --verbose, which once meant "log at all" and later
 // came to mean "debug"; the harness's diagnostic level moved when that definition
 // moved, which is the drift this pins. --verbose is still expected alongside for the
-// startup banner — the only place the log states the guard posture and the
-// allowed-domain list — and both flags are required together: --verbose contributes
-// only the banner WHILE --log-level is set, and would govern the level again if
+// startup banner and the four category=security WARN lines, both gated on
+// cfg.VerboseBanner and absent from the artifact without it; the netguard allowlist
+// is printed by neither, at any level. Both flags are required together: --verbose
+// contributes only the banner WHILE --log-level is set, and would govern the level again if
 // --log-level were dropped. Bridge services are expected to carry neither, which
 // leaves them at info; that is this guard's scope, not a finding that info is the
 // right level for them.
