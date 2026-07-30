@@ -42,7 +42,10 @@ func TestAQuarantineCarryingStaleMetadataNeverClaimsTheLiveProfileIdentity(t *te
 	// the live directory's name plus a suffix, so ReadDir yields the live directory first
 	// and the id match wins before the metadata is ever consulted. Measured — weakening
 	// trustedProfileMeta leaves this subtest passing. The identity subtest below is what
-	// actually holds the line, so do not read a green here as covering the rule.
+	// actually holds the line, so do not read a green here as covering the rule. The same
+	// applies to the delete subtest: Delete resolves through findProfileDirByName, so it
+	// inherits this lookup's answer and also passes under the weakening. Both are here for
+	// the consequences they describe, not as evidence for the rule.
 	t.Run("a lookup by name resolves the live directory", func(t *testing.T) {
 		got, err := pm.findProfileDirByName("shopping")
 		if err != nil {
