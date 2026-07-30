@@ -826,3 +826,76 @@ func TestKeyboardTypeWithTab(t *testing.T) {
 		t.Errorf("expected /tabs/tab42/action, got %s", m.lastPath)
 	}
 }
+
+// newScrollCmd carries the flags cmd/pinchtab registers on `scroll`, so a body built here is
+// built from the same inputs production reads.
+func newScrollCmd() *cobra.Command {
+	cmd := newSimpleCmd()
+	cmd.Flags().Int("dy", 0, "")
+	cmd.Flags().Int("dx", 0, "")
+	return cmd
+}
+
+// Scrolling up by an exact pixel count is what had no working spelling: a positional "-300"
+// cannot reach the command (cobra reads it as shorthand flags), and `-- -300` swallowed
+// --tab. The flag is the reachable route, and negatives are fine as flag VALUES.
+func TestScrollByPixelFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags map[string]string
+		want  map[string]float64
+	}{
+		{name: "up", flags: map[string]string{"dy": "-300"}, want: map[string]float64{"scrollY": -300}},
+		{name: "down", flags: map[string]string{"dy": "800"}, want: map[string]float64{"scrollY": 800}},
+		{name: "left", flags: map[string]string{"dx": "-120"}, want: map[string]float64{"scrollX": -120}},
+		{name: "both axes", flags: map[string]string{"dy": "-300", "dx": "40"}, want: map[string]float64{"scrollY": -300, "scrollX": 40}},
+	} {
+		m := newMockServer()
+		cmd := newScrollCmd()
+		for flag, value := range tc.flags {
+			if err := cmd.Flags().Set(flag, value); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		ActionSimple(m.server.Client(), m.base(), "", "scroll", nil, cmd)
+
+		var body map[string]any
+		_ = json.Unmarshal([]byte(m.lastBody), &body)
+		for key, want := range tc.want {
+			if body[key] != want {
+				t.Errorf("%s: %s = %v, want %v (body %+v)", tc.name, key, body[key], want, body)
+			}
+		}
+		m.close()
+	}
+}
+
+// The positional forms are what everything else in the docs teaches, and adding the flags
+// touched the same precedence path that resolves them.
+func TestScrollPositionalFormsAreUnchangedByThePixelFlags(t *testing.T) {
+	for _, tc := range []struct {
+		arg  string
+		key  string
+		want any
+	}{
+		{arg: "800", key: "scrollY", want: float64(800)},
+		{arg: "down", key: "scrollY", want: float64(800)},
+		{arg: "up", key: "scrollY", want: float64(-800)},
+		{arg: "right", key: "scrollX", want: float64(800)},
+		{arg: "left", key: "scrollX", want: float64(-800)},
+		{arg: "e12", key: "ref", want: "e12"},
+		{arg: "#footer", key: "selector", want: "#footer"},
+		{arg: "text:Load more", key: "selector", want: "text:Load more"},
+	} {
+		m := newMockServer()
+		ActionSimple(m.server.Client(), m.base(), "", "scroll", []string{tc.arg}, newScrollCmd())
+
+		var body map[string]any
+		_ = json.Unmarshal([]byte(m.lastBody), &body)
+		if body[tc.key] != tc.want {
+			t.Errorf("scroll %q: %s = %v, want %v (body %+v)", tc.arg, tc.key, body[tc.key], tc.want, body)
+		}
+		m.close()
+	}
+}

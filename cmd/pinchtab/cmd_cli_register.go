@@ -94,6 +94,9 @@ func configureBrowserFlags() {
 	mouseWheelCmd.Flags().Int("dx", 0, "Wheel delta X")
 	mouseWheelCmd.Flags().Int("dy", 0, "Wheel delta Y")
 
+	scrollCmd.Flags().Int("dy", 0, "Vertical scroll in pixels (negative scrolls up)")
+	scrollCmd.Flags().Int("dx", 0, "Horizontal scroll in pixels (negative scrolls left)")
+
 	dragCmd.Flags().String("button", "left", "Mouse button: left, right, middle")
 	dragCmd.Flags().Int("drag-x", 0, "Horizontal pixel offset for single-step drag action")
 	dragCmd.Flags().Int("drag-y", 0, "Vertical pixel offset for single-step drag action")

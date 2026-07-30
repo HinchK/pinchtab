@@ -209,6 +209,46 @@ func setPointBody(body map[string]any, x, y float64) {
 	body["y"] = y
 }
 
+// applyScrollTarget fills a scroll body from --dy/--dx, or from the single positional by
+// precedence: integer pixels, then direction keyword, then unified selector. Pixels and
+// directions are short, low-cardinality inputs that would otherwise parse as CSS tag
+// selectors ("up", "down"), so they are intercepted before setSelectorBody.
+//
+// The flags are how a NEGATIVE count is reachable at all: cobra reads a leading minus on a
+// positional as shorthand flags, so `scroll -300` — an example in this command's own help —
+// never parsed, and `scroll -- -300` was the only workaround. scrollArgs in cmd/pinchtab
+// rejects the combinations this cannot express, so an empty args slice here means the flags
+// carry the request.
+func applyScrollTarget(body map[string]any, args []string, cmd *cobra.Command) {
+	if deltaY, ok := readWheelDelta(cmd, "dy"); ok {
+		body["scrollY"] = deltaY
+	}
+	if deltaX, ok := readWheelDelta(cmd, "dx"); ok {
+		body["scrollX"] = deltaX
+	}
+	if len(args) == 0 {
+		return
+	}
+	if px, err := strconv.Atoi(args[0]); err == nil {
+		body["scrollY"] = px
+		return
+	}
+	switch strings.ToLower(args[0]) {
+	case "down":
+		body["scrollY"] = 800
+	case "up":
+		body["scrollY"] = -800
+	case "right":
+		body["scrollX"] = 800
+	case "left":
+		body["scrollX"] = -800
+	default:
+		// Refs ("e5"), CSS ("#footer"), XPath ("//..."), text: and semantic selectors all
+		// work here — the same contract as click, fill and hover.
+		setSelectorBody(body, args[0])
+	}
+}
+
 func readWheelDelta(cmd *cobra.Command, primary string) (int, bool) {
 	if cmd.Flags().Changed(primary) {
 		if value, err := cmd.Flags().GetInt(primary); err == nil {
@@ -420,30 +460,7 @@ func ActionSimple(client *http.Client, base, token, kind string, args []string, 
 			body["key"] = args[0]
 		}
 	case "scroll":
-		// Precedence: integer pixels > direction keyword > unified selector.
-		// Pixels and directions are short, low-cardinality inputs that would
-		// otherwise also parse as CSS tag selectors (e.g. "up" / "down"), so
-		// we intercept them before handing off to setSelectorBody.
-		if px, err := strconv.Atoi(args[0]); err == nil {
-			body["scrollY"] = px
-			break
-		}
-		switch strings.ToLower(args[0]) {
-		case "down":
-			body["scrollY"] = 800
-		case "up":
-			body["scrollY"] = -800
-		case "right":
-			body["scrollX"] = 800
-		case "left":
-			body["scrollX"] = -800
-		default:
-			// Fall back to the unified selector parser so refs ("e5"),
-			// CSS ("#footer", ".class"), XPath ("//..."), text: and
-			// semantic selectors all work — same contract as `click`,
-			// `fill`, `hover`, etc. Server supports these via req.Selector.
-			setSelectorBody(body, args[0])
-		}
+		applyScrollTarget(body, args, cmd)
 	case "select":
 		setSelectorBody(body, args[0])
 		body["value"] = args[1]

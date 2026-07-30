@@ -15,9 +15,18 @@ pinchtab scroll down
 pinchtab scroll down --snap        # scroll and output snapshot
 pinchtab scroll 800 --snap-diff    # scroll and output snapshot diff
 pinchtab scroll 800 --json         # Full JSON response
+
+pinchtab scroll --dy -300          # scroll up 300px
+pinchtab scroll --dx -120          # scroll left 120px
 ```
 
 Notes:
+
+- a negative pixel count uses `--dy` / `--dx`: a leading minus on a positional argument is
+  read as a bundle of shorthand flags and refused before the command runs
+- give either the flags or one positional, never both, and only one positional is accepted —
+  so `--tab` stays a flag and must not be placed after `--`, where it would be read as a
+  positional
 
 - use `--snap` to output an interactive snapshot after scrolling
 - use `--snap-diff` to output only the changes from the previous snapshot
