@@ -13,6 +13,7 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
+	"github.com/pinchtab/pinchtab/internal/fileout"
 	"github.com/pinchtab/pinchtab/internal/readiness"
 	"github.com/spf13/cobra"
 )
@@ -56,7 +57,8 @@ func RecordStart(client *http.Client, base, token string, cmd *cobra.Command, ar
 
 func RecordStop(client *http.Client, base, token string) {
 	outFile := readRecordingState()
-	if outFile == "" {
+	autoNamed := outFile == ""
+	if autoNamed {
 		outFile = fmt.Sprintf("recording-%s.gif", time.Now().Format("20060102-150405"))
 	}
 
@@ -118,7 +120,22 @@ func RecordStop(client *http.Client, base, token string) {
 		}
 	}
 
+	// The bytes are already on disk under the server's own name, so this site reserves
+	// rather than writes: the exclusive create claims the name, and the rename replaces
+	// our own placeholder atomically. Reserved here rather than where the name is built
+	// so a run that never gets this far leaves nothing behind, and released below if the
+	// rename fails — an abandoned reservation is an empty file wearing an output's name.
+	if autoNamed {
+		reserved, err := fileout.ReservePath(outFile)
+		if err != nil {
+			cli.Fatal("Failed to reserve %s: %v", outFile, err)
+		}
+		outFile = reserved
+	}
 	if err := os.Rename(serverPath, outFile); err != nil {
+		if autoNamed {
+			_ = os.Remove(outFile)
+		}
 		cli.Fatal("Failed to move %s → %s: %v", serverPath, outFile, err)
 	}
 	fmt.Println(cli.StyleStdout(cli.SuccessStyle,

@@ -13,6 +13,7 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/bridge/observe"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/fileout"
 )
 
 // Two saves in immediate succession must land on different paths with both files intact.
@@ -123,7 +124,7 @@ func TestCreateUniqueFileRefusesRatherThanOverwriteWhenTheLadderIsExhausted(t *t
 		}
 	}
 	occupy(base + ext)
-	for i := 1; i < maxUniqueNameAttempts; i++ {
+	for i := 1; i < fileout.MaxUniqueNameAttempts; i++ {
 		occupy(fmt.Sprintf("%s-%d%s", base, i, ext))
 	}
 
