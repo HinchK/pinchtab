@@ -259,14 +259,8 @@ func TestHandlePutConfigPreservesExistingToken(t *testing.T) {
 }
 
 func TestHandlePutConfigPreservesWriteOnlySecretsFromRedactedGetPayload(t *testing.T) {
-	fc := config.DefaultFileConfig()
-	fc.Server.Token = "secret-token"
 	stateKey := "state-secret"
-	fc.Security.StateEncryptionKey = &stateKey
-	fc.AutoSolver.External.CapsolverKey = "capsolver-secret"
-	fc.AutoSolver.External.TwoCaptchaKey = "twocaptcha-secret"
-
-	api := newConfigAPITestAPI(t, fc)
+	api := newConfigAPIOverFile(t, []byte(minimalUserConfigJSON))
 	sessions := browsersession.NewManager(browsersession.Config{ElevationWindow: time.Minute})
 	sessionID, err := sessions.Create("secret-token")
 	if err != nil {
@@ -281,13 +275,7 @@ func TestHandlePutConfigPreservesWriteOnlySecretsFromRedactedGetPayload(t *testi
 		t.Fatalf("HandleGetConfig() status = %d, want %d", getRes.Code, http.StatusOK)
 	}
 
-	env := decodeConfigEnvelope(t, getRes)
-	env.Config.Server.Port = "9898"
-
-	body, err := json.Marshal(env.Config)
-	if err != nil {
-		t.Fatalf("Marshal() error = %v", err)
-	}
+	body := putBodyFromGetPayloadWithPort(t, getRes, "9898")
 
 	putReq := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
 	putReq.AddCookie(&http.Cookie{Name: authn.CookieName, Value: sessionID})
@@ -588,10 +576,24 @@ func TestHandleHealthSecurityVisibilityByAuthMethod(t *testing.T) {
 func newConfigAPITestAPI(t *testing.T, fc config.FileConfig) *ConfigAPI {
 	t.Helper()
 
+	data, err := json.MarshalIndent(fc, "", "  ")
+	if err != nil {
+		t.Fatalf("MarshalIndent() error = %v", err)
+	}
+	return newConfigAPIOverFile(t, data)
+}
+
+// newConfigAPIOverFile builds the API over the exact bytes given, so a test can
+// exercise the shape a real config file has: keys the user never set are absent,
+// which loads them as nil rather than as the empty slices a materialised file
+// carries.
+func newConfigAPIOverFile(t *testing.T, data []byte) *ConfigAPI {
+	t.Helper()
+
 	configPath := filepath.Join(t.TempDir(), "config.json")
 	t.Setenv("PINCHTAB_CONFIG", configPath)
-	if err := config.SaveFileConfig(&fc, configPath); err != nil {
-		t.Fatalf("SaveFileConfig() error = %v", err)
+	if err := os.WriteFile(configPath, data, 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
 	}
 
 	return NewConfigAPI(config.Load(), nil, nil, nil, nil, "test", time.Now())
@@ -754,4 +756,64 @@ func TestHandleHealthCountsQuarantinedProfilesSeparately(t *testing.T) {
 	if health.QuarantinedProfiles != 2 {
 		t.Errorf("health quarantinedProfiles = %d, want 2", health.QuarantinedProfiles)
 	}
+}
+
+func TestHandlePutConfigDoesNotDemandElevationForANonSensitiveEdit(t *testing.T) {
+	api := newConfigAPIOverFile(t, []byte(minimalUserConfigJSON))
+
+	getRes := httptest.NewRecorder()
+	api.HandleGetConfig(getRes, httptest.NewRequest(http.MethodGet, "/api/config", nil))
+	if getRes.Code != http.StatusOK {
+		t.Fatalf("HandleGetConfig() status = %d, want %d", getRes.Code, http.StatusOK)
+	}
+	body := putBodyFromGetPayloadWithPort(t, getRes, "9898")
+
+	putReq := httptest.NewRequest(http.MethodPut, "/api/config", bytes.NewReader(body))
+	putReq.AddCookie(&http.Cookie{Name: authn.CookieName, Value: "dashboard-session"})
+	putRes := httptest.NewRecorder()
+	api.HandlePutConfig(putRes, putReq)
+	if putRes.Code != http.StatusOK {
+		t.Fatalf("HandlePutConfig() status = %d, want %d: %s", putRes.Code, http.StatusOK, putRes.Body.String())
+	}
+}
+
+// putBodyFromGetPayloadWithPort edits the GET payload the way a dashboard client
+// does: the received JSON is sent back verbatim apart from the one field the user
+// touched. Re-marshalling through config.FileConfig instead would drop every empty
+// array the payload carries, which is exactly the difference this exercises.
+const minimalUserConfigJSON = `{
+  "server": {
+    "port": "9913",
+    "token": "secret-token"
+  },
+  "security": {
+    "stateEncryptionKey": "state-secret"
+  },
+  "autoSolver": {
+    "external": {
+      "capsolverKey": "capsolver-secret",
+      "twoCaptchaKey": "twocaptcha-secret"
+    }
+  }
+}`
+
+func putBodyFromGetPayloadWithPort(t *testing.T, getRes *httptest.ResponseRecorder, port string) []byte {
+	t.Helper()
+
+	var envelope struct {
+		Config map[string]any `json:"config"`
+	}
+	if err := json.Unmarshal(getRes.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("Unmarshal GET payload: %v", err)
+	}
+	server, ok := envelope.Config["server"].(map[string]any)
+	if !ok {
+		t.Fatalf("GET payload has no server section: %v", envelope.Config)
+	}
+	server["port"] = port
+	body, err := json.Marshal(envelope.Config)
+	if err != nil {
+		t.Fatalf("Marshal PUT body: %v", err)
+	}
+	return body
 }

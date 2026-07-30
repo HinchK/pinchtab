@@ -1,10 +1,19 @@
 package dashboard
 
 import (
-	"reflect"
+	"encoding/json"
 
 	"github.com/pinchtab/pinchtab/internal/config"
 )
+
+func sameConfigSection(a, b any) bool {
+	left, errLeft := json.Marshal(a)
+	right, errRight := json.Marshal(b)
+	if errLeft != nil || errRight != nil {
+		return false
+	}
+	return string(left) == string(right)
+}
 
 type sensitiveConfigChangeSet struct {
 	requiresElevation bool
@@ -24,11 +33,11 @@ func sensitiveConfigChanges(current, next *config.FileConfig) sensitiveConfigCha
 	if current == nil || next == nil {
 		return out
 	}
-	if !reflect.DeepEqual(current.Security, next.Security) {
+	if !sameConfigSection(current.Security, next.Security) {
 		out.requiresElevation = true
 		out.names = append(out.names, "security")
 	}
-	if !reflect.DeepEqual(current.Browser.Proxy, next.Browser.Proxy) {
+	if !sameConfigSection(current.Browser.Proxy, next.Browser.Proxy) {
 		out.requiresElevation = true
 		out.proxyChanged = true
 		out.names = append(out.names, "browser.proxy")
@@ -69,7 +78,7 @@ func changedTargetProxyNames(current, next config.BrowserTargetsConfig) []string
 	}
 	var changed []string
 	for _, name := range names {
-		if !reflect.DeepEqual(current[name].Proxy, next[name].Proxy) {
+		if !sameConfigSection(current[name].Proxy, next[name].Proxy) {
 			changed = append(changed, name)
 		}
 	}
@@ -84,7 +93,7 @@ func (c *ConfigAPI) restartReasonsFor(next config.FileConfig) []string {
 	// edit, so any change to the security block only takes effect after a restart.
 	// Surfacing it here is what lets `pinchtab security`/`health` warn that the
 	// running server is enforcing stale policy instead of silently diverging.
-	if !reflect.DeepEqual(c.boot.Security, next.Security) {
+	if !sameConfigSection(c.boot.Security, next.Security) {
 		reasons = append(reasons, "Security policy")
 	}
 	if c.boot.Server.Port != next.Server.Port || c.boot.Server.Bind != next.Server.Bind {
