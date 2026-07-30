@@ -3,6 +3,7 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1448,5 +1449,61 @@ func TestFileConfigFromRuntimeCarriesTheLogLevel(t *testing.T) {
 	fc := FileConfigFromRuntime(&RuntimeConfig{LogLevel: "error"})
 	if fc.Server.LogLevel != "error" {
 		t.Fatalf("Server.LogLevel = %q, want error", fc.Server.LogLevel)
+	}
+}
+
+// server.stateDir must actually relocate profiles. finalizeProfileConfig's
+// filepath.Join(StateDir, "profiles") fallback was unreachable because
+// DefaultFileConfig pre-filled Profiles.BaseDir with an absolute userConfigDir() path —
+// the same pre-filling that baked a host home directory into every written config. With
+// it empty, this fallback is the live path, so a throwaway state dir stops writing
+// profiles and quarantine directories into the real profile set.
+func TestStateDirAloneRelocatesTheProfilesBaseDir(t *testing.T) {
+	clearConfigEnvVars(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	body := fmt.Sprintf(`{"server":{"port":"9867","token":"tok","stateDir":%q}}`, stateDir)
+	if err := os.WriteFile(cfgPath, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", cfgPath)
+
+	cfg := Load()
+
+	wantBase := filepath.Join(stateDir, "profiles")
+	if cfg.ProfilesBaseDir != wantBase {
+		t.Errorf("ProfilesBaseDir = %q, want %q — the stateDir fallback is unreachable again", cfg.ProfilesBaseDir, wantBase)
+	}
+	if cfg.ProfileDir != filepath.Join(wantBase, "default") {
+		t.Errorf("ProfileDir = %q, want it under the relocated base", cfg.ProfileDir)
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(cfg.ProfilesBaseDir, filepath.Join(home, ".pinchtab")) {
+		t.Errorf("ProfilesBaseDir still resolves into the real profile set: %q", cfg.ProfilesBaseDir)
+	}
+}
+
+// The fallback is only reachable while nothing pre-fills BaseDir. This pins the shipped
+// FileConfig default as empty, so restoring the pre-fill reds here by name rather than
+// silently making the test above depend on a value nobody sets.
+func TestTheShippedProfilesBaseDirIsEmptySoTheFallbackStaysLive(t *testing.T) {
+	if got := DefaultFileConfig().Profiles.BaseDir; got != "" {
+		t.Errorf("DefaultFileConfig().Profiles.BaseDir = %q, want empty: a pre-filled absolute path makes finalizeProfileConfig's stateDir fallback dead code and bakes a host path into every written config", got)
+	}
+}
+
+// An explicit profiles.baseDir still wins: the fallback must not override what the user
+// set.
+func TestAnExplicitProfilesBaseDirStillWins(t *testing.T) {
+	clearConfigEnvVars(t)
+	explicit := filepath.Join(t.TempDir(), "chosen-profiles")
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	body := fmt.Sprintf(`{"server":{"port":"9867","token":"tok","stateDir":%q},"profiles":{"baseDir":%q}}`, filepath.Join(t.TempDir(), "state"), explicit)
+	if err := os.WriteFile(cfgPath, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", cfgPath)
+
+	if got := Load().ProfilesBaseDir; got != explicit {
+		t.Errorf("ProfilesBaseDir = %q, want the explicitly configured %q", got, explicit)
 	}
 }

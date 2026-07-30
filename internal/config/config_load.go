@@ -296,7 +296,14 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 
 		AutoSolver: defaultAutoSolverConfig(),
 	}
-	finalizeProfileConfig(cfg)
+
+	// Deferred, not called here, because the profile paths are DERIVED from
+	// server.stateDir and the file that carries stateDir has not been read yet.
+	// Finalizing eagerly filled ProfilesBaseDir from the default state dir, and the
+	// second call after applyFileConfig then found it non-empty and left it alone — so
+	// server.stateDir could never relocate profiles. A defer is the one shape that
+	// cannot miss one of this function's several early returns.
+	defer finalizeProfileConfig(cfg)
 
 	var diags []LoadDiagnostic
 	res := readAndParseConfigFile()
@@ -328,7 +335,6 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 	}
 
 	diags = append(diags, applyFileConfig(cfg, res.FC)...)
-	finalizeProfileConfig(cfg)
 
 	if cfg.Port == "" {
 		return cfg, diags, fmt.Errorf("server port is not configured — set server.port in config.json")

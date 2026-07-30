@@ -134,9 +134,28 @@ func SaveFileConfig(fc *FileConfig, path string) error {
 		return fmt.Errorf("failed to read config file before writing: %w", err)
 	}
 
-	data, err := renderMinimalConfig(fc, existing)
-	if err != nil {
+	// Creating a config and updating one are different acts. With nothing on disk there
+	// is no user shape to respect and the caller is `init` or the daemon's ensure-config,
+	// whose whole job is to lay down a complete starter file — schema URL, bind, the
+	// works. Only an UPDATE has a file whose shape is authoritative, and that is where
+	// materialising defaults did the damage.
+	var data []byte
+	if len(existing) == 0 {
+		if data, err = json.MarshalIndent(fc, "", "  "); err != nil {
+			return fmt.Errorf("failed to serialize config: %w", err)
+		}
+		data = append(data, '\n')
+	} else if data, err = renderMinimalConfig(fc, existing); err != nil {
 		return err
+	}
+
+	// A save that changes nothing does not touch the file. This is what makes a
+	// no-op write byte-identical by construction rather than by matching the user's
+	// formatting: an inline array or a hand-wrapped section is only ever re-rendered
+	// when something in it actually changed. It also means a read-only config raises
+	// no error for a write that had nothing to say.
+	if len(existing) > 0 && sameJSONDocument(existing, data) {
+		return nil
 	}
 
 	if err := os.WriteFile(path, data, 0600); err != nil {

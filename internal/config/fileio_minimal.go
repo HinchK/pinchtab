@@ -94,7 +94,7 @@ func patchConfigObject(onDisk []jsonMember, full, shipped map[string]any) []json
 			if len(members) == 0 {
 				continue
 			}
-			out = append(out, jsonMember{key: key, value: encodeJSONObject(members, 0)})
+			out = append(out, jsonMember{key: key, value: encodeJSONObject(members)})
 			continue
 		}
 		if sameJSONValue(value, shipped[key]) {
@@ -121,13 +121,12 @@ func patchedValue(onDisk json.RawMessage, full, shipped any) json.RawMessage {
 		return raw
 	}
 	shippedObj, _ := shipped.(map[string]any)
-	return encodeJSONObject(patchConfigObject(parseJSONObject(onDisk), fullObj, shippedObj), 0)
+	return encodeJSONObject(patchConfigObject(parseJSONObject(onDisk), fullObj, shippedObj))
 }
 
-// encodeJSONObject serialises members in order. Nested values are re-indented by
-// indentJSONValue at write time, so depth is handled once at the top rather than
-// threaded through every recursion.
-func encodeJSONObject(members []jsonMember, depth int) json.RawMessage {
+// encodeJSONObject serialises members in order, compactly. renderMinimalConfig indents
+// the whole document once at the end, so no depth has to be threaded through here.
+func encodeJSONObject(members []jsonMember) json.RawMessage {
 	if len(members) == 0 {
 		return json.RawMessage("{}")
 	}
@@ -162,7 +161,7 @@ func renderMinimalConfig(fc *FileConfig, existing []byte) ([]byte, error) {
 	}
 
 	members := patchConfigObject(parseJSONObject(existing), full, shipped)
-	compact := encodeJSONObject(members, 0)
+	compact := encodeJSONObject(members)
 
 	var out bytes.Buffer
 	if err := json.Indent(&out, compact, "", "  "); err != nil {
@@ -170,4 +169,17 @@ func renderMinimalConfig(fc *FileConfig, existing []byte) ([]byte, error) {
 	}
 	body := strings.TrimRight(out.String(), "\n")
 	return []byte(body + "\n"), nil
+}
+
+// sameJSONDocument reports whether two byte slices encode the same JSON value,
+// ignoring key order and whitespace. Used to decide that a write would be a no-op.
+func sameJSONDocument(a, b []byte) bool {
+	var left, right any
+	if err := json.Unmarshal(a, &left); err != nil {
+		return false
+	}
+	if err := json.Unmarshal(b, &right); err != nil {
+		return false
+	}
+	return sameJSONValue(left, right)
 }

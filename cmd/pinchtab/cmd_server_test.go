@@ -565,3 +565,40 @@ func TestDeferredDiagnosticsAreEmittedBeforeAnyExit(t *testing.T) {
 		t.Fatalf("inspected %d %s call sites; the census matched almost nothing and would pass vacuously", sites, load)
 	}
 }
+
+// Only `pinchtab server` ever wrote the config, and the write it performed was the
+// defect this card removed. These two load the same file and must stay non-writing —
+// the regression guard is at the source, because driving `bridge` needs a browser and
+// `security` is interactive.
+func TestOnlyTheStartupWizardPathWritesTheConfig(t *testing.T) {
+	writers := map[string][]string{}
+	for _, path := range commandSourceFiles(t) {
+		body, err := os.ReadFile(path) // #nosec G304 -- files listed from this package's own directory.
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if strings.Contains(line, "config.SaveFileConfig(") {
+				writers[filepath.Base(path)] = append(writers[filepath.Base(path)], strings.TrimSpace(line))
+			}
+		}
+	}
+	if len(writers) == 0 {
+		t.Fatal("no config writer found in the command package; this census would pass vacuously")
+	}
+
+	// cmd_wizard.go owns every config write in this package: the startup stamp goes
+	// through recordConfigVersion, and the interactive wizard writes what the user
+	// just chose. cmd_bridge.go and cmd_server.go must not appear.
+	allowed := map[string]bool{"cmd_wizard.go": true, "config_load.go": true}
+	for file, lines := range writers {
+		if !allowed[file] {
+			t.Errorf("%s writes the config (%v); only the wizard path may, and bridge/server must stay non-writing", file, lines)
+		}
+	}
+	for _, forbidden := range []string{"cmd_bridge.go", "cmd_server.go", "cmd_security.go"} {
+		if lines, found := writers[forbidden]; found {
+			t.Errorf("%s gained a config write: %v", forbidden, lines)
+		}
+	}
+}
