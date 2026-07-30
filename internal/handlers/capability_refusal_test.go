@@ -294,6 +294,60 @@ func disabledCodeSpelling(arg ast.Expr) (string, bool) {
 	return "", false
 }
 
+// The census above still keys on how the CODE argument is spelled, so a gate whose code is
+// a named constant or a local is invisible to it — the one shape neither of its two arms
+// matches. This keys on the DEFECT instead and needs no spelling at all: a details map
+// literal carrying "setting" is precisely what httpx.DisabledEndpointDetails exists to
+// build, and hand-writing it is how a refusal loses the hint and the restart. Its steady
+// state is zero matches, so its non-vacuity is the file count, not a found floor.
+func TestNoHandlerHandBuildsADetailsMapCarryingTheCapabilitySetting(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fset := token.NewFileSet()
+	scanned := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		scanned++
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("ParseFile(%s): %v", name, err)
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			lit, ok := node.(*ast.CompositeLit)
+			if !ok || !hasStringKey(lit, "setting") {
+				return true
+			}
+			t.Errorf("%s: %s hand-builds a details map carrying \"setting\"; call httpx.DisabledEndpointDetails(setting) instead, or the refusal ships without the hint and the restart",
+				fset.Position(lit.Pos()), name)
+			return true
+		})
+	}
+
+	if scanned == 0 {
+		t.Fatal("scanned no source files, so this census proves nothing")
+	}
+}
+
+func hasStringKey(lit *ast.CompositeLit, want string) bool {
+	for _, element := range lit.Elts {
+		kv, ok := element.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		key, ok := kv.Key.(*ast.BasicLit)
+		if ok && strings.Trim(key.Value, `"`) == want {
+			return true
+		}
+	}
+	return false
+}
+
 func callsDisabledEndpointDetails(arg ast.Expr) bool {
 	call, ok := arg.(*ast.CallExpr)
 	if !ok {
