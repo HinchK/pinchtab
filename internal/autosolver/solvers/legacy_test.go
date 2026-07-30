@@ -53,8 +53,12 @@ func TestLegacyAdapterReportsItsOwnNameOnBothPaths(t *testing.T) {
 			if result == nil {
 				t.Fatal("Solve returned no Result to check")
 			}
-			if result.SolverUsed != adapter.Name() {
-				t.Errorf("Result.SolverUsed = %q, want %q — the adapter must report its own identity on every path", result.SolverUsed, adapter.Name())
+			// The oracle is a literal, not adapter.Name(): production reads that same
+			// accessor for this field, so comparing against it pins only WHERE the
+			// value comes from. A Name() returning "" satisfied the accessor form on
+			// all three cases while every legacy result reported an empty identity.
+			if result.SolverUsed != "legacy-cf" {
+				t.Errorf("Result.SolverUsed = %q, want %q — the adapter must report its own identity on every path", result.SolverUsed, "legacy-cf")
 			}
 		})
 	}
