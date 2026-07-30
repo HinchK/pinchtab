@@ -678,34 +678,16 @@ func TestDeferredDiagnosticsAreEmittedBeforeAnyExit(t *testing.T) {
 // the regression guard is at the source, because driving `bridge` needs a browser and
 // `security` is interactive.
 func TestOnlyTheStartupWizardPathWritesTheConfig(t *testing.T) {
-	writers := map[string][]string{}
-	for _, path := range commandSourceFiles(t) {
-		body, err := os.ReadFile(path) // #nosec G304 -- files listed from this package's own directory.
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, line := range strings.Split(string(body), "\n") {
-			if strings.Contains(line, "config.SaveFileConfig(") {
-				writers[filepath.Base(path)] = append(writers[filepath.Base(path)], strings.TrimSpace(line))
-			}
-		}
-	}
-	if len(writers) == 0 {
-		t.Fatal("no config writer found in the command package; this census would pass vacuously")
-	}
+	pkg := srccensus.Load(t, ".", 2)
 
-	// cmd_wizard.go owns every config write in this package: the startup stamp goes
-	// through recordConfigVersion, and the interactive wizard writes what the user
-	// just chose. cmd_bridge.go and cmd_server.go must not appear.
+	// cmd_wizard.go and config_load.go own every config write in this package: the
+	// startup stamp goes through recordConfigVersion, and the interactive wizard writes
+	// what the user just chose. config.SaveFileConfig must still exist somewhere — the
+	// write path is real — so Calls' zero-match failure is this census's vacuity floor.
 	allowed := map[string]bool{"cmd_wizard.go": true, "config_load.go": true}
-	for file, lines := range writers {
-		if !allowed[file] {
-			t.Errorf("%s writes the config (%v); only the wizard path may, and bridge/server must stay non-writing", file, lines)
-		}
-	}
-	for _, forbidden := range []string{"cmd_bridge.go", "cmd_server.go", "cmd_security.go"} {
-		if lines, found := writers[forbidden]; found {
-			t.Errorf("%s gained a config write: %v", forbidden, lines)
+	for _, site := range pkg.Calls(t, "config.SaveFileConfig") {
+		if !allowed[site.File] {
+			t.Errorf("%s writes the config; only the startup wizard path (cmd_wizard.go, config_load.go) may, and cmd_bridge.go/cmd_server.go/cmd_security.go must stay non-writing", site)
 		}
 	}
 }
