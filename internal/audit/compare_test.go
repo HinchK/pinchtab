@@ -3,10 +3,12 @@ package audit
 import (
 	"bytes"
 	"encoding/base64"
+	"fmt"
 	"image"
 	"image/color"
 	"image/draw"
 	"image/png"
+	"strings"
 	"testing"
 )
 
@@ -99,6 +101,120 @@ func TestDiffPageDataFields(t *testing.T) {
 		if !fields[want] {
 			t.Errorf("missing drift field %q in %+v", want, drift)
 		}
+	}
+}
+
+func jsError(message string) func(*PageResult) {
+	return func(p *PageResult) {
+		p.Browser.JSErrors = append(p.Browser.JSErrors, JSError{Message: message})
+	}
+}
+
+const referenceError = "Uncaught: ReferenceError: brokenFunctionThatDoesNotExist is not defined\n    at %s/index.html:3:9"
+
+func TestDiffPageDataUncaughtJSErrors(t *testing.T) {
+	live := "http://localhost:18601"
+	staging := "http://localhost:18602"
+
+	tests := []struct {
+		name      string
+		live      []func(*PageResult)
+		staging   []func(*PageResult)
+		wantDrift bool
+	}{
+		{
+			name:      "introduced on staging",
+			staging:   []func(*PageResult){jsError(fmt.Sprintf(referenceError, staging))},
+			wantDrift: true,
+		},
+		{
+			name:      "fixed on staging",
+			live:      []func(*PageResult){jsError(fmt.Sprintf(referenceError, live))},
+			wantDrift: true,
+		},
+		{
+			name:      "same error on both sides is not a regression",
+			live:      []func(*PageResult){jsError(fmt.Sprintf(referenceError, live))},
+			staging:   []func(*PageResult){jsError(fmt.Sprintf(referenceError, staging))},
+			wantDrift: false,
+		},
+		{
+			name:      "one error swapped for another at the same count",
+			live:      []func(*PageResult){jsError("Uncaught: TypeError: a is not a function")},
+			staging:   []func(*PageResult){jsError("Uncaught: TypeError: b is not a function")},
+			wantDrift: true,
+		},
+		{
+			name: "same two errors in a different order",
+			live: []func(*PageResult){
+				jsError("Uncaught: TypeError: a is not a function"),
+				jsError("Uncaught: RangeError: out of range"),
+			},
+			staging: []func(*PageResult){
+				jsError("Uncaught: RangeError: out of range"),
+				jsError("Uncaught: TypeError: a is not a function"),
+			},
+			wantDrift: false,
+		},
+		{
+			name:      "the same error twice is not one error",
+			live:      []func(*PageResult){jsError("Uncaught: TypeError: a is not a function")},
+			staging:   []func(*PageResult){jsError("Uncaught: TypeError: a is not a function"), jsError("Uncaught: TypeError: a is not a function")},
+			wantDrift: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			drift := diffPageData(page(live+"/index.html", tc.live...), page(staging+"/index.html", tc.staging...))
+			var got *DataDrift
+			for i := range drift {
+				if drift[i].Field == "jsErrors" {
+					got = &drift[i]
+				}
+			}
+			if tc.wantDrift && got == nil {
+				t.Fatalf("no jsErrors drift in %+v", drift)
+			}
+			if !tc.wantDrift && got != nil {
+				t.Fatalf("unexpected jsErrors drift: %+v", *got)
+			}
+			if len(drift) != len(diffPageData(page(live), page(staging)))+boolToInt(tc.wantDrift) {
+				t.Fatalf("jsErrors changed the other drift fields: %+v", drift)
+			}
+		})
+	}
+}
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func TestJSErrorDriftValueNamesTheExceptions(t *testing.T) {
+	staging := page("http://localhost:18602/index.html", jsError("Uncaught: TypeError: b is not a function"))
+	value := jsErrorDriftValue(jsErrorIdentities(staging))
+	if !strings.Contains(value, "TypeError: b is not a function") || !strings.HasPrefix(value, "1:") {
+		t.Fatalf("drift value = %q, want the count and the exception text", value)
+	}
+	if jsErrorDriftValue(jsErrorIdentities(page("http://localhost:18601/index.html"))) != "0" {
+		t.Fatalf("a page without exceptions should read as 0")
+	}
+}
+
+func TestUncaughtJSErrorMakesTheGateFail(t *testing.T) {
+	live := AuditReport{Pages: []PageResult{page("http://localhost:18601/index.html")}}
+	staging := AuditReport{Pages: []PageResult{page("http://localhost:18602/index.html",
+		jsError(fmt.Sprintf(referenceError, "http://localhost:18602")))}}
+
+	outcome, err := ComparePages("http://localhost:18601", "http://localhost:18602", live, staging)
+	if err != nil {
+		t.Fatalf("ComparePages: %v", err)
+	}
+	if !outcome.Report.HasDiffs {
+		t.Fatalf("an uncaught exception on staging must count as a diff: %+v", outcome.Report.Pages)
 	}
 }
 

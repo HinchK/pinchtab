@@ -121,9 +121,17 @@ pinchtab compare <live-url> <staging-url> [flags]
 ```
 
 Audits the same pages on both base URLs, pairs them by path, pixel-diffs the
-screenshot pairs, and diffs the data (console error count, broken assets,
-accessibility score, load time with a noise threshold). Pages present on only
-one side are reported as `added`/`removed`.
+screenshot pairs, and diffs the data (uncaught JS errors, console error count,
+broken assets, accessibility score, load time with a noise threshold). Pages
+present on only one side are reported as `added`/`removed`.
+
+Uncaught JS errors (`jsErrors`) are compared by identity rather than by count:
+each exception's first message line, with the page's own `scheme://host`
+masked, so the same failure on two base URLs matches. An exception on one side
+only — or one swapped for another — is drift; the same exception on both sides
+is not, since this gate compares two deploys and does not judge absolute page
+health. The other fields, `consoleErrors` included, compare counts, so
+substituting one console message for another stays invisible.
 
 | Flag | Default | Meaning |
 |---|---|---|

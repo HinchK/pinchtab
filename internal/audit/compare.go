@@ -7,6 +7,9 @@ import (
 	"image"
 	"image/png"
 	"math"
+	"net/url"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,7 +33,7 @@ const timingDriftThresholdMs = 1000.0
 
 // DataDrift is one field-level difference between paired pages.
 type DataDrift struct {
-	// Field identifies what drifted (consoleErrors, brokenAssets,
+	// Field identifies what drifted (consoleErrors, jsErrors, brokenAssets,
 	// accessibilityScore, loadMs).
 	Field string `json:"field"`
 	// Live and Staging are the two observed values, stringified.
@@ -240,6 +243,9 @@ func diffPageData(live, staging PageResult) []DataDrift {
 	if liveErrs != stagingErrs {
 		record("consoleErrors", liveErrs, stagingErrs)
 	}
+	if liveJS, stagingJS := jsErrorIdentities(live), jsErrorIdentities(staging); !slices.Equal(liveJS, stagingJS) {
+		record("jsErrors", jsErrorDriftValue(liveJS), jsErrorDriftValue(stagingJS))
+	}
 	if lb, sb := len(live.Browser.BrokenAssets), len(staging.Browser.BrokenAssets); lb != sb {
 		record("brokenAssets", lb, sb)
 	}
@@ -250,6 +256,51 @@ func diffPageData(live, staging PageResult) []DataDrift {
 		record("loadMs", live.Browser.TimingMetrics.Load, staging.Browser.TimingMetrics.Load)
 	}
 	return drift
+}
+
+// jsErrorOriginPlaceholder stands in for a page's own scheme://host inside an
+// exception message, so the same failure on two base URLs reads as one identity.
+const jsErrorOriginPlaceholder = "<origin>"
+
+// jsErrorIdentities is the sorted multiset of uncaught exceptions on a page.
+// Unlike the count-based fields, uncaught errors are compared by identity: a
+// staging deploy that fixes one exception and introduces another is a drift,
+// not a wash. The identity is the message's first line — the exception text —
+// with the page's own origin masked, which drops the stack frames and the
+// host, the two parts that differ between live and staging for one same bug.
+func jsErrorIdentities(p PageResult) []string {
+	origin := urlOrigin(p.URL)
+	identities := make([]string, 0, len(p.Browser.JSErrors))
+	for _, e := range p.Browser.JSErrors {
+		identities = append(identities, jsErrorIdentity(e.Message, origin))
+	}
+	sort.Strings(identities)
+	return identities
+}
+
+func jsErrorIdentity(message, origin string) string {
+	first, _, _ := strings.Cut(message, "\n")
+	if origin != "" {
+		first = strings.ReplaceAll(first, origin, jsErrorOriginPlaceholder)
+	}
+	return strings.TrimSpace(first)
+}
+
+func urlOrigin(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return ""
+	}
+	return u.Scheme + "://" + u.Host
+}
+
+// jsErrorDriftValue names the exceptions behind the count, so a reader can tell
+// a substitution (1 vs 1) from an unchanged page.
+func jsErrorDriftValue(identities []string) string {
+	if len(identities) == 0 {
+		return "0"
+	}
+	return fmt.Sprintf("%d: %s", len(identities), strings.Join(identities, " | "))
 }
 
 func consoleErrorCount(p PageResult) int {
