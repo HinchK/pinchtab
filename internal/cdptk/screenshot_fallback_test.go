@@ -2,6 +2,9 @@ package cdptk
 
 import (
 	"errors"
+	"go/parser"
+	"go/token"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -102,7 +105,7 @@ func TestEveryCaptureSiteRoutesThroughTheSurfaceFallback(t *testing.T) {
 
 	sites := 0
 	for _, file := range srccensus.Tree(t, "../..", moduleFileFloor) {
-		if !strings.Contains(file.Text, "page.CaptureScreenshot()") {
+		if !capturesAScreenshot(t, file.Name, file.Text) {
 			continue
 		}
 		sites++
@@ -134,6 +137,40 @@ func TestEveryCaptureSiteRoutesThroughTheSurfaceFallback(t *testing.T) {
 }
 
 const moduleFileFloor = 200
+
+const cdprotoPage = "github.com/chromedp/cdproto/page"
+
+// capturesAScreenshot resolves the file's OWN local name for cdproto/page before matching
+// the call, rather than matching the literal "page.CaptureScreenshot()".
+//
+// A plain import alias defeats a literal scan: `cdp "…/cdproto/page"` then
+// `cdp.CaptureScreenshot()` is the same call, compiles, and is invisible to it — and no
+// vacuity floor can see that, because the three conventional sites still match and the
+// count still passes. Reading the import makes every spelling of the call one case.
+func capturesAScreenshot(t *testing.T, name, text string) bool {
+	t.Helper()
+	if !strings.Contains(text, ".CaptureScreenshot()") {
+		return false
+	}
+	parsed, err := parser.ParseFile(token.NewFileSet(), name, text, parser.ImportsOnly)
+	if err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	for _, spec := range parsed.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil || path != cdprotoPage {
+			continue
+		}
+		local := "page"
+		if spec.Name != nil {
+			local = spec.Name.Name
+		}
+		if strings.Contains(text, local+".CaptureScreenshot()") {
+			return true
+		}
+	}
+	return false
+}
 
 // A clip must survive the retry: the fallback re-runs the same params, and re-running
 // without the clip would answer the whole viewport while reporting success — the silent
