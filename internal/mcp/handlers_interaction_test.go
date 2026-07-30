@@ -638,10 +638,27 @@ func TestFillNamesAWrongTypedValueInsteadOfCallingItMissing(t *testing.T) {
 			if !res.IsError {
 				t.Fatalf("accepted %v", tc.args)
 			}
-			if text := resultText(t, res); !strings.Contains(text, tc.wantSays) {
+			text := resultText(t, res)
+			if !strings.Contains(text, tc.wantSays) {
 				t.Errorf("error = %q, want it to say %q so the caller knows what to change", text, tc.wantSays)
 			}
+			assertNamesTheRemedy(t, text, tc.wantSays)
 		})
+	}
+}
+
+// Naming the type is only half the repair: a caller told its number is not a string, with no
+// hint that quoting fixes it, still has no next move — which was the dead end being removed.
+// The rows that need the remedy are derived from the type clause rather than listed again, so
+// a new wrong-type row cannot be added without it.
+func assertNamesTheRemedy(t *testing.T, message, wantSays string) {
+	t.Helper()
+
+	if !strings.Contains(wantSays, "must be a string") {
+		return
+	}
+	if !strings.Contains(message, "quote it") {
+		t.Errorf("error = %q names the type but not the remedy, so the caller learns what is wrong and not what to send", message)
 	}
 }
 
@@ -737,9 +754,11 @@ func TestSelectAndTypeNameAWrongTypedArgumentInsteadOfCallingItMissing(t *testin
 			if !res.IsError {
 				t.Fatalf("accepted %v", tc.args)
 			}
-			if text := resultText(t, res); !strings.Contains(text, tc.wantSays) {
+			text := resultText(t, res)
+			if !strings.Contains(text, tc.wantSays) {
 				t.Errorf("error = %q, want it to say %q so the caller knows what to change", text, tc.wantSays)
 			}
+			assertNamesTheRemedy(t, text, tc.wantSays)
 		})
 	}
 }

@@ -64,20 +64,19 @@ func firstNonEmptyString(r mcp.CallToolRequest, keys ...string) string {
 	return ""
 }
 
-// firstSuppliedString answers "was this argument sent", for the one argument whose
-// empty string MEANS something: a fill clears the field. That is the same question
-// the bridge asks — ActionRequest.HasText is inferred from key presence over the same
-// text/value pair — and it is the question firstNonEmptyString cannot answer, since
-// collapsing empty and absent is its entire job.
+// firstSuppliedString answers "was this argument sent", the question firstNonEmptyString
+// cannot answer because collapsing empty and absent is its entire job. It is the same
+// question the bridge asks — ActionRequest.HasText is inferred from key presence over the
+// same text/value pair that fill and select both read.
 //
-// The value travels verbatim rather than trimmed, so MCP fill and POST /action fill
-// agree on every input and not merely on the clear case.
+// The value travels verbatim rather than trimmed, so MCP and POST /action agree on every
+// input and not merely on the cases where emptiness is the point.
 //
-// Every other caller keeps the collapsing helper deliberately: typing nothing is
-// meaningless, and for select and the dialog arguments the BRIDGE itself collapses
-// empty with absent (actionSelect refuses an empty value; DialogText is a plain
-// string with no presence flag), so reading presence here would promise a
-// distinction the request cannot carry.
+// The dialog arguments keep the collapsing helper deliberately: an empty dialogAction means
+// not-specified, so a value this helper would report as supplied-but-unusable is instead a
+// skipped one-shot handler. That is a silent SKIP rather than a misleading refusal — a
+// different shape, and it wants its own decision rather than being swept in here.
+//
 // wrongType names the JSON type of a value that WAS supplied under one of the keys but is
 // not a string. The library does not enforce the declared type before calling a handler, so
 // a model answering a numeric-looking field with 2024 rather than "2024" arrives here — and
