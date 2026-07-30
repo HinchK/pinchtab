@@ -448,33 +448,42 @@ func TestDeferredDiagnosticsAreEmittedBeforeAnyExit(t *testing.T) {
 		emit = "config.EmitLoadDiagnostics("
 	)
 
-	deferring := 0
+	// Every call site, not the first per file: a second prologue added to a file
+	// that already has one is the likeliest future addition, and stopping at the
+	// first match would inspect the old one and pass.
+	sites := 0
 	for _, path := range commandSourceFiles(t) {
 		raw, err := os.ReadFile(path) // #nosec G304 -- files listed from this package's own directory.
 		if err != nil {
 			t.Fatal(err)
 		}
 		src := string(raw)
-		start := strings.Index(src, load)
-		if start < 0 {
-			continue
-		}
-		deferring++
 
-		emitAt := strings.Index(src[start:], emit)
-		if emitAt < 0 {
-			t.Errorf("%s defers its load diagnostics and never emits them", filepath.Base(path))
-			continue
-		}
-		window := src[start : start+emitAt]
-		for _, escape := range []string{"return", "os.Exit("} {
-			if strings.Contains(window, escape) {
-				t.Errorf("%s can %s between the load and %s, which discards the loader's diagnostics; move the emit above it:\n%s",
-					filepath.Base(path), escape, emit, window)
+		for offset := 0; ; {
+			rel := strings.Index(src[offset:], load)
+			if rel < 0 {
+				break
+			}
+			start := offset + rel
+			sites++
+			where := fmt.Sprintf("%s (prologue at byte %d)", filepath.Base(path), start)
+			offset = start + len(load)
+
+			emitAt := strings.Index(src[start:], emit)
+			if emitAt < 0 {
+				t.Errorf("%s defers its load diagnostics and never emits them", where)
+				continue
+			}
+			window := src[start : start+emitAt]
+			for _, escape := range []string{"return", "os.Exit("} {
+				if strings.Contains(window, escape) {
+					t.Errorf("%s can %s between the load and %s, which discards the loader's diagnostics; move the emit above it:\n%s",
+						where, escape, emit, window)
+				}
 			}
 		}
 	}
-	if deferring < 2 {
-		t.Fatalf("found %d commands calling %s; the census matched almost nothing and would pass vacuously", deferring, load)
+	if sites < 2 {
+		t.Fatalf("inspected %d %s call sites; the census matched almost nothing and would pass vacuously", sites, load)
 	}
 }
