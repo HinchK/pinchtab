@@ -4,6 +4,10 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"strings"
 	"testing"
@@ -331,9 +335,13 @@ func TestWrapperArmsAreWiredToTheirOwnScope(t *testing.T) {
 		// directly, so it never reads what an ENTRY POINT passes. An entry point
 		// starting at fromEnd=true makes every first: resolve like last:, which only
 		// the browser-backed scope tests would notice — and they skip here.
-		if !strings.Contains(body, dispatch+tc.want+", sel, refCache, 0, false)") {
-			t.Errorf("%s no longer starts its wrapper arm at index 0, fromEnd false — a wrapper must derive its own index from the grammar, not inherit one from the entry point", tc.entry)
-		}
+		//
+		// Read through the AST for the same reason the scope assertions above dropped
+		// the full call text: a spelling-pinned version reddened when a parameter was
+		// merely RENAMED, and this is the only browserless guard on this wiring — one
+		// red for no defect is how it gets deleted. The last two arguments are what the
+		// property is about, whatever the ones before them are called.
+		assertWrapperArmStartsFresh(t, src, tc.entry)
 	}
 }
 
@@ -406,4 +414,70 @@ func newScopedWrapperFixture(t *testing.T) context.Context {
 		t.Fatal(err)
 	}
 	return ctx
+}
+
+// assertWrapperArmStartsFresh checks, through the AST rather than the call's text, that
+// every resolveParsed call inside the named entry point starts its wrapper at index 0
+// with fromEnd false. A wrapper must derive its own index from the grammar; inheriting
+// one from the entry point makes first: behave like last: on every page.
+func assertWrapperArmStartsFresh(t *testing.T, src, entrySignature string) {
+	t.Helper()
+
+	name := strings.TrimSuffix(strings.TrimPrefix(entrySignature, "func "), "(")
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "action_resolve.go", src, 0)
+	if err != nil {
+		t.Fatalf("cannot parse action_resolve.go, so this guard checks nothing: %v", err)
+	}
+
+	var decl *ast.FuncDecl
+	for _, d := range file.Decls {
+		if fn, ok := d.(*ast.FuncDecl); ok && fn.Name.Name == name {
+			decl = fn
+			break
+		}
+	}
+	if decl == nil {
+		t.Fatalf("%s is not declared in action_resolve.go; if the entry point was renamed, pin the same property against its replacement rather than dropping it from this table", name)
+	}
+
+	var calls int
+	ast.Inspect(decl, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		fn, ok := call.Fun.(*ast.Ident)
+		if !ok || fn.Name != "resolveParsed" {
+			return true
+		}
+		calls++
+		if len(call.Args) < 2 {
+			t.Errorf("%s calls resolveParsed with %d arguments; the starting index and fromEnd are the last two", name, len(call.Args))
+			return true
+		}
+		index, fromEnd := exprText(call.Args[len(call.Args)-2]), exprText(call.Args[len(call.Args)-1])
+		if index != "0" || fromEnd != "false" {
+			t.Errorf("%s starts its wrapper arm at index %s, fromEnd %s, want 0 and false — a wrapper must derive its own index from the grammar, not inherit one from the entry point", name, index, fromEnd)
+		}
+		return true
+	})
+	if calls == 0 {
+		t.Errorf("%s no longer calls resolveParsed, so its wrapper wiring is unpinned", name)
+	}
+}
+
+// exprText renders an argument for comparison and for the failure message. Anything that
+// is not a plain literal renders as its own syntax, which fails the comparison — an entry
+// point threading a variable into the starting index is exactly the inheritance this
+// guard rejects.
+func exprText(expr ast.Expr) string {
+	switch e := expr.(type) {
+	case *ast.BasicLit:
+		return e.Value
+	case *ast.Ident:
+		return e.Name
+	default:
+		return fmt.Sprintf("%T", expr)
+	}
 }
