@@ -31,6 +31,12 @@ var hopByHopHeaders = []string{
 	"Transfer-Encoding",
 	"Upgrade",
 	"Host",
+	// The failure-reason pair is consumed per hop: the proxy reads it into
+	// RecordFailureReason, which re-stamps it on its own response for any
+	// further hop, so a copied-through duplicate would be the one value no
+	// recorder produced.
+	FailureCodeHeader,
+	FailureMessageHeader,
 }
 
 func OuterChainResponseHeaders() []string {

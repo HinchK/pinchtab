@@ -197,10 +197,26 @@ type ReasonRecorder interface {
 	RecordFailureReason(code, message string)
 }
 
-// RecordFailureReason gives w the code and the SANITIZED message that were just written,
-// and is a no-op for a plain ResponseWriter. Producers call it; nothing re-reads the
-// response body to recover what the producer already held.
+// FailureCodeHeader and FailureMessageHeader carry the reason across a proxy hop: the
+// producing instance stamps them, the front door reads them back into
+// RecordFailureReason, and the public boundary strips them (StatusWriter, below). The
+// X-Pinchtab- prefix keeps them inside the internal-header trust rules on the request
+// side too.
+const (
+	FailureCodeHeader    = "X-Pinchtab-Failure-Code"
+	FailureMessageHeader = "X-Pinchtab-Failure-Message"
+)
+
+// RecordFailureReason gives w the code and the SANITIZED message that were just written.
+// It stamps the hop headers so the reason survives a proxy boundary, and walks the
+// recorder chain for the in-process sinks; nothing re-reads the response body to recover
+// what the producer already held.
 func RecordFailureReason(w http.ResponseWriter, code, message string) {
+	if code == "" && message == "" {
+		return
+	}
+	w.Header().Set(FailureCodeHeader, code)
+	w.Header().Set(FailureMessageHeader, message)
 	if recorder, ok := w.(ReasonRecorder); ok {
 		recorder.RecordFailureReason(code, message)
 	}
@@ -212,6 +228,12 @@ type StatusWriter struct {
 
 	FailureCode    string
 	FailureMessage string
+
+	// StripFailureHeaders removes the hop headers at flush: set on the public
+	// boundary, left false for a trusted internal hop so the front door can read
+	// them. The header map is shared along the wrapper chain, so the innermost
+	// writer's decision is the one that acts.
+	StripFailureHeaders bool
 }
 
 // RecordFailureReason keeps the reason and passes it OUTWARD along the wrapper chain: the
@@ -229,6 +251,10 @@ func (w *StatusWriter) Unwrap() http.ResponseWriter {
 
 func (w *StatusWriter) WriteHeader(code int) {
 	w.Code = code
+	if w.StripFailureHeaders {
+		w.Header().Del(FailureCodeHeader)
+		w.Header().Del(FailureMessageHeader)
+	}
 	w.ResponseWriter.WriteHeader(code)
 }
 

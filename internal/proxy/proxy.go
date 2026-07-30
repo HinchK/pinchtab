@@ -86,6 +86,7 @@ func Forward(w http.ResponseWriter, r *http.Request, targetURL *url.URL, opts Op
 	defer func() { _ = resp.Body.Close() }()
 
 	httpx.CopyProxiedResponseHeaders(w.Header(), resp.Header)
+	recordProxiedFailureReason(w, resp)
 
 	// Enrich activity from response headers (always available, regardless of body size).
 	enrichActivityFromHeaders(r, resp.Header)
@@ -147,6 +148,20 @@ func HTTP(w http.ResponseWriter, r *http.Request, targetURL string) {
 // enrichActivityFromHeaders extracts tab ID from upstream response headers
 // and enriches the activity event. This works for all response sizes,
 // unlike body-based enrichment which is limited to small JSON responses.
+// recordProxiedFailureReason carries the reason across the hop: the instance's error
+// producer stamped these headers on the response it serialised, so reading them here
+// keeps the reason coming from the producer — never from re-parsing the body.
+func recordProxiedFailureReason(w http.ResponseWriter, resp *http.Response) {
+	if resp.StatusCode < 400 {
+		return
+	}
+	code := strings.TrimSpace(resp.Header.Get(httpx.FailureCodeHeader))
+	if code == "" {
+		return
+	}
+	httpx.RecordFailureReason(w, code, resp.Header.Get(httpx.FailureMessageHeader))
+}
+
 func enrichActivityFromHeaders(origReq *http.Request, respHeaders http.Header) {
 	tabID := strings.TrimSpace(respHeaders.Get(activity.HeaderPTTabID))
 	if tabID != "" {

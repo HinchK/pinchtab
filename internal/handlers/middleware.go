@@ -50,7 +50,7 @@ func requestLogLevel(status int) slog.Level {
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		sw := &httpx.StatusWriter{ResponseWriter: w, Code: 200}
+		sw := &httpx.StatusWriter{ResponseWriter: w, Code: 200, StripFailureHeaders: !IsTrustedInternalProxy(r)}
 		next.ServeHTTP(sw, r)
 		ms := uint64(time.Since(start).Milliseconds())
 		atomic.AddUint64(&metricRequestsTotal, 1)
