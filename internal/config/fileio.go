@@ -253,23 +253,30 @@ func loadLegacyFileConfig(data []byte) (*FileConfig, error) {
 	return fc, nil
 }
 
+// aliasRaw* are the config keys this normaliser accepts. They are package types
+// rather than function-local ones so the unknown-key walk can derive its
+// exemptions from them: security.idpi.allowedDomains is a supported alias that
+// no FileConfig field declares, and a strict pass reports it as a typo unless
+// the exemption comes from this same declaration.
+type aliasRawIDPI struct {
+	AllowedDomains *[]string `json:"allowedDomains"`
+}
+
+type aliasRawSecurity struct {
+	AllowedDomains *[]string     `json:"allowedDomains"`
+	IDPI           *aliasRawIDPI `json:"idpi"`
+}
+
+type aliasRawConfig struct {
+	Security *aliasRawSecurity `json:"security"`
+}
+
 func NormalizeFileConfigAliasesFromJSON(fc *FileConfig, data []byte) {
 	if fc == nil {
 		return
 	}
 
-	type rawIDPI struct {
-		AllowedDomains *[]string `json:"allowedDomains"`
-	}
-	type rawSecurity struct {
-		AllowedDomains *[]string `json:"allowedDomains"`
-		IDPI           *rawIDPI  `json:"idpi"`
-	}
-	type rawConfig struct {
-		Security *rawSecurity `json:"security"`
-	}
-
-	var raw rawConfig
+	var raw aliasRawConfig
 	if err := json.Unmarshal(data, &raw); err != nil || raw.Security == nil {
 		return
 	}

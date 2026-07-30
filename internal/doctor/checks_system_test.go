@@ -86,6 +86,44 @@ func TestConfigFile_Missing(t *testing.T) {
 	}
 }
 
+// A config whose keys are typos loads cleanly, so doctor used to call it OK and
+// send the user away — the very reason the server was running on a port they had
+// not set. It must name what it ignored.
+func TestConfigFile_UnknownKeysWarnAndAreNamed(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	body := `{"server":{"porte":"18901","token":"tok-sim-user-1234567890"},"bogusSection":{"a":1}}`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", path)
+
+	r := checkConfigFile(context.Background(), nil)
+	if r.Status != StatusWarn {
+		t.Fatalf("status = %v want warn; detail=%q", r.Status, r.Detail)
+	}
+	for _, want := range []string{"server.porte", "bogusSection"} {
+		if !strings.Contains(r.Detail, want) {
+			t.Errorf("detail %q should name the unrecognized key %q", r.Detail, want)
+		}
+	}
+}
+
+// The supported alias must not turn every config that uses it into a warning.
+func TestConfigFile_SupportedAliasStaysPassing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"security":{"idpi":{"allowedDomains":["example.com"]}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", path)
+
+	r := checkConfigFile(context.Background(), nil)
+	if r.Status != StatusPass {
+		t.Fatalf("status = %v want pass; detail=%q", r.Status, r.Detail)
+	}
+}
+
 func TestConfigFile_ParseError(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")

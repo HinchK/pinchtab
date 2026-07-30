@@ -1,7 +1,6 @@
 package config
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -48,9 +47,10 @@ type parsedConfigFile struct {
 	ReadErr        error // os.ReadFile error (incl. not-exist); nil when Found
 	Legacy         bool
 	FC             *FileConfig
-	ParseErr       error   // json unmarshal error (legacy or nested)
-	UnknownFields  error   // non-fatal: unrecognized nested fields
-	ValidationErrs []error // non-fatal: ValidateFileConfig
+	ParseErr       error    // json unmarshal error (legacy or nested)
+	UnknownFields  error    // non-fatal: unrecognized nested fields
+	UnknownKeys    []string // the dotted paths behind UnknownFields
+	ValidationErrs []error  // non-fatal: ValidateFileConfig
 }
 
 func resolveConfigPath() (path, defaultPath string, envOverride bool) {
@@ -96,10 +96,9 @@ func readAndParseConfigFile() parsedConfigFile {
 			return res
 		}
 		res.FC = fc
-		dec := json.NewDecoder(bytes.NewReader(data))
-		dec.DisallowUnknownFields()
-		if ufErr := dec.Decode(&FileConfig{}); ufErr != nil {
-			res.UnknownFields = ufErr
+		if keys := UnknownFileConfigKeys(data); len(keys) > 0 {
+			res.UnknownKeys = keys
+			res.UnknownFields = &UnknownConfigKeysError{Keys: keys}
 		}
 	}
 	if res.FC != nil {
@@ -350,6 +349,7 @@ type ConfigFileStatus struct {
 	EnvOverride bool
 	Found       bool
 	ParseErr    error
+	UnknownKeys []string
 }
 
 // InspectConfigFile reports config-file load status with no side effects.
@@ -361,6 +361,7 @@ func InspectConfigFile() ConfigFileStatus {
 		EnvOverride: res.EnvOverride,
 		Found:       res.Found,
 		ParseErr:    res.ParseErr,
+		UnknownKeys: res.UnknownKeys,
 	}
 }
 
