@@ -185,23 +185,25 @@ func CaptureScreenshot(ctx context.Context, opts ScreenshotOpts) ([]byte, error)
 
 	fromSurface := cdptk.CaptureFromSurface(opts.BeyondViewport, clip)
 
-	var buf []byte
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		shot := page.CaptureScreenshot().WithFormat(opts.Format).WithFromSurface(fromSurface)
-		if clip != nil {
-			shot = shot.WithClip(clip)
-		}
-		if opts.BeyondViewport && clip == nil {
-			shot = shot.WithCaptureBeyondViewport(true)
-		}
-		if opts.Format == page.CaptureScreenshotFormatJpeg {
-			shot = shot.WithQuality(int64(opts.Quality))
-		}
-		var inner error
-		buf, inner = captureScreenshotWithoutActivation(ctx, shot, opts.DisableActivation)
-		return inner
-	}))
-	return buf, err
+	return cdptk.CaptureWithSurfaceFallback(fromSurface, func(fromSurface bool) ([]byte, error) {
+		var buf []byte
+		err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			shot := page.CaptureScreenshot().WithFormat(opts.Format).WithFromSurface(fromSurface)
+			if clip != nil {
+				shot = shot.WithClip(clip)
+			}
+			if opts.BeyondViewport && clip == nil {
+				shot = shot.WithCaptureBeyondViewport(true)
+			}
+			if opts.Format == page.CaptureScreenshotFormatJpeg {
+				shot = shot.WithQuality(int64(opts.Quality))
+			}
+			var inner error
+			buf, inner = captureScreenshotWithoutActivation(ctx, shot, opts.DisableActivation)
+			return inner
+		}))
+		return buf, err
+	})
 }
 
 // ScreenshotClipForNode returns a page-coordinate clip for a backend node ID.

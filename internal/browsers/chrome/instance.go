@@ -33,37 +33,41 @@ func NewInstance(browserCtx context.Context, headless bool) *Instance {
 var _ browsers.RuntimeInstance = (*Instance)(nil)
 
 func (i *Instance) CaptureScreenshot(ctx context.Context, format string, quality int, clip *cdptk.ScreenshotClip) ([]byte, error) {
-	var buf []byte
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
-		// Wake the target's renderer before capturing. Background / non-
-		// foreground tabs throttle their compositor and stop painting, so
-		// captureScreenshot blocks until the action deadline (~30s). A
-		// best-effort BringToFront resumes painting for the target we are
-		// about to capture; the error is ignored so providers whose CDP proxy
-		// does not implement it still capture normally.
-		_ = page.BringToFront().Do(c)
+	const beyondViewport = false
+	vp := cdptk.ClipViewport(clip)
 
-		var cdpFormat page.CaptureScreenshotFormat
-		switch format {
-		case "png":
-			cdpFormat = page.CaptureScreenshotFormatPng
-		default:
-			cdpFormat = page.CaptureScreenshotFormatJpeg
-		}
+	buf, err := cdptk.CaptureWithSurfaceFallback(cdptk.CaptureFromSurface(beyondViewport, vp), func(fromSurface bool) ([]byte, error) {
+		var buf []byte
+		err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+			// Wake the target's renderer before capturing. Background / non-
+			// foreground tabs throttle their compositor and stop painting, so
+			// captureScreenshot blocks until the action deadline (~30s). A
+			// best-effort BringToFront resumes painting for the target we are
+			// about to capture; the error is ignored so providers whose CDP proxy
+			// does not implement it still capture normally.
+			_ = page.BringToFront().Do(c)
 
-		const beyondViewport = false
-		vp := cdptk.ClipViewport(clip)
-		shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(cdptk.CaptureFromSurface(beyondViewport, vp))
-		if vp != nil {
-			shot = shot.WithClip(vp)
-		}
-		if cdpFormat == page.CaptureScreenshotFormatJpeg && quality > 0 {
-			shot = shot.WithQuality(int64(quality))
-		}
-		var err error
-		buf, err = shot.Do(c)
-		return err
-	}))
+			var cdpFormat page.CaptureScreenshotFormat
+			switch format {
+			case "png":
+				cdpFormat = page.CaptureScreenshotFormatPng
+			default:
+				cdpFormat = page.CaptureScreenshotFormatJpeg
+			}
+
+			shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(fromSurface)
+			if vp != nil {
+				shot = shot.WithClip(vp)
+			}
+			if cdpFormat == page.CaptureScreenshotFormatJpeg && quality > 0 {
+				shot = shot.WithQuality(int64(quality))
+			}
+			var err error
+			buf, err = shot.Do(c)
+			return err
+		}))
+		return buf, err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("screenshot: %w", err)
 	}

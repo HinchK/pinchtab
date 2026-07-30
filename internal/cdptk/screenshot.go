@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"strings"
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
@@ -139,6 +141,36 @@ func ClipForNode(ctx context.Context, nodeID int64, css1x bool) (*ScreenshotClip
 // pin this choice; hence the table test beside this function.
 func CaptureFromSurface(beyondViewport bool, clip *page.Viewport) bool {
 	return beyondViewport || clip != nil
+}
+
+// captureRefusal is the CDP error a renderer returns when it will not serve the
+// read-the-view fast path. It carries no code the client can match on, so the message is
+// the only discriminator available.
+const captureRefusal = "Unable to capture screenshot"
+
+// CaptureWithSurfaceFallback runs a capture and, when the renderer REFUSES the fast path,
+// retries once forcing a fresh composite.
+//
+// fromSurface=false reads the renderer's current view rather than waiting for a surface
+// frame, which is why CaptureFromSurface prefers it — but that view is a resource that can
+// be unavailable (no screen-recording permission, another client holding the surface), and
+// when it is, CDP answers -32000 instead of a frame. Failing the whole capture there throws
+// away a picture the browser can still produce the slower way.
+//
+// Retried ONLY on that refusal, and only when the fast path was actually taken: any other
+// error is a real failure and must surface, and a fromSurface=true capture that fails has
+// no faster path left to fall back from. The retry costs one extra round trip in the case
+// that was going to fail outright, and nothing at all on a healthy browser.
+//
+// The fallback is deliberate about what it does NOT change: it re-runs the SAME params, so
+// a clip still travels and a clipped capture cannot silently widen to the whole viewport.
+func CaptureWithSurfaceFallback(fromSurface bool, capture func(fromSurface bool) ([]byte, error)) ([]byte, error) {
+	buf, err := capture(fromSurface)
+	if err == nil || fromSurface || !strings.Contains(err.Error(), captureRefusal) {
+		return buf, err
+	}
+	slog.Warn("screenshot: renderer refused the read-the-view capture, retrying from surface", "err", err)
+	return capture(true)
 }
 
 // NormalizedViewport owns the non-zero-scale rule for a clip already in CDP's own type.
