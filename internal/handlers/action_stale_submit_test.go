@@ -278,8 +278,11 @@ func TestTheEndpointRefusesAStaleSubmitRefWithASnapshotRemedyAndNoOrder(t *testi
 	if dispatched, ok := resp.Details["dispatched"].(bool); !ok || dispatched {
 		t.Errorf("details.dispatched = %v, want false: this refusal exists to say nothing was clicked", resp.Details["dispatched"])
 	}
-	if got, _ := resp.Details["remedy"].(string); got != reSnapshot.Remedy().String() {
-		t.Errorf("remedy = %q, want %q", got, reSnapshot.Remedy())
+	// Spelled out rather than compared against reSnapshot, which production formats from the
+	// same constant: that comparison holds whatever the constant is changed to, so it pins
+	// the two sides agreeing rather than the advice being the one that resolves a stale ref.
+	if got, _ := resp.Details["remedy"].(string); got != "pinchtab snap" {
+		t.Errorf("remedy = %q, want %q — the only advice that re-resolves a stale ref", got, "pinchtab snap")
 	}
 	if placed := f.settleForOrder(); placed != 0 {
 		t.Fatalf("%d order(s) placed by a refused request", placed)
@@ -294,6 +297,44 @@ func TestTheEndpointRefusesAStaleSubmitRefWithASnapshotRemedyAndNoOrder(t *testi
 	}
 	if placed := f.settleForOrder(); placed != 0 {
 		t.Errorf("%d order(s) placed by following the remedy", placed)
+	}
+}
+
+// The helper returns the record; this pins that it survives the endpoint and reaches the
+// caller. Without it the 409 discloses the navigation and hides the substitution — and the
+// helper-level pair cannot see that, because the field is attached one layer out.
+func TestTheNavigation409DisclosesWhichElementWasActuallyClicked(t *testing.T) {
+	f := newOrderFixture(t)
+	h, _, tabID := staleSubmitHandlers(t, f)
+
+	body := `{"kind":"click","ref":"e3","tabId":"` + tabID + `"}`
+	rec := httptest.NewRecorder()
+	h.HandleAction(rec, httptest.NewRequest(http.MethodPost, "/action", strings.NewReader(body)))
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Code    string         `json:"code"`
+		Error   string         `json:"error"`
+		Details map[string]any `json:"details"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode navigation response: %v (%s)", err, rec.Body.String())
+	}
+	if resp.Code != "navigation_changed" {
+		t.Errorf("code = %q, want navigation_changed", resp.Code)
+	}
+	if strings.Contains(resp.Error, "not found and recovery failed") {
+		t.Errorf("the wire still reports the dispatch as a lookup failure: %q", resp.Error)
+	}
+
+	published, ok := resp.Details["recovery"].(map[string]any)
+	if !ok {
+		t.Fatalf("details.recovery absent, so the 409 says the page moved without saying the click went to a different element than the caller named: %v", resp.Details)
+	}
+	if newRef, _ := published["new_ref"].(string); newRef == "" {
+		t.Errorf("details.recovery names no matched ref, so the substitution is still undisclosed: %v", published)
 	}
 }
 
