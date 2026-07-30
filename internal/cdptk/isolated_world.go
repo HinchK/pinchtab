@@ -8,10 +8,32 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-// isolatedWorldName labels the world reused for node resolution.
-// Page.createIsolatedWorld keys on the name, so repeat calls return the same
-// context rather than minting one per resolution.
-const isolatedWorldName = "pinchtab-node-scope"
+// isolatedWorldName is the ONE name every PinchTab isolated world is created
+// under. Page.createIsolatedWorld keys on frame and name, so repeat calls for a
+// frame return the same context rather than minting one per resolution — and one
+// name means a frame has ONE PinchTab world instead of two, which makes handles
+// resolved there interchangeable in a single Runtime.callFunctionOn by
+// construction rather than by a rule nobody can check.
+//
+// There were two names for this one rule: a node scope here and a frame scope in
+// the bridge. Neither frame policy was wrong. A bare backend node id does not
+// carry its frame, so node resolution must use the top frame; evaluating
+// `document` for a named frame must use that frame. Those are two needs of one
+// mechanism, which is why the frame is a parameter and the mechanism is shared.
+//
+// No isolation is weakened by sharing it. The world exists so page script cannot
+// hide or redirect targets by replacing DOM methods in the main world, and page
+// script can reach neither name. Fewer worlds is not a looser boundary.
+//
+// CROSS-FRAME RESIDUAL, recorded rather than built: handles from two DIFFERENT
+// frames' worlds are still not interchangeable, and nothing in the types says
+// which frame a handle came from. That hazard has no call site — the only place
+// passing an object handle as a callFunctionOn ARGUMENT resolves both handles in
+// one IsolatedNodeObjectIDs call, so they share a world — and a handle type
+// carrying its context id is real machinery against a shape nothing writes. The
+// same-frame case, the only one reachable today, is closed above. Reopen it when
+// a caller genuinely needs handles from two frames in one call.
+const isolatedWorldName = "pinchtab-scope"
 
 // IsolatedNodeObjectID converts a backend node id to a JS object handle in the
 // top frame's isolated world.
@@ -47,7 +69,7 @@ func IsolatedNodeObjectIDs(ctx context.Context, backendNodeIDs ...int64) ([]stri
 		return nil, fmt.Errorf("no backend node ids to resolve")
 	}
 
-	execID, err := topFrameIsolatedContextID(ctx)
+	execID, err := IsolatedContextID(ctx, "")
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +110,51 @@ func resolveNodeInContext(ctx context.Context, backendNodeID, execID int64) (str
 	return parsed.Object.ObjectID, nil
 }
 
-func topFrameIsolatedContextID(ctx context.Context) (int64, error) {
+// IsolatedContextID returns the execution context of the isolated world for
+// frameID, or for the top frame when frameID is empty. It is the only place a
+// PinchTab isolated world is created — see isolatedWorldName for why one name and
+// a frame parameter replaced two worlds, and TestOnlyOneIsolatedWorldNameExists
+// for the census that keeps it that way.
+//
+// It never returns a usable zero: a caller that cannot obtain an isolated context
+// gets an error rather than a main-world context, so the boundary fails closed.
+// Callers that want a NO-OP for an unnamed frame — "use whatever context the
+// caller already has" — must keep that check themselves, because empty here means
+// the top frame's isolated world, not the default context.
+func IsolatedContextID(ctx context.Context, frameID string) (int64, error) {
+	if frameID == "" {
+		resolved, err := topFrameID(ctx)
+		if err != nil {
+			return 0, err
+		}
+		frameID = resolved
+	}
+
+	var raw json.RawMessage
+	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return chromedp.FromContext(ctx).Target.Execute(ctx, "Page.createIsolatedWorld", map[string]any{
+			"frameId":   frameID,
+			"worldName": isolatedWorldName,
+		}, &raw)
+	})); err != nil {
+		return 0, fmt.Errorf("create isolated world for frame %q: %w", frameID, err)
+	}
+
+	var resp struct {
+		ExecutionContextID int64 `json:"executionContextId"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return 0, err
+	}
+	if resp.ExecutionContextID == 0 {
+		return 0, fmt.Errorf("frame %q has no isolated execution context", frameID)
+	}
+	return resp.ExecutionContextID, nil
+}
+
+// topFrameID reads the top frame's id, the frame IsolatedContextID falls back to
+// when the caller names none.
+func topFrameID(ctx context.Context) (string, error) {
 	// GetFrameTree issues a CDP call, so it needs an executor context; calling it
 	// with the caller's bare ctx fails with "invalid context".
 	var frameID string
@@ -102,30 +168,10 @@ func topFrameIsolatedContextID(ctx context.Context) (int64, error) {
 		}
 		return nil
 	})); err != nil {
-		return 0, fmt.Errorf("resolve top frame: %w", err)
+		return "", fmt.Errorf("resolve top frame: %w", err)
 	}
 	if frameID == "" {
-		return 0, fmt.Errorf("resolve top frame: frame id is empty")
+		return "", fmt.Errorf("resolve top frame: frame id is empty")
 	}
-
-	var raw json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Page.createIsolatedWorld", map[string]any{
-			"frameId":   frameID,
-			"worldName": isolatedWorldName,
-		}, &raw)
-	})); err != nil {
-		return 0, fmt.Errorf("create isolated world: %w", err)
-	}
-
-	var resp struct {
-		ExecutionContextID int64 `json:"executionContextId"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
-		return 0, err
-	}
-	if resp.ExecutionContextID == 0 {
-		return 0, fmt.Errorf("top frame has no isolated execution context")
-	}
-	return resp.ExecutionContextID, nil
+	return frameID, nil
 }

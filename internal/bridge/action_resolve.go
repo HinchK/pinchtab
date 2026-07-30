@@ -40,10 +40,6 @@ type FrameElementMeta struct {
 // Passes frameID == "" through as a no-op (returns 0, nil) so callers can
 // fall back to the default top-level context without branching.
 func FrameExecutionContextID(ctx context.Context, frameID string) (int64, error) {
-	return frameExecutionContextID(ctx, frameID)
-}
-
-func frameExecutionContextID(ctx context.Context, frameID string) (int64, error) {
 	return bridgecdpops.FrameExecutionContextID(ctx, frameID)
 }
 
@@ -52,25 +48,12 @@ func frameExecutionContextID(ctx context.Context, frameID string) (int64, error)
 // discovery run there so page script cannot hide or redirect targets by
 // replacing DOM methods in the main world. It never returns a usable zero: a
 // caller that cannot get an isolated context gets an error, not the main world.
+//
+// The frame fallback and the world creation both live with the owner in
+// internal/cdptk. This package kept its own copy of that sequence, which is how
+// two world names came to exist for one rule.
 func isolatedExecutionContextID(ctx context.Context, frameID string) (int64, error) {
-	if frameID == "" {
-		frameTree, err := FetchFrameTree(ctx)
-		if err != nil {
-			return 0, fmt.Errorf("resolve top frame: %w", err)
-		}
-		frameID = frameTree.Frame.ID
-		if frameID == "" {
-			return 0, fmt.Errorf("resolve top frame: frame id is empty")
-		}
-	}
-	execID, err := frameExecutionContextID(ctx, frameID)
-	if err != nil {
-		return 0, err
-	}
-	if execID == 0 {
-		return 0, fmt.Errorf("frame %q has no isolated execution context", frameID)
-	}
-	return execID, nil
+	return cdptk.IsolatedContextID(ctx, frameID)
 }
 
 // IsolatedNodeObjectID converts a backend node id to a JS object handle in the
