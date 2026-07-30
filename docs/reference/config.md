@@ -688,9 +688,14 @@ explicit operation.
 
 Activity logs are always written to `<server.stateDir>/activity`, so two instances cannot
 end up sharing one log directory. `observability.activity.stateDir` is therefore not
-settable — `config set` refuses it and a file that carries it loads with a warning — and
-`config get observability.activity.stateDir` reports the derived directory in effect. Move
-the logs with `server.stateDir`.
+settable: `config set` refuses it, and `config get observability.activity.stateDir` reports
+the derived directory in effect. Move the logs with `server.stateDir`.
+
+A file that already carries the key keeps loading and keeps working. The key is **ignored**,
+and saying so is an *advisory*, not a validation error: PinchTab reports it — at load, and
+on stderr when you run `config set`, `config patch` or `config validate` — and it never
+blocks anything. There is nothing to fix and nothing to remove; the value simply has no
+effect. Validation errors, such as an out-of-range `server.port`, still block a save.
 
 `server.trustProxyHeaders` should stay `false` unless PinchTab is behind a trusted reverse proxy that overwrites `Forwarded` and `X-Forwarded-*` headers. Do not enable it on direct-exposure deployments or behind proxies that pass client-supplied forwarding headers through unchanged.
 
