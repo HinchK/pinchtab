@@ -109,9 +109,9 @@ func TestCapabilityRefusalNamesTheCapabilityAndKeepsTheCode(t *testing.T) {
 //
 // The scope is derived from the route catalogue rather than listed here, so a
 // capability added there is covered the day it is added. Recording and clipboard
-// are appended because neither goes through writeCapabilityDisabled — recording
-// keeps its own error code, clipboard has no catalogue entry — and those two are
-// exactly where the guidance drifted before.
+// are appended because a catalogue census cannot reach them: recording gates
+// in-handler on another capability's setting, clipboard has no catalogue entry.
+// Those two are exactly where the guidance drifted before.
 func TestEveryCapabilityRefusalCarriesTheRunnableRemedy(t *testing.T) {
 	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
 
@@ -175,20 +175,32 @@ func TestEveryCapabilityRefusalCarriesTheRunnableRemedy(t *testing.T) {
 	}
 }
 
-// Recording gates on the screencast setting but answers with its own code and
-// label. Routing it through the shared builder must not have collapsed that
-// distinction — a client matching recording_disabled still has to see it.
-func TestRecordingKeepsItsOwnCodeWhileSharingTheRemedy(t *testing.T) {
-	message, code, details := capabilityRefusal(t, http.MethodPost, "/record/start",
-		func(h *Handlers, w http.ResponseWriter, r *http.Request) { h.HandleRecordStart(w, r) })
+// The bridge mux registers HandleRecordStart directly, with no route-level lock, so
+// this in-handler gate is the only thing refusing /record/start on that surface —
+// deleting it would let a disabled capability record. The orchestrator front locks
+// the same route and answers screencast_disabled, so the code here has to match it
+// or one capability answers two ways depending on which port the client reached.
+//
+// Driving the mux rather than the handler is the point: a handler-only assertion
+// passes whether or not the route is shadowed, which is how the previous code
+// pinned a wire contract no client received.
+func TestRecordStartRefusesThroughTheMuxWithTheSharedScreencastCode(t *testing.T) {
+	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.RegisterRoutes(mux, func() {})
 
-	if code != "recording_disabled" {
-		t.Errorf("code = %q, want recording_disabled", code)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/record/start", nil))
+	message, code, details := decodeRefusal(t, "POST /record/start", w)
+
+	screencast, _ := routes.Meta(routes.CapScreencast)
+	if code != screencast.DisabledCode {
+		t.Errorf("code = %q, want %q — the code the orchestrator front returns for this same route", code, screencast.DisabledCode)
 	}
-	if !strings.Contains(message, "recording capability") {
-		t.Errorf("message = %q, want it to still name the recording capability", message)
+	if !strings.Contains(message, screencast.Setting) {
+		t.Errorf("message = %q, want it to name the setting to change", message)
 	}
-	if got, _ := details["remedy"].(string); got != remedyFor("security.allowScreencast") {
+	if got, _ := details["remedy"].(string); got != remedyFor(screencast.Setting) {
 		t.Errorf("remedy = %q, want the shared one", got)
 	}
 }

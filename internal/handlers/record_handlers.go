@@ -19,13 +19,7 @@ import (
 // HandleRecordStart starts a recording session for a tab.
 func (h *Handlers) HandleRecordStart(w http.ResponseWriter, r *http.Request) {
 	if !h.Config.AllowScreencast {
-		// Recording keeps its own label and error code — the caller asked to
-		// record, not to screencast — but the setting and the guidance come from
-		// the shared owners, so it cannot drift from every other capability gate.
-		meta, _ := routes.Meta(routes.CapScreencast)
-		httpx.ErrorCode(w, 403, "recording_disabled",
-			httpx.DisabledEndpointMessage("recording", meta.Setting), false,
-			httpx.DisabledEndpointDetails(meta.Setting))
+		h.writeCapabilityDisabled(w, routes.CapScreencast)
 		return
 	}
 
