@@ -16,20 +16,25 @@ import (
 // server, resolving the endpoint the way the CLI does rather than through env
 // vars — the divergence between those two resolutions is the defect under test.
 type tabStateHarness struct {
-	base      string
-	token     string
-	statusFor func(tabID string) int
-	requests  []*http.Request
+	base        string
+	token       string
+	serverToken string
+	statusFor   func(tabID string) int
+	requests    []*http.Request
 }
 
 func newTabStateHarness(t *testing.T) *tabStateHarness {
 	t.Helper()
-	h := &tabStateHarness{token: "cfg-token", statusFor: func(string) int { return http.StatusOK }}
+	h := &tabStateHarness{token: "cfg-token", serverToken: "cfg-token", statusFor: func(string) int { return http.StatusOK }}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.requests = append(h.requests, r)
 		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/tabs/"), "/title")
-		if got := r.Header.Get("Authorization"); got != "Bearer "+h.token {
+		// The server validates against serverToken, independent of the token the
+		// probe reads (h.token). A test forcing a real 401 sets only the probe's
+		// token wrong; coupling both to one field would make the probe authenticate
+		// against its own mistake and answer 200 instead.
+		if got := r.Header.Get("Authorization"); got != "Bearer "+h.serverToken {
 			w.WriteHeader(http.StatusUnauthorized)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "unauthorized"})
 			return
