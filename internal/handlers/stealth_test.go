@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -310,8 +311,11 @@ func TestGenerateFingerprintAgreesWithTheLaunchPersonaOnThisHost(t *testing.T) {
 	}
 }
 
-// os: "linux" is answerable now; os: "random" is deliberately NOT extended to it,
-// because that would change what a default request returns. This states which.
+// os: "random" keeps its windows/mac weighting for every browser a weighted row
+// holds — which is every browser the shipped matrix has outside linux/chrome — so
+// the default request is untouched. linux is a candidate only when nothing weighted
+// holds the requested browser, and chrome is held by both weighted rows, so this
+// drives the real matrix and must never see the Linux UA.
 func TestGenerateFingerprintRandomStaysWindowsOrMac(t *testing.T) {
 	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
 	linuxUA := stealth.ChromeUserAgent(stealth.PlatformLinux, stealth.ReducedBrowserVersion("144.0.7559.133"))
@@ -632,5 +636,176 @@ func TestHandleFingerprintRotateStillAcceptsAListedPair(t *testing.T) {
 	}
 	if ua, _ := fp["userAgent"].(string); ua == "" {
 		t.Error("a rotated fingerprint carries an empty userAgent")
+	}
+}
+
+// probeMatrix is the real matrix plus one browser held only by unweighted rows —
+// the state no shipped matrix reaches yet, and the one the weighted-only draw got
+// wrong. fingerprintMatrix returns a fresh literal per call, so mutating the copy
+// cannot leak into another test.
+func probeMatrix(t *testing.T, h *Handlers, browser string, osNames ...string) map[string]map[string]fingerprint {
+	t.Helper()
+	matrix := h.fingerprintMatrix()
+	for _, osName := range osNames {
+		for _, weighted := range randomFingerprintOSWeights {
+			if osName == weighted.name {
+				t.Fatalf("probe os %q is in randomFingerprintOSWeights, so it cannot stand in for an unweighted row", osName)
+			}
+		}
+		if matrix[osName] == nil {
+			matrix[osName] = map[string]fingerprint{}
+		}
+		matrix[osName][browser] = fingerprint{UserAgent: "probe-" + osName + "-" + browser}
+	}
+	for _, weighted := range randomFingerprintOSWeights {
+		if _, ok := matrix[weighted.name][browser]; ok {
+			t.Fatalf("probe browser %q is held by the weighted row %q, so the fallback under test is never reached", browser, weighted.name)
+		}
+	}
+	return matrix
+}
+
+// The gap this card closes: a browser held only by an unweighted row was refused
+// under os: "random" while the refusal listed that very pair as available. The
+// caller delegated the os choice and named a browser the product has, so a refusal
+// tells them nothing they can act on. Asserted on every draw, because the defect it
+// replaces was a coin flip rather than a constant.
+func TestRandomOSResolvesABrowserOnlyAnUnweightedRowHolds(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+	matrix := probeMatrix(t, &h, "firefox", "linux")
+
+	for i := 0; i < 200; i++ {
+		picked, ok := resolveRandomFingerprintOS(matrix, "firefox")
+		if !ok {
+			t.Fatalf("draw %d: os=random refused firefox although linux/firefox exists; the refusal would list a pair the caller cannot reach", i)
+		}
+		if picked != "linux" {
+			t.Fatalf("draw %d: os=random resolved to %q, want linux — the only row holding firefox", i, picked)
+		}
+	}
+}
+
+// With several unweighted rows holding the browser, the pick must be uniform and
+// must not depend on map iteration order — a silently order-dependent fallback is
+// the next defect of this shape.
+func TestRandomOSFallbackPicksUniformlyAmongUnweightedRows(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+	matrix := probeMatrix(t, &h, "firefox", "linux", "freebsd")
+
+	const draws = 1200
+	seen := map[string]int{}
+	for i := 0; i < draws; i++ {
+		picked, ok := resolveRandomFingerprintOS(matrix, "firefox")
+		if !ok {
+			t.Fatalf("draw %d: firefox refused although two rows hold it", i)
+		}
+		seen[picked]++
+	}
+	for _, want := range []string{"linux", "freebsd"} {
+		if seen[want] == 0 {
+			t.Fatalf("%q never drawn in %d draws (%v); the fallback picks one row rather than among them", want, draws, seen)
+		}
+		// A wide band: this pins uniform-ish against first-wins or order-dependent,
+		// not the RNG's quality.
+		if share := float64(seen[want]) / draws; share < 0.35 || share > 0.65 {
+			t.Errorf("%q drawn %.0f%% of %d draws (%v), want roughly half each", want, share*100, draws, seen)
+		}
+	}
+}
+
+// The fallback is reached ONLY when no weighted row holds the browser. This is what
+// keeps the 0.7/0.3 split and the default request untouched, and it is the half a
+// widening change is most likely to overshoot: chrome is held by weighted rows, so
+// an unweighted row holding it too must never be drawn.
+func TestRandomOSIgnoresUnweightedRowsWhenAWeightedRowHoldsTheBrowser(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+	matrix := h.fingerprintMatrix()
+	matrix["linux"]["edge"] = fingerprint{UserAgent: "probe-linux-edge"}
+
+	for i := 0; i < 400; i++ {
+		for _, browser := range []string{"chrome", "edge"} {
+			picked, ok := resolveRandomFingerprintOS(matrix, browser)
+			if !ok {
+				t.Fatalf("draw %d: %s refused", i, browser)
+			}
+			if picked == "linux" {
+				t.Fatalf("draw %d: os=random browser=%s resolved to linux, which is unweighted; the weighted rows hold it, so the fallback must not be reached", i, browser)
+			}
+		}
+	}
+}
+
+// The candidate list is what the draw runs over, and it must not vary with map
+// iteration order: same matrix, same list, every time. Built repeatedly because Go
+// randomises range order per loop, so a single call cannot tell a sorted list from
+// a lucky one.
+func TestFingerprintOSCandidatesAreStableAndEquallyWeightedInTheFallback(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+	matrix := probeMatrix(t, &h, "firefox", "linux", "freebsd", "openbsd")
+	want := []string{"freebsd", "linux", "openbsd"}
+
+	for i := 0; i < 50; i++ {
+		candidates := fingerprintOSCandidates(matrix, "firefox")
+		got := make([]string, 0, len(candidates))
+		for _, candidate := range candidates {
+			got = append(got, candidate.name)
+			if candidate.weight != 1 {
+				t.Fatalf("fallback candidate %q carries weight %v, want 1 — the fallback is uniform, and a weight here is a second place the 0.7/0.3 split could be edited", candidate.name, candidate.weight)
+			}
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("build %d: candidates = %v, want %v every time; the order follows map iteration, so the pick is not reproducible", i, got, want)
+		}
+	}
+
+	// The weighted arm keeps its own weights and is not sorted into the fallback's shape.
+	for _, candidate := range fingerprintOSCandidates(matrix, "chrome") {
+		if candidate.weight == 1 {
+			t.Errorf("weighted candidate %q lost its weight (%v); chrome must keep the 0.7/0.3 split", candidate.name, candidate.weight)
+		}
+	}
+}
+
+// What makes the refusal's full-matrix listing honest after the widening: os:
+// "random" refuses only a browser NO row holds, so a refusal never names a pair the
+// caller could have had. Derived from the matrix rather than from a hand-picked
+// pair or two, so the next row added is covered without editing this test — which
+// is the case this card exists for.
+func TestEveryBrowserTheMatrixHoldsIsReachableThroughRandom(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+	matrix := h.fingerprintMatrix()
+
+	holders := map[string][]string{}
+	for osName, row := range matrix {
+		for browser := range row {
+			holders[browser] = append(holders[browser], osName)
+		}
+	}
+	browsers := map[string]bool{}
+	for browser, rows := range holders {
+		sort.Strings(rows)
+		holders[browser] = rows
+		browsers[browser] = true
+	}
+	if len(browsers) == 0 {
+		t.Fatal("the matrix holds no browsers, so this guard would pass vacuously")
+	}
+
+	for browser := range browsers {
+		t.Run(browser, func(t *testing.T) {
+			for i := 0; i < 100; i++ {
+				if _, ok := resolveRandomFingerprintOS(matrix, browser); !ok {
+					t.Fatalf("draw %d: os=random refused %q although %v hold it; the refusal would list those pairs as available while refusing the browser in them",
+						i, browser, holders[browser])
+				}
+				fp, err := h.generateFingerprint(fingerprintRequest{OS: "random", Browser: browser})
+				if err != nil {
+					t.Fatalf("draw %d: os=random browser=%s refused end to end: %v", i, browser, err)
+				}
+				if fp.UserAgent == "" {
+					t.Fatalf("draw %d: os=random browser=%s resolved to an empty identity", i, browser)
+				}
+			}
+		})
 	}
 }

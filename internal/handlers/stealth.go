@@ -170,8 +170,10 @@ func (h *Handlers) fingerprintMatrix() map[string]map[string]fingerprint {
 			},
 		},
 		// A Linux host asking for a fingerprint used to get a foreign one, since only
-		// windows and mac had entries. os: "random" stays windows-or-mac: adding linux
-		// to the weighted pick would change what a default request returns.
+		// windows and mac had entries. linux stays out of the os: "random" WEIGHTING —
+		// adding it there would change what a default request returns — but it is a
+		// fallback candidate for any browser no weighted row holds, so a browser only
+		// this row carries is reachable through os: "random" rather than refused.
 		"linux": {
 			"chrome": {
 				UserAgent: linuxChrome,
@@ -197,39 +199,85 @@ func availableFingerprintPairs(matrix map[string]map[string]fingerprint) []strin
 	return pairs
 }
 
-// randomFingerprintOSWeights is the weighted pick behind os: "random". linux is
-// absent on purpose: adding it would change what a default request returns.
-var randomFingerprintOSWeights = []struct {
+// weightedFingerprintOS is one candidate of the os: "random" draw.
+type weightedFingerprintOS struct {
 	name   string
 	weight float64
-}{
+}
+
+// randomFingerprintOSWeights is the weighting behind os: "random". linux is absent
+// on purpose: adding it here would change what a default request returns. Absent
+// from the WEIGHTING is not absent from the draw — fingerprintOSCandidates falls
+// back to the unweighted rows when no weighted one holds the requested browser.
+var randomFingerprintOSWeights = []weightedFingerprintOS{
 	{name: "windows", weight: 0.7},
 	{name: "mac", weight: 0.3},
 }
 
-// resolveRandomFingerprintOS picks among the weighted os rows that actually hold
-// the requested browser, re-weighting over those candidates. Picking an os first
-// and looking the pair up second made os: "random" answer 200 or 400 by coin flip
-// for browsers only one os holds — safari refused whenever the pick was windows.
-// It reports no candidate when no weighted row holds the browser at all, which is
-// still a refusal: the constraint narrows the pick, it does not remove the refusal.
-func resolveRandomFingerprintOS(matrix map[string]map[string]fingerprint, browser string) (string, bool) {
-	total := 0.0
+// fingerprintOSCandidates is the set os: "random" draws from for one browser: the
+// weighted rows that hold it, or — only when none does — every other row that
+// holds it, uniformly.
+//
+// The fallback is what makes "random" mean any os that can answer rather than any
+// WEIGHTED os that can answer. Without it a browser held only by an unweighted row
+// is refused while the refusal lists that very pair as available, which is the
+// same coin-flip defect the browser constraint fixed, one layer along: the caller
+// delegated the os choice, named a browser the product has, and would have to know
+// to retry with an explicit os.
+//
+// It cannot move the default: the fallback is reached only when no weighted row
+// holds the browser, and chrome is held by windows and mac, so a default request
+// never sees an unweighted candidate and keeps its 0.7/0.3 split. The unweighted
+// candidates are sorted and equally weighted, so several of them cannot make the
+// pick depend on map iteration order.
+func fingerprintOSCandidates(matrix map[string]map[string]fingerprint, browser string) []weightedFingerprintOS {
+	candidates := make([]weightedFingerprintOS, 0, len(matrix))
+	weighted := make(map[string]bool, len(randomFingerprintOSWeights))
 	for _, candidate := range randomFingerprintOSWeights {
+		weighted[candidate.name] = true
 		if _, ok := matrix[candidate.name][browser]; ok {
-			total += candidate.weight
+			candidates = append(candidates, candidate)
 		}
 	}
-	if total == 0 {
+	if len(candidates) > 0 {
+		return candidates
+	}
+
+	names := make([]string, 0, len(matrix))
+	for osName, browsers := range matrix {
+		if weighted[osName] {
+			continue
+		}
+		if _, ok := browsers[browser]; ok {
+			names = append(names, osName)
+		}
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		candidates = append(candidates, weightedFingerprintOS{name: name, weight: 1})
+	}
+	return candidates
+}
+
+// resolveRandomFingerprintOS runs one weighted draw over the candidates that hold
+// the requested browser. Picking an os first and looking the pair up second made
+// os: "random" answer 200 or 400 by coin flip for browsers only one os holds —
+// safari refused whenever the pick was windows. It reports no candidate only when
+// NO row holds the browser, which is still a refusal, and which is what makes the
+// full matrix listing in that refusal both correct and actionable.
+func resolveRandomFingerprintOS(matrix map[string]map[string]fingerprint, browser string) (string, bool) {
+	candidates := fingerprintOSCandidates(matrix, browser)
+	if len(candidates) == 0 {
 		return "", false
 	}
 
+	total := 0.0
+	for _, candidate := range candidates {
+		total += candidate.weight
+	}
 	draw := rand.Float64() * total
-	picked := ""
-	for _, candidate := range randomFingerprintOSWeights {
-		if _, ok := matrix[candidate.name][browser]; !ok {
-			continue
-		}
+	picked := candidates[0].name
+	for _, candidate := range candidates {
 		picked = candidate.name
 		draw -= candidate.weight
 		if draw < 0 {
