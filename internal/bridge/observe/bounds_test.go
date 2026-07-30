@@ -134,7 +134,10 @@ func (f scrollFixture) annotate(t *testing.T, pageCoords bool) (BoundingBox, boo
 	if nodes[0].BoundingBox == nil {
 		t.Fatal("AnnotateBounds produced no bounding box for the target")
 	}
-	return *nodes[0].BoundingBox, nodes[0].Visible, vp
+	if nodes[0].Visible == nil {
+		t.Fatal("AnnotateBounds measured the target but left visible unset")
+	}
+	return *nodes[0].BoundingBox, *nodes[0].Visible, vp
 }
 
 // getBoxModel reports the content box and getBoundingClientRect the border box,
@@ -265,4 +268,47 @@ func TestElementBorderBoxIsViewportRelativeWhenScrolled(t *testing.T) {
 
 	assertNear(t, "border-box x", box.X, rect.X)
 	assertNear(t, "border-box y", box.Y, rect.Y)
+}
+
+// Every unmeasured path for real, beside a measured one, in a single snapshot:
+// a node the bounds pass skips (NodeID == 0), a node whose getBoxModel call
+// fails (a backend id no document holds), and the target that measures fine.
+// The invariant has to hold across the mix, since it is what lets a client read
+// an absent "visible" as "not measured" rather than "off-screen".
+func TestAnnotateBoundsPairsVisibleWithBoundsAcrossUnmeasuredNodes(t *testing.T) {
+	f := newScrollFixture(t, 300, 400)
+
+	vp, err := FetchLayout(f.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nodes := []A11yNode{
+		{Ref: "e0", NodeID: 0},
+		{Ref: "e1", NodeID: f.nodeID},
+		{Ref: "e2", NodeID: 1 << 40},
+	}
+	if err := AnnotateBounds(f.ctx, nodes, false, vp); err != nil {
+		t.Fatal(err)
+	}
+
+	encoded := make([]map[string]any, 0, len(nodes))
+	for _, node := range nodes {
+		encoded = append(encoded, marshalNode(t, node))
+	}
+	assertVisiblePairsWithBounds(t, encoded)
+
+	if _, ok := encoded[1]["visible"]; !ok {
+		t.Fatalf("the measured target lost its visible key: %v", encoded[1])
+	}
+	for _, i := range []int{0, 2} {
+		if _, ok := encoded[i]["visible"]; ok {
+			t.Errorf("unmeasured node %d published a visible key: %v", i, encoded[i])
+		}
+	}
+
+	// The target sits below the fold at this scroll, so its measured answer is
+	// false — the value that used to vanish.
+	if encoded[1]["visible"] != false {
+		t.Errorf("target visible = %v, want a measured false", encoded[1]["visible"])
+	}
 }

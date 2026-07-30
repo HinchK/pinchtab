@@ -60,6 +60,11 @@ pinchtab capture -s "#checkout-form"
         "ref": "e4", "role": "textbox", "name": "Email",
         "boundingBox": { "x": 520, "y": 312, "w": 280, "h": 36 },
         "visible": true
+      },
+      {
+        "ref": "e9", "role": "button", "name": "Submit",
+        "boundingBox": { "x": 520, "y": 1480, "w": 96, "h": 40 },
+        "visible": false
       }
     ]
   }
@@ -80,9 +85,10 @@ an `expectedEpoch` query param to reject stale refs at use time.
 
 ## Bounding boxes and coordinate space
 
-When `withBounds=true` (the default), each snapshot node with a
-non-zero backend node id gets a `boundingBox` and a `visible` flag. The
-coordinate space depends on `selector` and `beyondViewport`:
+When `withBounds=true` (the default), each snapshot node with a non-zero
+backend node id gets a `boundingBox` and a `visible` flag, and a node that
+cannot be measured gets neither. The coordinate space depends on `selector`
+and `beyondViewport`:
 
 - **`viewport`** (default): boxes are viewport-relative CSS pixels. The
   image is the visible viewport. `image.devicePixelRatio` tells you the
@@ -95,7 +101,15 @@ coordinate space depends on `selector` and `beyondViewport`:
   document.
 
 `visible` is true when the box has positive area and intersects the
-viewport — a cheap heuristic, not a strict occlusion check.
+viewport — a cheap heuristic, not a strict occlusion check. A node
+scrolled past, in either direction, is measured and reports
+`"visible": false`.
+
+**Absent means not measured, never "no".** `visible` appears exactly when
+`boundingBox` does, so the key is missing only where no measurement was
+taken: `withBounds=false`, a node with no backend node id, or a node whose
+box query failed. Treat a missing `visible` as unknown and a present
+`false` as off-screen; they are different answers.
 
 ## Useful flags
 
@@ -111,7 +125,7 @@ viewport — a cheap heuristic, not a strict occlusion check.
 | `depth` | Snapshot tree depth limit |
 | `output` | `file` (default), `inline` (base64 in JSON), or `raw` (bytes only — drops the snapshot) |
 | `wait` | `stable` (default) waits for `Page.lifecycleEvent` quiescence (250ms silence / 750ms ceiling); `load` polls `document.readyState` until `complete` (2s ceiling); `none` skips the wait |
-| `withBounds` | `true` (default) — populate `boundingBox` + `visible` on every snapshot node |
+| `withBounds` | `true` (default) — populate `boundingBox` + `visible` on every measurable snapshot node; `false` omits both keys everywhere |
 | `beyondViewport` | `true` — capture the full scrollable document; coordinate space becomes `document` |
 | `scale` | Rescale the output bitmap. Default `1`. `0.5` halves each axis (quarter the pixels) |
 | `requirePair` | `true` returns 409 if `pairing.navigated` would be true |

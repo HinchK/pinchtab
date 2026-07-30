@@ -28,6 +28,10 @@ func IsSensitiveAutocomplete(value string) bool {
 	return false
 }
 
+// A11yNode is one snapshot node. Visible is a pointer because nil (absent on
+// the wire) means the bounds pass never measured this node, which is a
+// different statement from a measured false: it is set exactly when
+// BoundingBox is.
 type A11yNode struct {
 	Ref            string       `json:"ref"`
 	Role           string       `json:"role"`
@@ -52,7 +56,7 @@ type A11yNode struct {
 	ChildFrameURL  string       `json:"childFrameUrl,omitempty"`
 	ChildFrameName string       `json:"childFrameName,omitempty"`
 	BoundingBox    *BoundingBox `json:"boundingBox,omitempty"`
-	Visible        bool         `json:"visible,omitempty"`
+	Visible        *bool        `json:"visible,omitempty"`
 }
 
 // BoundingBox is a CSS-pixel rectangle for a snapshot node. Populated only by

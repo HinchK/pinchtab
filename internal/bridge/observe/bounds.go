@@ -88,7 +88,7 @@ func AnnotateBounds(ctx context.Context, nodes []A11yNode, pageCoords bool, vp V
 			box.Y += vp.ScrollY
 		}
 		nodes[i].BoundingBox = &box
-		nodes[i].Visible = visible
+		nodes[i].Visible = &visible
 	}
 	return nil
 }
