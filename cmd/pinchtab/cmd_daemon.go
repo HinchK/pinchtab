@@ -54,7 +54,8 @@ func dispatchDaemonCommand(subcommand string, jsonOut bool) int {
 	if !declared {
 		return printDaemonUsage(subcommand)
 	}
-	if handled, code := applyDaemonNotInstalledPolicy(subcommand, policy); handled {
+	notInstalled, code, refused := applyDaemonNotInstalledPolicy(subcommand, policy)
+	if refused {
 		return code
 	}
 
@@ -72,9 +73,9 @@ func dispatchDaemonCommand(subcommand string, jsonOut bool) int {
 	case "restart":
 		printDaemonManagerResult(manager.Restart())
 	case "stop":
-		printDaemonManagerResult(manager.Stop())
+		handleDaemonStop(manager, notInstalled)
 	case "uninstall":
-		handleDaemonUninstall(manager)
+		handleDaemonUninstall(manager, notInstalled)
 	default:
 		return printDaemonUsage(subcommand)
 	}
@@ -95,28 +96,14 @@ func isDaemonStatusSubcommand(subcommand string) bool {
 	return false
 }
 
-// daemonNotInstalledPolicy is what one lifecycle verb does when the service is not
-// installed. Every verb DECLARES its answer: the previous guard skipped the check for
-// anything that was not start or restart, so stop and uninstall bypassed it by
-// construction and affirmed work they had not done. A verb missing from the table below
-// is not silently unguarded — it does not dispatch at all.
 type daemonNotInstalledPolicy int
 
 const (
-	// daemonRefuse: exit 1 with the install remedy, touching no manager.
 	daemonRefuse daemonNotInstalledPolicy = iota
-	// daemonNoOp: exit 0 saying plainly that there was nothing to do.
 	daemonNoOp
-	// daemonProceed: the not-installed state is this verb's normal input.
 	daemonProceed
 )
 
-// The contract is idempotent for stop and uninstall, and that is not a fresh choice —
-// it is the one the manager layer already made. launchdManager.Stop swallows the
-// not-loaded error and Uninstall swallows os.ErrNotExist on removing the plist, both
-// deliberately, so refusing here would contradict the layer below and break the
-// provisioning chain `daemon stop && daemon install && daemon start`, which never
-// reaches install if stop exits 1.
 var daemonNotInstalledPolicies = map[string]daemonNotInstalledPolicy{
 	"install":   daemonProceed,
 	"start":     daemonRefuse,
@@ -125,21 +112,14 @@ var daemonNotInstalledPolicies = map[string]daemonNotInstalledPolicy{
 	"uninstall": daemonNoOp,
 }
 
-// daemonNothingToDo is the honest wording for a no-op verb. It states the observed fact
-// and what did not happen, where "  [ok] Pinchtab daemon stopped." asserted an action
-// that was never performed — which an operator, or a provisioning script reading exit 0
-// plus that sentence, takes as confirmation.
-var daemonNothingToDo = map[string]string{
-	"stop":      "Background service is not installed; nothing to stop.",
-	"uninstall": "Background service is not installed; nothing to uninstall.",
+var daemonNotInstalledResults = map[string]string{
+	"stop":      "Background service is not installed; asked the service manager to stop any leftover job.",
+	"uninstall": "Background service is not installed; asked the service manager to remove any leftover job.",
 }
 
-// applyDaemonNotInstalledPolicy asks the installation question ONCE and lets the verb's
-// policy decide the wording and the exit code. It reports handled=true when the verb is
-// finished and must not reach a manager.
-func applyDaemonNotInstalledPolicy(subcommand string, policy daemonNotInstalledPolicy) (bool, int) {
+func applyDaemonNotInstalledPolicy(subcommand string, policy daemonNotInstalledPolicy) (notInstalled bool, code int, refused bool) {
 	if policy == daemonProceed {
-		return false, 0
+		return false, 0, false
 	}
 
 	installed, err := daemonInstallationStatus()
@@ -147,25 +127,30 @@ func applyDaemonNotInstalledPolicy(subcommand string, policy daemonNotInstalledP
 		if policy == daemonRefuse {
 			fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle,
 				fmt.Sprintf("cannot determine whether the background service is installed; refusing to %s: %v", subcommand, err)))
-			return true, 1
+			return false, 1, true
 		}
-		// Could-not-read is not absence, and must never be rendered as one: "nothing to
-		// stop" built from an unknown is a false statement. The managers already tolerate
-		// a service that is not there, so the honest move is to attempt the operation and
-		// report whatever they say.
-		return false, 0
+		return false, 0, false
 	}
 	if installed {
-		return false, 0
+		return false, 0, false
 	}
-
 	if policy == daemonRefuse {
 		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle,
 			"background service is not installed; install it first with: pinchtab daemon install"))
-		return true, 1
+		return false, 1, true
 	}
-	fmt.Println(cli.StyleStdout(cli.SuccessStyle, "  [ok] ") + daemonNothingToDo[subcommand])
-	return true, 0
+	return true, 0, false
+}
+
+func daemonLifecycleMessage(subcommand string, notInstalled bool, message string) string {
+	if notInstalled {
+		return daemonNotInstalledResults[subcommand]
+	}
+	return message
+}
+
+func printDaemonOK(message string) {
+	fmt.Println(cli.StyleStdout(cli.SuccessStyle, "  [ok] ") + message)
 }
 
 func handleDaemonInstall(manager daemon.Manager) {
@@ -186,14 +171,11 @@ func handleDaemonInstall(manager daemon.Manager) {
 	if err != nil {
 		printDaemonActionError(manager, fmt.Sprintf("daemon install failed: %v", err))
 	}
-	fmt.Println(cli.StyleStdout(cli.SuccessStyle, "  [ok] ") + message)
+	printDaemonOK(message)
 	warnPrimaryChromeMacOS(loadConfig())
 	printDaemonFollowUp()
 }
 
-// warnPrimaryChromeMacOS surfaces the issue #583 collision at install time:
-// on macOS, auto-launching the user's daily Google Chrome for headless
-// automation can stop their normal Chrome from opening a window.
 func warnPrimaryChromeMacOS(cfg *config.RuntimeConfig) {
 	effective := runtimekit.ResolveEffectiveBrowser(cfg)
 	if effective.ID != config.BrowserChrome || !chrome.IsPrimaryChromeBinaryMacOS(effective.Binary) {
@@ -209,10 +191,19 @@ func warnPrimaryChromeMacOS(cfg *config.RuntimeConfig) {
 		"         to a dedicated automation browser."))
 }
 
-func handleDaemonUninstall(manager daemon.Manager) {
+func handleDaemonStop(manager daemon.Manager, notInstalled bool) {
+	message, err := manager.Stop()
+	if err != nil {
+		printDaemonManagerResult(message, err)
+		return
+	}
+	printDaemonOK(daemonLifecycleMessage("stop", notInstalled, message))
+}
+
+func handleDaemonUninstall(manager daemon.Manager, notInstalled bool) {
 	message, err := manager.Uninstall()
 	if err != nil {
 		printDaemonActionError(manager, err.Error())
 	}
-	fmt.Println(cli.StyleStdout(cli.SuccessStyle, "  [ok] ") + message)
+	printDaemonOK(daemonLifecycleMessage("uninstall", notInstalled, message))
 }

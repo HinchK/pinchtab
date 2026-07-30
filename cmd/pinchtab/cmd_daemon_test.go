@@ -140,9 +140,6 @@ func TestDaemonActionsReachManager(t *testing.T) {
 	}{
 		{sub: "start", installed: true, want: []string{"Start"}},
 		{sub: "restart", installed: true, want: []string{"Restart"}},
-		// installed:true on purpose. This case used to read installed:false and expect
-		// the manager to be called, which encoded the defect: stop reached the manager
-		// with nothing installed and then affirmed it had stopped something.
 		{sub: "stop", installed: true, want: []string{"Stop"}},
 		{sub: "uninstall", installed: true, want: []string{"Uninstall"}},
 	}
@@ -249,23 +246,13 @@ func TestPrintDaemonOverviewIncludesStatusAndHints(t *testing.T) {
 	}
 }
 
-// The no-op verbs must not affirm work they did not do. "  [ok] Pinchtab daemon
-// stopped." is an affirmative statement, and an operator — or a provisioning script
-// reading exit 0 beside it — takes it as confirmation that a service was stopped.
-// Exit 0 stays: the manager layer already swallows not-loaded and os.ErrNotExist
-// deliberately, and `daemon stop && daemon install && daemon start` never reaches
-// install if stop refuses.
 func TestDaemonStopAndUninstallReportAnHonestNoOpWhenNotInstalled(t *testing.T) {
-	for _, tc := range []struct {
-		sub     string
-		claim   string
-		nothing string
-	}{
-		{sub: "stop", claim: "stopped", nothing: "nothing to stop"},
-		{sub: "uninstall", claim: "uninstalled", nothing: "nothing to uninstall"},
+	for _, tc := range []struct{ sub, claim string }{
+		{sub: "stop", claim: "stopped"},
+		{sub: "uninstall", claim: "uninstalled"},
 	} {
 		t.Run(tc.sub, func(t *testing.T) {
-			manager, constructed := stubDaemonSeams(t, false, nil)
+			stubDaemonSeams(t, false, nil)
 
 			var code int
 			output := captureStdout(t, func() {
@@ -278,26 +265,42 @@ func TestDaemonStopAndUninstallReportAnHonestNoOpWhenNotInstalled(t *testing.T) 
 			if strings.Contains(output, tc.claim) {
 				t.Errorf("output claims the service was %s when nothing was installed: %q", tc.claim, output)
 			}
-			if !strings.Contains(strings.ToLower(output), tc.nothing) {
-				t.Errorf("output %q does not say there was %s", output, tc.nothing)
+			if strings.Contains(strings.ToLower(output), "nothing to") {
+				t.Errorf("output %q predicts there was nothing to do; the installation probe cannot support that claim about a running job", output)
 			}
 			if !strings.Contains(strings.ToLower(output), "not installed") {
 				t.Errorf("output %q does not state the observed fact", output)
-			}
-			if len(manager.calls) != 0 {
-				t.Errorf("manager was asked to act with nothing installed: %v", manager.calls)
-			}
-			if *constructed != 0 {
-				t.Errorf("manager constructed %d times, want 0", *constructed)
 			}
 		})
 	}
 }
 
-// Could-not-read is not absence. Rendering an unknown as "nothing to stop" is a false
-// statement built from a failed probe, so the no-op verbs must never say it when the
-// status query itself failed. The managers already tolerate a missing service, so the
-// honest behaviour is to attempt the operation and report what they say.
+func TestDaemonNoOpVerbsStillActWhenNotInstalled(t *testing.T) {
+	for _, tc := range []struct{ sub, want string }{
+		{sub: "stop", want: "Stop"},
+		{sub: "uninstall", want: "Uninstall"},
+	} {
+		t.Run(tc.sub, func(t *testing.T) {
+			manager, constructed := stubDaemonSeams(t, false, nil)
+
+			var code int
+			captureStdout(t, func() {
+				code = dispatchDaemonCommand(tc.sub, false)
+			})
+
+			if code != 0 {
+				t.Fatalf("exit code = %d, want 0", code)
+			}
+			if *constructed != 1 {
+				t.Fatalf("manager constructed %d times, want 1 — an absent service file is not an absent job", *constructed)
+			}
+			if strings.Join(manager.calls, ",") != tc.want {
+				t.Errorf("manager calls = %v, want [%s] — a job left loaded without its service file has no other way out", manager.calls, tc.want)
+			}
+		})
+	}
+}
+
 func TestDaemonStopAndUninstallDoNotClaimNothingToDoWhenTheStateIsUnknown(t *testing.T) {
 	for _, tc := range []struct{ sub, want string }{
 		{sub: "stop", want: "Stop"},
@@ -326,8 +329,6 @@ func TestDaemonStopAndUninstallDoNotClaimNothingToDoWhenTheStateIsUnknown(t *tes
 	}
 }
 
-// The absence assertion: the no-op wording must not become unconditional. With a service
-// actually installed, stop still reports the real stopped message from the manager.
 func TestDaemonStopStillReportsTheRealResultWhenInstalled(t *testing.T) {
 	manager, _ := stubDaemonSeams(t, true, nil)
 
@@ -350,10 +351,6 @@ func TestDaemonStopStillReportsTheRealResultWhenInstalled(t *testing.T) {
 	}
 }
 
-// The guard used to be a two-name allowlist, so every verb that was not start or restart
-// inherited "no check" by construction. A verb must now DECLARE its not-installed
-// behaviour — which is not the same as being forced to refuse — and one that does not
-// declare cannot dispatch at all, so the omission is loud rather than silent.
 func TestEveryDispatchedDaemonVerbDeclaresItsNotInstalledPolicy(t *testing.T) {
 	raw, err := os.ReadFile("cmd_daemon.go")
 	if err != nil {
@@ -382,10 +379,10 @@ func TestEveryDispatchedDaemonVerbDeclaresItsNotInstalledPolicy(t *testing.T) {
 		}
 	}
 	for verb, policy := range daemonNotInstalledPolicies {
-		if policy == daemonNoOp && daemonNothingToDo[verb] == "" {
+		if policy == daemonNoOp && daemonNotInstalledResults[verb] == "" {
 			t.Errorf("%q is a no-op verb with no honest wording, so it would print an empty claim", verb)
 		}
-		if policy != daemonNoOp && daemonNothingToDo[verb] != "" {
+		if policy != daemonNoOp && daemonNotInstalledResults[verb] != "" {
 			t.Errorf("%q is not a no-op verb but carries no-op wording", verb)
 		}
 	}
