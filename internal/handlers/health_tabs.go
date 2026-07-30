@@ -15,7 +15,7 @@ type tabHandoffReader interface {
 
 func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	if h.Bridge == nil {
-		httpx.JSON(w, 503, map[string]any{"status": "error", "reason": "bridge not initialized"})
+		writeUnavailable(w, 503, "bridge_unavailable", "bridge not initialized")
 		return
 	}
 	if draining, retryAfter := h.bridgeRestartStatus(); draining {
@@ -24,7 +24,9 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 			seconds = 1
 		}
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", seconds))
-		httpx.JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining", "retryAfterSeconds": seconds})
+		httpx.JSONError(w, http.StatusServiceUnavailable, "browser_draining",
+			fmt.Sprintf("browser is restarting; retry after %ds", seconds),
+			map[string]any{"status": "draining", "retryAfterSeconds": seconds})
 		return
 	}
 
@@ -32,12 +34,12 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		if h.writeBridgeUnavailable(w, err) {
 			return
 		}
-		httpx.JSON(w, 503, map[string]any{"status": "error", "reason": fmt.Sprintf("browser initialization failed: %v", err)})
+		writeUnavailable(w, 503, "browser_init_failed", fmt.Sprintf("browser initialization failed: %v", err))
 		return
 	}
 	targets, err := h.Bridge.ListTargets()
 	if err != nil {
-		httpx.JSON(w, 503, map[string]any{"status": "error", "reason": err.Error()})
+		writeUnavailable(w, 503, "list_targets_failed", err.Error())
 		return
 	}
 

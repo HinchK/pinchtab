@@ -81,6 +81,7 @@ func Middleware(rec Recorder, source string, next http.Handler) http.Handler {
 		evt := state.snapshot()
 		evt.Status = sw.Code
 		evt.DurationMs = time.Since(start).Milliseconds()
+		evt.Code, evt.Error = sw.FailureCode, sw.FailureMessage
 		if evt.RequestID == "" {
 			evt.RequestID = requestIDFor(r, sw)
 		}

@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
 const maxRecentFailures = 20
@@ -18,6 +20,11 @@ type FailureEvent struct {
 	Path      string    `json:"path"`
 	Status    int       `json:"status"`
 	Type      string    `json:"type"`
+	// Code and Message are the reason the request failed, taken from the producer that
+	// wrote the response rather than parsed back out of it. Type stays the constant
+	// "http_error": it names the KIND of record, and never said anything about this one.
+	Code    string `json:"code,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 var (
@@ -57,7 +64,7 @@ func FailureSnapshot(layer string) map[string]any {
 
 	events := make([]map[string]any, 0, len(recent))
 	for _, ev := range recent {
-		events = append(events, map[string]any{
+		event := map[string]any{
 			"time":      ev.Time,
 			"requestId": ev.RequestID,
 			"method":    ev.Method,
@@ -65,7 +72,12 @@ func FailureSnapshot(layer string) map[string]any {
 			"status":    ev.Status,
 			"type":      ev.Type,
 			"layer":     layer,
-		})
+		}
+		if ev.Message != "" {
+			event["code"] = ev.Code
+			event["message"] = ev.Message
+		}
+		events = append(events, event)
 	}
 
 	return map[string]any{
@@ -112,4 +124,12 @@ func resetObservabilityForTests() {
 	failureMu.Lock()
 	recentFailures = nil
 	failureMu.Unlock()
+}
+
+// writeUnavailable answers the {status,reason} shape that /health and /stealth/status
+// clients parse by key, and records the reason for the failure sinks with it. The shape
+// is a client contract, which is why these do not become ordinary error envelopes; the
+// reason travels either way.
+func writeUnavailable(w http.ResponseWriter, status int, code, reason string) {
+	httpx.JSONError(w, status, code, reason, map[string]any{"status": "error", "reason": reason})
 }

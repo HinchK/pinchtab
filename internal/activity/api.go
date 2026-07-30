@@ -53,6 +53,8 @@ func RegisterHandlers(mux *http.ServeMux, rec Recorder) {
 				Action:      event.Action,
 				Route:       convertRoute(event.Route),
 				Ref:         event.Ref,
+				Code:        event.Code,
+				Error:       event.Error,
 			})
 		}
 

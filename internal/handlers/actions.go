@@ -647,9 +647,8 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	if actionErr != nil {
 		if strings.HasPrefix(actionErr.Error(), "unknown action") {
 			kinds := h.Bridge.AvailableActions()
-			httpx.JSON(w, 400, map[string]string{
-				"error": fmt.Sprintf("%s - valid values: %s", actionErr.Error(), strings.Join(kinds, ", ")),
-			})
+			message := fmt.Sprintf("%s - valid values: %s", actionErr.Error(), strings.Join(kinds, ", "))
+			httpx.JSONError(w, 400, "unknown_action_kind", message, map[string]string{"error": message})
 			return
 		}
 		if errors.Is(actionErr, bridge.ErrInvalidActionRequest) {

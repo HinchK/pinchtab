@@ -30,6 +30,15 @@ type ProblemDetails struct {
 	Details   map[string]any `json:"details,omitempty"`
 }
 
+// JSONError writes a hand-shaped error body — one the standard envelope cannot express,
+// such as a health payload a client parses by key — and records the reason with it. Every
+// non-2xx JSON response goes through here or through ErrorCode, so no failure reaches the
+// log, the metrics or the activity record with the response body as its only witness.
+func JSONError(w http.ResponseWriter, status int, code, message string, payload any) {
+	RecordFailureReason(w, code, SanitizeErrorMessage(message))
+	JSON(w, status, payload)
+}
+
 func JSON(w http.ResponseWriter, code int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -50,8 +59,10 @@ func Error(w http.ResponseWriter, code int, err error) {
 }
 
 func ErrorCode(w http.ResponseWriter, status int, code, message string, retryable bool, details map[string]any) {
+	sanitized := SanitizeErrorMessage(message)
+	RecordFailureReason(w, code, sanitized)
 	payload := map[string]any{
-		"error": SanitizeErrorMessage(message),
+		"error": sanitized,
 		"code":  code,
 	}
 	if retryable {
@@ -120,11 +131,13 @@ func Problem(w http.ResponseWriter, status int, code, detail string, retryable b
 		title = "Error"
 	}
 
+	sanitized := SanitizeErrorMessage(detail)
+	RecordFailureReason(w, code, sanitized)
 	payload := ProblemDetails{
 		Type:    "about:blank",
 		Title:   title,
 		Status:  status,
-		Detail:  SanitizeErrorMessage(detail),
+		Detail:  sanitized,
 		Code:    code,
 		Details: sanitizeDetails(details),
 	}
@@ -176,9 +189,38 @@ func ExtendWriteDeadline(w http.ResponseWriter, d time.Duration) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d))
 }
 
+// ReasonRecorder is implemented by a ResponseWriter that keeps the reason a failure was
+// written with, so an error producer can hand it back to the middlewares wrapped around
+// it. It is what makes the reason travel from the one frame that has it to the sinks,
+// instead of leaving the response body as its only copy.
+type ReasonRecorder interface {
+	RecordFailureReason(code, message string)
+}
+
+// RecordFailureReason gives w the code and the SANITIZED message that were just written,
+// and is a no-op for a plain ResponseWriter. Producers call it; nothing re-reads the
+// response body to recover what the producer already held.
+func RecordFailureReason(w http.ResponseWriter, code, message string) {
+	if recorder, ok := w.(ReasonRecorder); ok {
+		recorder.RecordFailureReason(code, message)
+	}
+}
+
 type StatusWriter struct {
 	http.ResponseWriter
 	Code int
+
+	FailureCode    string
+	FailureMessage string
+}
+
+// RecordFailureReason keeps the reason and passes it OUTWARD along the wrapper chain: the
+// request path stacks several StatusWriters (activity outside, logging inside), and each
+// one is a sink that needs the same fact. Whichever writer the handler holds, every
+// StatusWriter wrapped around it ends up with the reason.
+func (w *StatusWriter) RecordFailureReason(code, message string) {
+	w.FailureCode, w.FailureMessage = code, message
+	RecordFailureReason(w.ResponseWriter, code, message)
 }
 
 func (w *StatusWriter) Unwrap() http.ResponseWriter {

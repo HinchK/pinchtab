@@ -56,6 +56,8 @@ type Event struct {
 	Action      string                    `json:"action,omitempty"`
 	Route       *browserops.RouteMetadata `json:"route,omitempty"`
 	Ref         string                    `json:"ref,omitempty"`
+	Code        string                    `json:"code,omitempty"`
+	Error       string                    `json:"error,omitempty"`
 }
 
 type Filter struct {

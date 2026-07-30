@@ -116,6 +116,8 @@ export interface ActivityLogEvent {
   action?: string;
   route?: RouteMetadata;
   ref?: string;
+  code?: string;
+  error?: string;
 }
 export interface ActivityLogResponse {
   events: ActivityLogEvent[];

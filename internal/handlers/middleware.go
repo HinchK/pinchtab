@@ -33,6 +33,20 @@ const (
 	backgroundHealthHeader  = "PinchTab-Background-Marker"
 )
 
+// requestLogLevel maps the answered status onto a severity an operator can route on. Every
+// request used to log at Info, so a server returning 500s looked exactly like a healthy one
+// to any level-based alert, dashboard or log shipper — `grep level=ERROR` found nothing.
+func requestLogLevel(status int) slog.Level {
+	switch {
+	case status >= 500:
+		return slog.LevelError
+	case status >= 400:
+		return slog.LevelWarn
+	default:
+		return slog.LevelInfo
+	}
+}
+
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
@@ -50,15 +64,21 @@ func LoggingMiddleware(next http.Handler) http.Handler {
 				Path:      r.URL.Path,
 				Status:    sw.Code,
 				Type:      "http_error",
+				Code:      sw.FailureCode,
+				Message:   sw.FailureMessage,
 			})
 		}
-		slog.Info("request",
+		attrs := []any{
 			"requestId", w.Header().Get("X-Request-Id"),
 			"method", r.Method,
 			"path", r.URL.Path,
 			"status", sw.Code,
 			"ms", ms,
-		)
+		}
+		if sw.FailureMessage != "" {
+			attrs = append(attrs, "code", sw.FailureCode, "error", sw.FailureMessage)
+		}
+		slog.Log(r.Context(), requestLogLevel(sw.Code), "request", attrs...)
 	})
 }
 

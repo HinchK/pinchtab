@@ -175,9 +175,10 @@ func (h *Handlers) resolveExportContext(w http.ResponseWriter, r *http.Request, 
 	}
 	factory := observe.GetFormat(formatName)
 	if factory == nil {
-		httpx.JSON(w, 400, map[string]any{
+		message := fmt.Sprintf("unknown export format %q", formatName)
+		httpx.JSONError(w, 400, "unknown_format", message, map[string]any{
 			"code":      "unknown_format",
-			"error":     fmt.Sprintf("unknown export format %q", formatName),
+			"error":     message,
 			"available": observe.ListFormats(),
 		})
 		return exportContext{}, false

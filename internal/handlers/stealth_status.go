@@ -9,10 +9,7 @@ import (
 func (h *Handlers) HandleStealthStatus(w http.ResponseWriter, r *http.Request) {
 	status := h.Bridge.StealthStatus()
 	if status == nil {
-		httpx.JSON(w, 503, map[string]any{
-			"status": "error",
-			"reason": "stealth bundle unavailable",
-		})
+		writeUnavailable(w, 503, "stealth_unavailable", "stealth bundle unavailable")
 		return
 	}
 	if tabID := r.URL.Query().Get("tabId"); tabID != "" {

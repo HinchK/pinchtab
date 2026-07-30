@@ -119,6 +119,8 @@ type ActivityLogEvent struct {
 	Action      string         `json:"action,omitempty"`
 	Route       *RouteMetadata `json:"route,omitempty"`
 	Ref         string         `json:"ref,omitempty"`
+	Code        string         `json:"code,omitempty"`
+	Error       string         `json:"error,omitempty"`
 }
 
 type ActivityLogResponse struct {
