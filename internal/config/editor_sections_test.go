@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pinchtab/pinchtab/internal/autosolver"
 	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 )
 
@@ -118,9 +119,9 @@ func TestEveryKeyGatedSolverConfigKeyResolves(t *testing.T) {
 
 	var fc FileConfig
 	for _, name := range names {
-		gated, ok := catalog.KeyGatedNamed(name)
+		gated, ok := autosolver.KeyGatedSolverNamed(name)
 		if !ok {
-			t.Errorf("catalog.KeyGated lists %q but KeyGatedNamed does not know it", name)
+			t.Errorf("catalog.KeyGated lists %q but autosolver.KeyGatedSolverNamed does not know it", name)
 			continue
 		}
 		if gated.ConfigKey == "" {

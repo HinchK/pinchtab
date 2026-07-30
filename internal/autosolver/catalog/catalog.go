@@ -17,12 +17,62 @@ import (
 // too: their name is always valid, and whether they register is a separate
 // question answered by the API key.
 func registrable() []autosolver.Solver {
+	return buildAll(autosolver.Config{})
+}
+
+// buildAll constructs every solver type, handing each key-gated one the key cfg
+// carries for its own name. This is the only place a solver type is constructed with
+// its key, so the handler that used to do it per solver no longer knows any of them.
+func buildAll(cfg autosolver.Config) []autosolver.Solver {
 	return []autosolver.Solver{
 		&solvers.Cloudflare{},
 		&solvers.JSChallenge{},
-		external.NewCapsolver(external.CapsolverConfig{}),
-		external.NewTwoCaptcha(external.TwoCaptchaConfig{}),
+		external.NewCapsolver(external.CapsolverConfig{APIKey: cfg.APIKey(autosolver.CapsolverSolverName)}),
+		external.NewTwoCaptcha(external.TwoCaptchaConfig{APIKey: cfg.APIKey(autosolver.TwoCaptchaSolverName)}),
 	}
+}
+
+// Registrable is every solver that may enter the registry for this config: the
+// unconditional ones, plus each key-gated one whose key is set. Registering a gated
+// solver without its key is what this drops — the registry would accept it and every
+// request to it would fail at the provider.
+func Registrable(cfg autosolver.Config) []autosolver.Solver {
+	out := make([]autosolver.Solver, 0, len(registrable()))
+	for _, solver := range buildAll(cfg) {
+		if _, gated := autosolver.KeyGatedSolverNamed(solver.Name()); gated && cfg.APIKey(solver.Name()) == "" {
+			continue
+		}
+		out = append(out, solver)
+	}
+	return out
+}
+
+// Available answers the question the API asks: which solver names can actually run
+// under this config. It is the single owner of that rule — the unconditional set plus
+// every key-gated name whose key is set — so a caller never re-derives it from the
+// key fields, which is how the same rule came to be spelled three times.
+//
+// Derived from KeyGatedSolvers rather than from the constructed solvers, so a gated
+// solver added to that set is answered here without a registry instance existing yet.
+func Available(cfg autosolver.Config) []string {
+	names := AlwaysRegistered()
+	for _, gated := range autosolver.KeyGatedSolvers() {
+		if cfg.APIKey(gated.Name) != "" {
+			names = append(names, gated.Name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// IsAvailable reports whether one name can run under this config.
+func IsAvailable(name string, cfg autosolver.Config) bool {
+	for _, available := range Available(cfg) {
+		if available == name {
+			return true
+		}
+	}
+	return false
 }
 
 // KeyGated reports the solvers that only register when their API key is set.
@@ -75,11 +125,4 @@ func IsKnown(name string) bool {
 		}
 	}
 	return false
-}
-
-// KeyGatedNamed reports the key-gated solver answering to this name together with
-// the config key that enables it. A caller that has already found the name
-// unavailable uses this to tell a missing key from an unknown name.
-func KeyGatedNamed(name string) (autosolver.KeyGatedSolver, bool) {
-	return autosolver.KeyGatedSolverNamed(name)
 }

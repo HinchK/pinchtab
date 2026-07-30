@@ -15,11 +15,26 @@ type KeyGatedSolver struct {
 	ConfigKey string
 }
 
+var keyGatedSolvers = []KeyGatedSolver{
+	{Name: CapsolverSolverName, ConfigKey: "autoSolver.external.capsolverKey"},
+	{Name: TwoCaptchaSolverName, ConfigKey: "autoSolver.external.twoCaptchaKey"},
+}
+
+// KeyGatedSolvers returns a copy, so a caller iterating it cannot edit the set.
 func KeyGatedSolvers() []KeyGatedSolver {
-	return []KeyGatedSolver{
-		{Name: CapsolverSolverName, ConfigKey: "autoSolver.external.capsolverKey"},
-		{Name: TwoCaptchaSolverName, ConfigKey: "autoSolver.external.twoCaptchaKey"},
-	}
+	return append([]KeyGatedSolver(nil), keyGatedSolvers...)
+}
+
+// SetKeyGatedSolversForTest replaces the set and returns a restore function. It is
+// exported production code on purpose: the rule under test is "adding a gated solver
+// changes availability without anyone editing the availability code", and that claim
+// cannot be made from a fixture — only by adding one to the real set the real callers
+// read. Every caller reads it through KeyGatedSolvers, so the substitution reaches all
+// of them.
+func SetKeyGatedSolversForTest(gated []KeyGatedSolver) (restore func()) {
+	previous := keyGatedSolvers
+	keyGatedSolvers = append([]KeyGatedSolver(nil), gated...)
+	return func() { keyGatedSolvers = previous }
 }
 
 // KeyGatedSolverNamed reports the key-gated solver answering to this name, so a

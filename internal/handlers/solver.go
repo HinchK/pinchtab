@@ -12,7 +12,6 @@ import (
 	"github.com/pinchtab/pinchtab/internal/activity"
 	coreautosolver "github.com/pinchtab/pinchtab/internal/autosolver"
 	"github.com/pinchtab/pinchtab/internal/autosolver/adapters"
-	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
@@ -235,7 +234,7 @@ func (h *Handlers) HandleAutoSolverConfig(w http.ResponseWriter, r *http.Request
 // rather than being reported as a typo. Config validation deliberately accepts
 // the same name without its key; see docs/endpoints.md.
 func (h *Handlers) rejectUnavailableSolver(w http.ResponseWriter, name string) {
-	if gated, ok := catalog.KeyGatedNamed(name); ok {
+	if gated, ok := coreautosolver.KeyGatedSolverNamed(name); ok {
 		httpx.ErrorCode(w, 400, "solver_key_missing",
 			fmt.Sprintf("solver %q is configured but its API key is not set; set %s to use it", gated.Name, gated.ConfigKey),
 			false, nil)

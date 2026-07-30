@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	coreautosolver "github.com/pinchtab/pinchtab/internal/autosolver"
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -246,25 +247,68 @@ func TestDeriveChallengeType_NilPage(t *testing.T) {
 	}
 }
 
-// autosolver.SemanticSolverName is the single owner of the semantic stage's name.
-// A bare literal here compiles and passes every behavioural test, so the guard is
-// structural: it fails if the literal comes back.
-func TestSolverHandlerSpellsSemanticThroughItsOwner(t *testing.T) {
-	raw, err := os.ReadFile("solver.go")
+// Every solver name has an owner — a solver type's Name(), or the exported constant
+// for the semantic stage — and this package must spell all of them through it. The
+// banned set is DERIVED from catalog.Names(), so a solver added later is covered here
+// without anyone remembering to extend a list, and the scan covers every non-test file
+// in the package rather than the one file that happened to be dirty: a guard reading a
+// single file reports the rule as enforced while its siblings go unchecked.
+func TestNoHandlerSpellsASolverNameAsALiteral(t *testing.T) {
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(raw) == 0 {
-		t.Fatal("solver.go read empty — this guard is checking nothing")
+
+	names := catalog.Names()
+	if len(names) < 2 {
+		t.Fatalf("catalog.Names() returned %v; the banned set is derived from it, so this guard would check almost nothing", names)
 	}
 
-	literal := `"` + coreautosolver.SemanticSolverName + `"`
-	if strings.Contains(string(raw), literal) {
-		t.Errorf("solver.go spells %s as a literal; use coreautosolver.SemanticSolverName", literal)
+	scanned, referencing := 0, 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(name) // #nosec G304 -- files listed from this package's own directory.
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned++
+		src := codeWithoutCommentLines(string(body))
+		if strings.Contains(src, "coreautosolver.SemanticSolverName") ||
+			strings.Contains(src, "coreautosolver.CapsolverSolverName") ||
+			strings.Contains(src, "coreautosolver.TwoCaptchaSolverName") {
+			referencing++
+		}
+		for _, solver := range names {
+			if strings.Contains(src, `"`+solver+`"`) {
+				t.Errorf("%s spells the solver name %q as a literal; use the constant that owns it (internal/autosolver) so the two cannot drift", name, solver)
+			}
+		}
 	}
-	if !strings.Contains(string(raw), "coreautosolver.SemanticSolverName") {
-		t.Errorf("solver.go no longer references coreautosolver.SemanticSolverName; the guard above would pass vacuously")
+
+	if scanned < 2 {
+		t.Fatalf("scanned %d non-test files in this package; the census read nothing", scanned)
 	}
+	if referencing == 0 {
+		t.Error("no file in this package references a solver-name constant; the ban above would pass vacuously on a package that stopped naming solvers at all")
+	}
+}
+
+// codeWithoutCommentLines drops whole-line comments so a doc example or a curl snippet
+// naming a solver is not read as code. A trailing comment is NOT stripped: cutting at
+// the first "//" would also cut inside a string holding a URL, and a solver name spelled
+// after one is still a spelling worth catching.
+func codeWithoutCommentLines(src string) string {
+	var kept []string
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
 }
 
 func solveErrorPayload(t *testing.T, w *httptest.ResponseRecorder) (code, message string) {
