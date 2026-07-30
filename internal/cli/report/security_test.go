@@ -1,6 +1,8 @@
 package report
 
 import (
+	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -269,13 +271,13 @@ func TestApplyRecommendedSecurityDefaults(t *testing.T) {
 	}
 }
 
-func TestApplyRecommendedSecurityDefaults_GeneratesTokenWhenMissing(t *testing.T) {
+func TestApplyRecommendedSecurityDefaults_LeavesAMissingTokenAlone(t *testing.T) {
 	fc := &config.FileConfig{}
 
 	applyRecommendedSecurityDefaults(fc)
 
-	if fc.Server.Token == "" {
-		t.Fatalf("expected generated token, got empty")
+	if fc.Server.Token != "" {
+		t.Fatalf("applying security defaults generated a token %q; whether one may be added to an existing config is ProvisionFileToken's decision, and generating here bypasses the operator-config refusal", fc.Server.Token)
 	}
 }
 
@@ -343,10 +345,43 @@ func TestRestoreSecurityDefaults(t *testing.T) {
 	}
 }
 
-func TestRestoreSecurityDefaults_TokenOnlyChangeIsSaved(t *testing.T) {
+func TestRestoreSecurityDefaults_RefusesToProvisionIntoAnOperatorConfig(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, "config.json")
 	t.Setenv("PINCHTAB_CONFIG", configPath)
+
+	fc := config.DefaultFileConfig()
+	fc.Server.Token = ""
+	if err := config.SaveFileConfig(&fc, configPath); err != nil {
+		t.Fatalf("SaveFileConfig() error = %v", err)
+	}
+	before, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = restoreSecurityDefaults()
+	if !errors.Is(err, config.ErrOperatorConfigToken) {
+		t.Fatalf("restoreSecurityDefaults() error = %v, want the operator-config refusal; this path used to generate a credential into the operator's file and discard the error", err)
+	}
+
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatalf("the operator's config changed on a refused restore:\nbefore: %s\nafter:  %s", before, after)
+	}
+}
+
+func TestRestoreSecurityDefaults_TokenOnlyChangeOnTheDefaultPathIsSaved(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("PINCHTAB_CONFIG", "")
+	configPath := filepath.Join(tmpHome, ".pinchtab", "config.json")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	fc := config.DefaultFileConfig()
 	fc.Server.Token = ""
@@ -367,6 +402,6 @@ func TestRestoreSecurityDefaults_TokenOnlyChangeIsSaved(t *testing.T) {
 		t.Fatalf("LoadFileConfig() error = %v", err)
 	}
 	if loaded.Server.Token == "" {
-		t.Fatalf("expected generated token to be persisted")
+		t.Fatalf("expected generated token to be persisted on the default path")
 	}
 }

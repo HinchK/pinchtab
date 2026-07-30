@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -14,8 +15,10 @@ import (
 // Returns true if the user completed setup, false if they cancelled.
 func runSecurityWizard(cfg *config.FileConfig, configPath string, isNew bool) bool {
 	interactive := isInteractiveTerminal()
-	tokenGenerated, err := config.EnsureFileToken(cfg)
-	if err != nil {
+	tokenGenerated, err := config.ProvisionFileToken(cfg, configPath)
+	if errors.Is(err, config.ErrOperatorConfigToken) {
+		tokenGenerated = false
+	} else if err != nil {
 		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("failed to generate auth token: %v", err)))
 		return false
 	}
@@ -25,9 +28,9 @@ func runSecurityWizard(cfg *config.FileConfig, configPath string, isNew bool) bo
 	}
 
 	if isNew {
-		return runFullWizard(cfg, configPath)
+		return runFullWizard(cfg, configPath, tokenGenerated)
 	}
-	return runUpgradeNotice(cfg, configPath)
+	return runUpgradeNotice(cfg, configPath, tokenGenerated)
 }
 
 // A non-interactive start writes the config ONLY when a token had to be generated.
@@ -57,10 +60,10 @@ func runNonInteractiveSetup(cfg *config.FileConfig, configPath string, isNew, to
 		fmt.Println()
 	}
 
-	return recordConfigVersion(cfg, configPath, true)
+	return recordConfigVersion(cfg, configPath, true, tokenGenerated)
 }
 
-func runFullWizard(cfg *config.FileConfig, configPath string) bool {
+func runFullWizard(cfg *config.FileConfig, configPath string, tokenGenerated bool) bool {
 	fmt.Println()
 	fmt.Println(cli.StyleStdout(cli.HeadingStyle, "🛡️  Know your config"))
 	fmt.Println()
@@ -111,6 +114,9 @@ func runFullWizard(cfg *config.FileConfig, configPath string) bool {
 	fmt.Println()
 
 	cfg.ConfigVersion = config.CurrentConfigVersion
+	if tokenGenerated {
+		fmt.Fprintf(os.Stderr, "pinchtab: generated server.token in %s\n", configPath)
+	}
 	if err := config.SaveFileConfig(cfg, configPath); err != nil {
 		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("failed to save config: %v", err)))
 		return false
@@ -122,7 +128,7 @@ func runFullWizard(cfg *config.FileConfig, configPath string) bool {
 	return true
 }
 
-func runUpgradeNotice(cfg *config.FileConfig, configPath string) bool {
+func runUpgradeNotice(cfg *config.FileConfig, configPath string, tokenGenerated bool) bool {
 	fmt.Println()
 	fmt.Println(cli.StyleStdout(cli.HeadingStyle, "🛡️  Config update (v"+config.CurrentConfigVersion+")"))
 	fmt.Println()
@@ -137,7 +143,7 @@ func runUpgradeNotice(cfg *config.FileConfig, configPath string) bool {
 	fmt.Println("   Run " + cli.StyleStdout(cli.CommandStyle, "pinchtab security") + " to review all settings.")
 	fmt.Println()
 
-	return recordConfigVersion(cfg, configPath, false)
+	return recordConfigVersion(cfg, configPath, false, tokenGenerated)
 }
 
 // securityPosture is the single source of truth for a wizard security choice:
@@ -252,7 +258,7 @@ func orDefault(val, fallback string) string {
 }
 
 // recordConfigVersion is the only write a plain `pinchtab server` start performs. It
-// exists to stamp configVersion (plus any token EnsureFileToken generated), and it used
+// exists to stamp configVersion (plus any token ProvisionFileToken generated), and it used
 // to be silent and to marshal the whole defaults-populated struct — which is how a
 // 50-byte config became a 3.8kB frozen snapshot of one build's defaults. SaveFileConfig
 // now writes only changed keys; announce says it out loud on the startup path, where
@@ -260,10 +266,15 @@ func orDefault(val, fallback string) string {
 //
 // The error is reported rather than discarded either way: a config the user marked
 // read-only must not be replaced, and swallowing EACCES here is what made that silent.
-func recordConfigVersion(cfg *config.FileConfig, configPath string, announce bool) bool {
+func recordConfigVersion(cfg *config.FileConfig, configPath string, announce, tokenGenerated bool) bool {
 	cfg.ConfigVersion = config.CurrentConfigVersion
-	if announce {
+	switch {
+	case announce && tokenGenerated:
+		fmt.Fprintf(os.Stderr, "pinchtab: recording configVersion %s and a generated server.token in %s\n", config.CurrentConfigVersion, configPath)
+	case announce:
 		fmt.Fprintf(os.Stderr, "pinchtab: recording configVersion %s in %s\n", config.CurrentConfigVersion, configPath)
+	case tokenGenerated:
+		fmt.Fprintf(os.Stderr, "pinchtab: generated server.token in %s\n", configPath)
 	}
 	if err := config.SaveFileConfig(cfg, configPath); err != nil {
 		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("pinchtab: could not record configVersion in %s: %v", configPath, err)))

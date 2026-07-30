@@ -54,6 +54,7 @@ func handleConfigInit() {
 	}
 
 	fmt.Printf("Config file created at %s\n", configPath)
+	fmt.Fprintf(os.Stderr, "pinchtab: generated server.token in %s\n", configPath)
 }
 
 func handleConfigPath() {

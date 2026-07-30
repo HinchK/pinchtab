@@ -86,6 +86,9 @@ func InitDefaultConfig(path string) error {
 	}
 
 	fc := config.DefaultFileConfig()
+	// EnsureFileToken directly, not ProvisionFileToken: config init materialises a
+	// FRESH default file, so there is no operator-authored content to protect and
+	// generating a token is the whole point. This is the one recorded exemption.
 	if _, err := config.EnsureFileToken(&fc); err != nil {
 		return fmt.Errorf("generate auth token: %w", err)
 	}

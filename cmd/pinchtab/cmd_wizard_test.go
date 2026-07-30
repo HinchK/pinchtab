@@ -39,7 +39,7 @@ func TestRunUpgradeNoticeDoesNotPrintToken(t *testing.T) {
 	cfg.Server.Token = "very-secret-token-value"
 
 	output := captureStdout(t, func() {
-		if !runUpgradeNotice(&cfg, configPath) {
+		if !runUpgradeNotice(&cfg, configPath, false) {
 			t.Fatal("runUpgradeNotice() = false")
 		}
 	})
@@ -159,7 +159,7 @@ func TestRecordConfigVersionAnnouncesItselfAndReportsAFailedWrite(t *testing.T) 
 	}
 
 	announced := captureStderr(t, func() {
-		if !recordConfigVersion(cfg, path, true) {
+		if !recordConfigVersion(cfg, path, true, false) {
 			t.Error("recordConfigVersion() = false for a writable config")
 		}
 	})
@@ -184,7 +184,7 @@ func TestRecordConfigVersionAnnouncesItselfAndReportsAFailedWrite(t *testing.T) 
 		t.Fatal(err)
 	}
 	reported := captureStderr(t, func() {
-		if recordConfigVersion(lockedCfg, locked, false) {
+		if recordConfigVersion(lockedCfg, locked, false, false) {
 			t.Error("recordConfigVersion() = true against a read-only config; the failure must not be swallowed")
 		}
 	})

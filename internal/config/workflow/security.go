@@ -3,6 +3,7 @@ package workflow
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"reflect"
 	"slices"
 	"strings"
@@ -17,7 +18,6 @@ func ApplyRecommendedSecurityDefaults(fc *config.FileConfig) {
 	}
 	fc.Server.Bind = defaults.Server.Bind
 	fc.Security = defaults.Security
-	_, _ = config.EnsureFileToken(fc)
 }
 
 func RestoreSecurityDefaults() (string, bool, error) {
@@ -27,12 +27,19 @@ func RestoreSecurityDefaults() (string, bool, error) {
 	}
 	before := securityDefaultsSnapshot(fc)
 	ApplyRecommendedSecurityDefaults(fc)
+	tokenGenerated, err := config.ProvisionFileToken(fc, configPath)
+	if err != nil {
+		return "", false, err
+	}
 	after := securityDefaultsSnapshot(fc)
 	if reflect.DeepEqual(before, after) {
 		return configPath, false, nil
 	}
 	if err := config.SaveFileConfig(fc, configPath); err != nil {
 		return "", false, err
+	}
+	if tokenGenerated {
+		fmt.Fprintf(os.Stderr, "pinchtab: generated server.token in %s\n", configPath)
 	}
 	return configPath, true, nil
 }

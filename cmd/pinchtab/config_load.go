@@ -56,17 +56,9 @@ func ensureMandatoryToken() error {
 		return nil
 	}
 
-	if strings.TrimSpace(os.Getenv("PINCHTAB_CONFIG")) != "" {
-		if _, statErr := os.Stat(configPath); statErr == nil {
-			return fmt.Errorf("server token is required in %s when PINCHTAB_CONFIG is set; add server.token or set PINCHTAB_TOKEN", configPath)
-		} else if !os.IsNotExist(statErr) {
-			return fmt.Errorf("stat config file: %w", statErr)
-		}
-	}
-
-	changed, err := config.EnsureFileToken(fc)
+	changed, err := config.ProvisionFileToken(fc, configPath)
 	if err != nil {
-		return fmt.Errorf("ensure server token: %w", err)
+		return err
 	}
 	if !changed {
 		return nil
@@ -75,5 +67,6 @@ func ensureMandatoryToken() error {
 	if err := config.SaveFileConfig(fc, configPath); err != nil {
 		return fmt.Errorf("save config file: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "pinchtab: generated server.token in %s\n", configPath)
 	return nil
 }
