@@ -245,6 +245,12 @@ func (h *Handlers) HandleCapture(w http.ResponseWriter, r *http.Request) {
 			"nodes":     result.Nodes,
 		},
 	}
+	// The scope disclosure, from the same owner the other scoped readers use and built from
+	// the frame this capture actually filtered its nodes to. epoch.frameId cannot serve
+	// here: it is the frame TREE's root, assigned from the pre-capture frame tree and
+	// identical whether or not a scope is set, so a reader checking it while scoped is told
+	// the content came from the main document. Absent when unscoped, like the others.
+	h.frameDisclosureFor(tCtx, resolvedTabID, opts.ScopeFrameID).attach(resp)
 	if idpiResult.Threat {
 		resp["idpiWarning"] = idpiResult.Reason
 	}

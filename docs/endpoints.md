@@ -294,9 +294,15 @@ from:
   frame id is not. Without a known ref it names a shortened frame id.
 - The object is the one `GET /frame` returns under `frame`, plus `frameTitle`.
 
-`/capture` reports the same frame id as `epoch.frameId`. That key is unchanged and stays
-part of the epoch contract — it pairs a capture with the DOM epoch it was taken against
-rather than disclosing a scope — so the two carry the same value under different contracts.
+`/capture` publishes the same `frame` object on a scoped read, for the same reason: its
+snapshot half is filtered to the scoped frame while top-level `url` and `title` name the tab
+document.
+
+`epoch.frameId` is **not** the scope and never was. It is the frame tree's ROOT id, taken
+before the capture to pair the image with the DOM epoch it was shot against, and it holds
+the same value whether or not a scope is set — so a scoped caller reading it is told the
+content came from the main document. Read `frame.frameId` for the scope and `epoch.frameId`
+for the epoch; they answer different questions and only agree when the tab is unscoped.
 
 `/html` and `/styles` already disclose their frame as a top-level `frameId`, and their `url`
 and `title` come from the frame's own document rather than the tab's, so a scoped read there

@@ -476,3 +476,103 @@ func TestAOneShotFrameReadDisclosesTheFrameItReadNotTheStoredScope(t *testing.T)
 		t.Errorf("frame.frameTitle = %v, want the document the content actually came from", frame["frameTitle"])
 	}
 }
+
+// captureEnvelope drives the real /capture and returns the decoded response. A local Chrome
+// that cannot screenshot skips rather than fails, the way the other capture tests do.
+func captureEnvelope(t *testing.T, h *Handlers, tabID string) map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	h.HandleCapture(rec, httptest.NewRequest(http.MethodGet, "/capture?output=inline&format=png&tabId="+tabID, nil))
+	if rec.Code != http.StatusOK {
+		if strings.Contains(rec.Body.String(), "Unable to capture screenshot") {
+			t.Skipf("local Chrome cannot capture screenshots: %s", rec.Body.String())
+		}
+		t.Fatalf("capture status %d: %s", rec.Code, rec.Body.String())
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode capture: %v (%s)", err, rec.Body.String())
+	}
+	return envelope
+}
+
+func captureSnapshotNodeCount(t *testing.T, envelope map[string]any) int {
+	t.Helper()
+	snapshot, ok := envelope["snapshot"].(map[string]any)
+	if !ok {
+		t.Fatalf("capture published no snapshot: %v", envelope)
+	}
+	count, ok := snapshot["nodeCount"].(float64)
+	if !ok {
+		t.Fatalf("capture snapshot has no nodeCount: %v", snapshot)
+	}
+	return int(count)
+}
+
+// /capture is the third scoped reader, and the one whose silence was worst: its snapshot
+// half is filtered to the scoped frame while url and title name the parent, and the single
+// frame-shaped key in the payload — epoch.frameId — is the frame tree's ROOT and does not
+// move when the scope does. A reader who checked it while scoped was told the content came
+// from the main document, which is worse than the silence this card started with.
+//
+// The epoch assertion is the one that would have caught that: it holds epoch.frameId
+// IDENTICAL across the two reads, so it cannot be mistaken for a disclosure again.
+func TestAScopedCaptureDisclosesTheFrameWhileItsEpochIdStaysTheMainFrame(t *testing.T) {
+	h, tabID, pageURL := newFrameDisclosureFixture(t)
+
+	unscoped := captureEnvelope(t, h, tabID)
+	if _, ok := unscoped["frame"]; ok {
+		t.Errorf("an unscoped capture published a frame object: %v", unscoped["frame"])
+	}
+	unscopedNodes := captureSnapshotNodeCount(t, unscoped)
+
+	frameRes := httptest.NewRecorder()
+	h.HandleFrame(frameRes, httptest.NewRequest("POST", "/frame?tabId="+tabID, strings.NewReader(`{"target":"inner.html"}`)))
+	if frameRes.Code != http.StatusOK {
+		t.Fatalf("frame scope: status %d body=%s", frameRes.Code, frameRes.Body.String())
+	}
+
+	scoped := captureEnvelope(t, h, tabID)
+	if scopedNodes := captureSnapshotNodeCount(t, scoped); scopedNodes >= unscopedNodes {
+		t.Fatalf("capture returned %d nodes scoped and %d unscoped; the scope did not take effect, so this test proves nothing", scopedNodes, unscopedNodes)
+	}
+
+	frame, ok := scoped["frame"].(map[string]any)
+	if !ok {
+		t.Fatalf("a scoped capture published no frame object, so the fragment it returned is attributed to the parent alone: %v", scoped)
+	}
+	if frame["frameTitle"] != "Inner" {
+		t.Errorf("frame.frameTitle = %v, want the child document's title", frame["frameTitle"])
+	}
+	if url, _ := frame["frameUrl"].(string); !strings.HasSuffix(url, "/inner.html") {
+		t.Errorf("frame.frameUrl = %v, want the child document's url", frame["frameUrl"])
+	}
+	if scoped["title"] != "Outer" || !strings.HasPrefix(scoped["url"].(string), pageURL) {
+		t.Errorf("a scoped capture re-pointed the tab's own url/title: url=%v title=%v", scoped["url"], scoped["title"])
+	}
+
+	// epoch.frameId pairs the image with the DOM epoch it was shot against. It is the same
+	// value scoped or not, which is exactly why it cannot serve as the scope disclosure —
+	// and why the docs sentence that said it could was wrong.
+	unscopedEpoch := epochFrameID(t, unscoped)
+	scopedEpoch := epochFrameID(t, scoped)
+	if unscopedEpoch != scopedEpoch {
+		t.Errorf("epoch.frameId moved with the scope (%s -> %s); it is the epoch contract, not the scope", unscopedEpoch, scopedEpoch)
+	}
+	if scopedEpoch == frame["frameId"] {
+		t.Errorf("epoch.frameId equals the scoped frame id (%s); the fixture is not distinguishing the two contracts", scopedEpoch)
+	}
+}
+
+func epochFrameID(t *testing.T, envelope map[string]any) string {
+	t.Helper()
+	epoch, ok := envelope["epoch"].(map[string]any)
+	if !ok {
+		t.Fatalf("capture published no epoch block: %v", envelope)
+	}
+	id, _ := epoch["frameId"].(string)
+	if id == "" {
+		t.Fatalf("capture epoch carries no frameId: %v", epoch)
+	}
+	return id
+}
