@@ -367,11 +367,11 @@ if [ "$SCOPE" = "all" ] || [ "$SCOPE" = "unit" ]; then
   fi
 
   if [ -n "$GOTESTSUM_BIN" ]; then
-    # Hide the skipped section (print_skipped_tests renders it below) but NOT the
-    # output section: hiding output reduces a failure to "=== FAIL: pkg Test (0.9s)"
-    # with no expected-vs-actual, which is unreadable in CI where the log is the only
-    # artifact — and it is why two intermittent screenshot failures were repeatedly
-    # attributed instead of diagnosed.
+    # Hide the skipped section (print_skipped_tests renders it below with each skip
+    # reason attached) but NOT the output section, which carries the expected-vs-actual
+    # under each failing test name. The rule that no invocation may hide output is
+    # enforced for the whole repo by TestNoGotestsumInvocationHidesTheOutputSummary;
+    # this file cannot speak for CI, which invokes gotestsum itself.
     if ! "$GOTESTSUM_BIN" --format=pkgname --hide-summary=skipped --jsonfile "$UNIT_JSON" -- -p 1 -count=1 ./...; then
       fail "test:🔬:go unit"
       print_skipped_tests "$UNIT_JSON"
