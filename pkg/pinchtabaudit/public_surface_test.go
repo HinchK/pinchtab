@@ -62,6 +62,12 @@ func TestPublicSurfaceIsPinned(t *testing.T) {
 
 // A rename that keeps the same shape is the change most likely to slip through review, so it
 // is the control this pin is proved with: the guard must red on the NAME alone.
+//
+// It is also the only thing standing between a weakened renderer and a permanently green pin.
+// Drop the tag from the render, run -update, and the pin agrees with itself forever while a
+// tag change stops announcing anything — measured, not supposed. So the sample must cover one
+// instance of EVERY branch the renderer emits, not merely a representative few: a branch with
+// no sample here can be deleted from the render and baked into the pin by one -update.
 func TestPublicSurfaceRenderIncludesNamesTypesAndTags(t *testing.T) {
 	rendered := string(renderPublicSurface(t))
 
@@ -70,6 +76,7 @@ func TestPublicSurfaceRenderIncludesNamesTypesAndTags(t *testing.T) {
 		"SchemaVersion string `json:\"schemaVersion\"`",
 		"Input AuditReportInput `json:\"input\"`",
 		"func (*Client) EnrichPage",
+		"const DefaultTimeout",
 	} {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the rendered surface is missing %q, so a change to it could not red this pin:\n%s", want, rendered)
