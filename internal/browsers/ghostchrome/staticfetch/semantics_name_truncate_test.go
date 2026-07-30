@@ -16,8 +16,10 @@ import (
 // capped) and the TextContent path when it is under the old budget (so truncation
 // never fired), and json.Marshal silently substitutes U+FFFD rather than erroring.
 // The cap only ever guaranteed WHERE a cut landed, never that the input was valid,
-// so that defect predates and outlives it and is filed as its own card rather than
-// smuggled in here.
+// so that defect predates and outlives it and belongs on its own card rather than
+// smuggled in here. It is NOT filed: the board's proposal column is paused, and the
+// ready-to-file text lives in the review comments on the change that deleted this
+// test. Do not read this note as evidence a card exists.
 
 func namedSnapshotNode(t *testing.T, body, marker string) string {
 	t.Helper()
