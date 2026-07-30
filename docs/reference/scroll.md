@@ -27,6 +27,9 @@ Notes:
 - give either the flags or one positional, never both, and only one positional is accepted —
   so `--tab` stays a flag and must not be placed after `--`, where it would be read as a
   positional
+- a delta of zero on both axes is refused: it reaches the server as "no delta given", which
+  scrolls down by the default 120px rather than doing nothing. An explicit zero on one axis
+  (`--dy 0 --dx 500`) is a real scroll and passes through
 
 - use `--snap` to output an interactive snapshot after scrolling
 - use `--snap-diff` to output only the changes from the previous snapshot
