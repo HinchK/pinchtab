@@ -79,6 +79,7 @@ All element-action tools accept the unified `selector` and the legacy aliases `r
 | `pinchtab_close_tab` | `tabId` optional | Closes the given tab, or the current/default tab when omitted |
 | `pinchtab_health` | none | Checks server health |
 | `pinchtab_cookies` | `tabId` | Reads cookies for a tab; requires `security.allowCookies` |
+| `pinchtab_cookies_set` | `name`, `value` required; `url`, `domain`, `path`, `sameSite`, `secure`, `httpOnly`, `expires`, `tabId` optional | Sets one cookie for session reuse; `url` defaults to the tab's current page and an empty `value` blanks the cookie; requires `security.allowCookies` |
 | `pinchtab_connect_profile` | `profile` required | Returns the connect URL and instance status for a profile |
 
 ## Wait Utilities

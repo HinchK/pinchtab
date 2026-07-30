@@ -91,6 +91,7 @@ All tool names are prefixed with `pinchtab_`.
 | `pinchtab_close_tab` | Close a tab. Optional: `tabId` (uses current/default tab when omitted). |
 | `pinchtab_health` | Check server health. No params. |
 | `pinchtab_cookies` | Get cookies for current page. Optional: `tabId`. Requires `security.allowCookies: true`; values are session credentials and must not be logged or shared. |
+| `pinchtab_cookies_set` | Set one cookie on the current page (session reuse). Required: `name`, `value`. Optional: `url` (defaults to the tab's current page), `domain`, `path`, `sameSite`, `secure`, `httpOnly`, `expires`, `tabId`. An empty `value` blanks the cookie. Requires `security.allowCookies: true`. |
 | `pinchtab_connect_profile` | Return connect status for a profile. Required: `profile`. |
 
 ### Utility

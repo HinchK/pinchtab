@@ -320,6 +320,7 @@ func configureBrowserFlags() {
 		cacheClearCmd,
 		cacheStatusCmd,
 		cookiesClearCmd,
+		cookiesSetCmd,
 		frameCmd,
 		networkCmd,
 		setViewportCmd,

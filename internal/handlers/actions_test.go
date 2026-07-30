@@ -373,7 +373,9 @@ func TestHandleSetCookies_EmptyURL(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("failed to unmarshal response: %v", err)
 	}
-	if resp["error"] != "url is required" {
+	// The mock tab reports no current URL, so there is nothing to default to and the
+	// refusal says which of the two it is.
+	if !strings.HasPrefix(resp["error"], "url is required") {
 		t.Errorf("expected url required error, got %v", resp["error"])
 	}
 }

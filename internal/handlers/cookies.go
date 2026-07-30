@@ -142,7 +142,11 @@ func (h *Handlers) HandleClearCookies(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, map[string]any{"status": "cleared"})
 }
 
-// HandleTabClearCookies clears all browser cookies (tab-scoped variant for API consistency).
+// HandleTabClearCookies clears EVERY cookie in the browser, for every origin. The
+// tab id addresses the route and is verified to exist; it does not scope the wipe,
+// and no cookie belonging only to this tab's origin can be cleared on its own. The
+// tab-scoped spelling exists for API consistency with the GET and POST variants,
+// which are genuinely per-tab.
 //
 // @Endpoint DELETE /tabs/{id}/cookies
 func (h *Handlers) HandleTabClearCookies(w http.ResponseWriter, r *http.Request) {
@@ -176,14 +180,21 @@ func (h *Handlers) HandleSetCookies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.URL == "" {
-		httpx.Error(w, 400, fmt.Errorf("url is required"))
-		return
-	}
-
 	if len(req.Cookies) == 0 {
 		httpx.Error(w, 400, fmt.Errorf("cookies array is empty"))
 		return
+	}
+
+	// A cookie with no name cannot be set at all, and skipping it silently is how
+	// this endpoint used to report a no-op: an empty value is now honoured, since
+	// blanking a cookie without deleting it is a legitimate operation and CDP
+	// accepts it, so the only unsettable cookie is a nameless one. Refusing here
+	// keeps every counted cookie one the browser was actually asked to store.
+	for i, cookie := range req.Cookies {
+		if cookie.Name == "" {
+			httpx.Error(w, 400, fmt.Errorf("cookies[%d] has no name; a cookie without a name cannot be set", i))
+			return
+		}
 	}
 
 	ctx, resolvedTabID, err := h.tabContext(r, req.TabID)
@@ -195,19 +206,26 @@ func (h *Handlers) HandleSetCookies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tCtx, tCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer tCancel()
+
+	// The tab's current URL is the default target, the same way HandleGetCookies
+	// reads it: a caller driving one tab already said which page it means, and
+	// making it restate the URL is what kept session injection off the CLI.
+	if req.URL == "" {
+		req.URL, _ = h.Bridge.CurrentURL(tCtx)
+	}
+	if req.URL == "" {
+		httpx.Error(w, 400, fmt.Errorf("url is required: the tab has no current URL to default to"))
+		return
+	}
+
 	if !h.enforceURLDomainPolicy(w, req.URL) {
 		return
 	}
 
-	tCtx, tCancel := context.WithTimeout(ctx, 10*time.Second)
-	defer tCancel()
-
 	successCount := 0
 	for _, cookie := range req.Cookies {
-		if cookie.Name == "" || cookie.Value == "" {
-			continue
-		}
-
 		if err := h.Bridge.SetCookie(tCtx, bridge.SetCookieParams{
 			Name:     cookie.Name,
 			Value:    cookie.Value,

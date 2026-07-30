@@ -57,6 +57,55 @@ func handleCookies(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.C
 	}
 }
 
+// handleCookiesSet posts one cookie. Every argument the tool declares is read here,
+// and every argument read here is declared: an undeclared argument is invisible to a
+// model and bypasses the schema-derived validator.
+func handleCookiesSet(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		name, err := r.RequireString("name")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		value, err := r.RequireString("value")
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+
+		cookie := map[string]any{"name": name, "value": value}
+		for arg, key := range map[string]string{
+			"domain":   "domain",
+			"path":     "path",
+			"sameSite": "sameSite",
+		} {
+			if v := optString(r, arg); v != "" {
+				cookie[key] = v
+			}
+		}
+		for _, arg := range []string{"secure", "httpOnly"} {
+			if v, ok := optBool(r, arg); ok {
+				cookie[arg] = v
+			}
+		}
+		if expires, ok := optFloat(r, "expires"); ok {
+			cookie["expires"] = expires
+		}
+
+		body := map[string]any{"cookies": []any{cookie}}
+		if tabID := optString(r, "tabId"); tabID != "" {
+			body["tabId"] = tabID
+		}
+		if target := optString(r, "url"); target != "" {
+			body["url"] = target
+		}
+
+		respBody, code, err := c.Post(ctx, "/cookies", body)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		return resultFromBytes(respBody, code)
+	}
+}
+
 func handleConnectProfile(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		profile, err := r.RequireString("profile")

@@ -56,6 +56,7 @@ func rawHandlerMap(c *Client) map[string]func(context.Context, mcp.CallToolReque
 		"pinchtab_close_tab":       handleCloseTab(c),
 		"pinchtab_health":          handleHealth(c),
 		"pinchtab_cookies":         handleCookies(c),
+		"pinchtab_cookies_set":     handleCookiesSet(c),
 		"pinchtab_connect_profile": handleConnectProfile(c),
 
 		"pinchtab_wait":              handleWait(),

@@ -81,7 +81,7 @@ pinchtab --server http://remote:9867 mcp
 
 ## Available Tools
 
-PinchTab currently exposes 46 tools:
+PinchTab currently exposes 47 tools:
 
 - Navigation: 9
 - Interaction: 9
@@ -147,6 +147,7 @@ PinchTab currently exposes 46 tools:
 - `pinchtab_close_tab`
 - `pinchtab_health`
 - `pinchtab_cookies` (requires `security.allowCookies`)
+- `pinchtab_cookies_set` (requires `security.allowCookies`)
 - `pinchtab_connect_profile`
 
 ### Wait Utilities

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -280,5 +283,101 @@ func TestHandleClearCookies_RouteRegistration(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected DELETE /tabs/{id}/cookies to be registered, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// cookieJarBridge records what reached the browser and gives the tab a current URL,
+// which is what the set path defaults to.
+type cookieJarBridge struct {
+	mockBridge
+	currentURL string
+	setErr     error
+	set        []bridge.SetCookieParams
+}
+
+func (b *cookieJarBridge) CurrentURL(context.Context) (string, error) { return b.currentURL, nil }
+
+func (b *cookieJarBridge) SetCookie(_ context.Context, params bridge.SetCookieParams) error {
+	if b.setErr != nil {
+		return b.setErr
+	}
+	b.set = append(b.set, params)
+	return nil
+}
+
+func postCookies(t *testing.T, b *cookieJarBridge, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	h := New(b, &config.RuntimeConfig{AllowCookies: true}, nil, nil, nil)
+	w := httptest.NewRecorder()
+	h.HandleSetCookies(w, httptest.NewRequest("POST", "/cookies", bytes.NewReader([]byte(body))))
+	return w
+}
+
+// An empty value blanks a cookie without deleting it, which is a real operation. It
+// used to be skipped by the loop, so the browser was never asked and the caller was
+// told nothing useful.
+func TestHandleSetCookiesHonoursAnEmptyValueAndDefaultsTheURLToTheTab(t *testing.T) {
+	b := &cookieJarBridge{currentURL: "http://example.com/app"}
+	w := postCookies(t, b, `{"cookies":[{"name":"blank","value":""}]}`)
+
+	if w.Code != 200 {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["set"] != float64(1) || resp["failed"] != float64(0) {
+		t.Errorf("response = %+v, want set 1 failed 0 — a cookie the browser stored must count as set", resp)
+	}
+	if len(b.set) != 1 {
+		t.Fatalf("browser saw %d cookies, want the one with the empty value", len(b.set))
+	}
+	if b.set[0].Value != "" {
+		t.Errorf("value = %q, want it kept empty", b.set[0].Value)
+	}
+	if b.set[0].URL != "http://example.com/app" {
+		t.Errorf("url = %q, want the tab's current URL; a caller driving one tab must not have to restate it", b.set[0].URL)
+	}
+}
+
+// A nameless cookie cannot be set at all, so it is refused rather than skipped: a
+// skipped cookie is the silent no-op this endpoint used to answer with.
+func TestHandleSetCookiesRefusesANamelessCookieInsteadOfSkippingIt(t *testing.T) {
+	b := &cookieJarBridge{currentURL: "http://example.com/app"}
+	w := postCookies(t, b, `{"cookies":[{"name":"","value":"x"}]}`)
+
+	if w.Code != 400 {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if len(b.set) != 0 {
+		t.Errorf("browser was asked to store %+v; a nameless cookie cannot be set", b.set)
+	}
+}
+
+func TestHandleSetCookiesCountsARejectedCookieAsFailed(t *testing.T) {
+	b := &cookieJarBridge{currentURL: "http://example.com/app", setErr: fmt.Errorf("cdp refused")}
+	w := postCookies(t, b, `{"cookies":[{"name":"a","value":"b"}]}`)
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["set"] != float64(0) || resp["failed"] != float64(1) {
+		t.Errorf("response = %+v, want set 0 failed 1", resp)
+	}
+}
+
+// The default has to come from somewhere: with no current URL the request is refused,
+// rather than sending CDP a cookie with no target.
+func TestHandleSetCookiesRefusesWhenTheTabHasNoURLToDefaultTo(t *testing.T) {
+	b := &cookieJarBridge{}
+	w := postCookies(t, b, `{"cookies":[{"name":"a","value":"b"}]}`)
+
+	if w.Code != 400 || !strings.Contains(w.Body.String(), "url is required") {
+		t.Fatalf("status = %d body = %s, want a 400 naming the missing url", w.Code, w.Body.String())
+	}
+	if len(b.set) != 0 {
+		t.Errorf("browser was asked to store %+v with no URL", b.set)
 	}
 }
