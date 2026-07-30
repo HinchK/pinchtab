@@ -224,10 +224,11 @@ func TestEveryHandlerHasASchemaAndEverySchemaAHandler(t *testing.T) {
 // see it either — it derives from the schemas, so an undeclared argument keeps the
 // silent-coercion-drop this package otherwise rejects.
 //
-// NAME-LEVEL, not per-tool: an argument passes as soon as ONE tool declares it,
-// so this census cannot see an argument read for a kind whose own tool omits it —
-// which is how nodeId and x/y were each read for all nine action tools while
-// three declared them. TestNoActionToolIsSentATypedArgumentItDoesNotDeclare covers
+// A UNION check, not a per-tool one: the declared set is built across ALL tools,
+// so one declaration anywhere licenses the argument for every handler that reads
+// it. Over a shared handler that is structurally blind to the case this package
+// had twice — nodeId and x/y were each read for all nine action tools while only
+// three declared them, and both passed here. TestNoActionToolIsSentATypedArgumentItDoesNotDeclare covers
 // that per-tool half behaviourally, for the action family. The two are not one
 // check: this one spans every handler in the package and catches a name declared
 // nowhere at all; that one is narrower in scope and stricter within it.
@@ -455,8 +456,8 @@ func TestNoActionToolIsSentATypedArgumentItDoesNotDeclare(t *testing.T) {
 			body, _ := resultJSON(t, result)["body"].(map[string]any)
 			for field, value := range body {
 				if value == sentinel || value == true || field == "hasXY" {
-					t.Errorf("pinchtab_%s: %v is reachable for kind %q but the tool does not declare it — outbound body carries %s=%v, so it is undiscoverable and validateTypedArgs cannot type-check it",
-						strings.TrimPrefix(tc.tool, "pinchtab_"), group, tc.tool, field, value)
+					t.Errorf("%s: %v is reachable but the tool does not declare it — the outbound body carries %s=%v, so it is undiscoverable in tools/list and validateTypedArgs cannot type-check it",
+						tc.tool, group, field, value)
 					break
 				}
 			}
