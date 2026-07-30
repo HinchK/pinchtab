@@ -573,6 +573,39 @@ func TestNavigateFallbackStaysSilentForAnIdentifiedCaller(t *testing.T) {
 	}
 }
 
+// The agent id reaches the server from EITHER the --agent-id flag or the environment, so a
+// caller identified by the flag alone is identified to the server and its retry adopts that
+// scope's current tab. Announcing a new tab there names an EXISTING tab as new — the inverse
+// of the defect the notice exists to report, and just as misleading. The env is cleared, so
+// only the flag can make this caller identified.
+func TestNavigateFallbackStaysSilentForACallerIdentifiedByTheFlagAlone(t *testing.T) {
+	t.Setenv("PINCHTAB_SESSION", "")
+	t.Setenv("PINCHTAB_AGENT_ID", "")
+
+	m := newMockServer()
+	m.setResponse(http.MethodPost, "/tabs/STALE123/navigate", http.StatusNotFound, `{"error":"tab not found"}`)
+	m.setResponse(http.MethodPost, "/navigate", http.StatusOK, `{"tabId":"ADOPTED9","status":"ok"}`)
+	defer m.close()
+
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://pinchtab.com", agentIDFlagCmd(t, "STALE123", "bosch"))
+		})
+	})
+
+	if strings.Contains(stderr, "new tab") {
+		t.Fatalf("stderr = %q, want no new-tab notice: the retry carries X-Agent-Id, so the server adopted that scope's current tab rather than creating one", stderr)
+	}
+	// The no-session hint reads the same predicate, so it moves with it: a caller already
+	// scoped by agent id is not unscoped, whichever provenance supplied the id.
+	if strings.Contains(stderr, cli.SessionCreateCommand) {
+		t.Errorf("stderr = %q, want no session advice for a caller the server already scopes by agent id", stderr)
+	}
+	if len(m.requests) != 2 || m.requests[1].Path != "/navigate" {
+		t.Fatalf("requests = %+v, want the fallback to still fire", m.requests)
+	}
+}
+
 // Absence assertion: an ordinary navigate that never hits the fallback gains no
 // extra output. Without this the notice could fire on every call and the tests
 // above would still pass.
@@ -658,6 +691,22 @@ func staleTabCmd(t *testing.T, tabID string) *cobra.Command {
 		t.Fatal(err)
 	}
 	cmd.Flags().Lookup("tab").Changed = false
+	return cmd
+}
+
+// agentIDFlagCmd attaches the nav command to a root carrying --agent-id as a persistent
+// flag, which is how the real tree registers it. The attachment is the point: the flag is
+// never local to nav, so a standalone command cannot exercise the lookup at all.
+func agentIDFlagCmd(t *testing.T, tabID, agentID string) *cobra.Command {
+	t.Helper()
+
+	cmd := staleTabCmd(t, tabID)
+	root := &cobra.Command{Use: "pinchtab"}
+	root.PersistentFlags().String("agent-id", "", "")
+	root.AddCommand(cmd)
+	if err := root.PersistentFlags().Set("agent-id", agentID); err != nil {
+		t.Fatal(err)
+	}
 	return cmd
 }
 

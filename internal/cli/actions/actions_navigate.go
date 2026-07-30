@@ -10,6 +10,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
 	"github.com/pinchtab/pinchtab/internal/cli/output"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // Back navigates the current (or specified) tab back in history.
@@ -83,14 +84,14 @@ func Navigate(client *http.Client, base, token string, url string, cmd *cobra.Co
 	if jsonOutput {
 		result, usedFallback := postNavigate(client, base, token, req, true)
 		resultTabID := tabIDFromNavigateResult(result)
-		reportFallbackNewTab(usedFallback, req.tabID, resultTabID)
+		reportFallbackNewTab(cmd, usedFallback, req.tabID, resultTabID)
 		apiclient.SuggestNextAction("navigate", result)
 		return resultTabID
 	}
 
 	result, usedFallback := postNavigate(client, base, token, req, false)
 	resultTabID := tabIDFromNavigateResult(result)
-	reportFallbackNewTab(usedFallback, req.tabID, resultTabID)
+	reportFallbackNewTab(cmd, usedFallback, req.tabID, resultTabID)
 	if resultTabID != "" {
 		fmt.Println(resultTabID)
 	}
@@ -105,7 +106,7 @@ func Navigate(client *http.Client, base, token string, url string, cmd *cobra.Co
 		}
 	}
 
-	if !isIdentifiedCaller() {
+	if !isIdentifiedCaller(cmd) {
 		output.Hint(cli.NoSessionHint)
 	}
 
@@ -209,8 +210,8 @@ func postNavigate(client *http.Client, base, token string, req navigateRequest, 
 // The remedy is deliberately absent: an anonymous navigate already prints
 // cli.NoSessionHint, which carries the run-with-a-session advice, and repeating it
 // here would be the same guidance twice on one command.
-func reportFallbackNewTab(usedFallback bool, staleTabID, newTabID string) {
-	if !usedFallback || isIdentifiedCaller() {
+func reportFallbackNewTab(cmd *cobra.Command, usedFallback bool, staleTabID, newTabID string) {
+	if !usedFallback || isIdentifiedCaller(cmd) {
 		return
 	}
 	if newTabID == "" {
@@ -220,9 +221,40 @@ func reportFallbackNewTab(usedFallback bool, staleTabID, newTabID string) {
 	output.Hint(fmt.Sprintf("tab %s no longer exists — opened a new tab %s for this navigation", staleTabID, newTabID))
 }
 
-func isIdentifiedCaller() bool {
+// isIdentifiedCaller reports whether the server will see this call as scoped to a session
+// or an agent, which is what decides whether an unscoped retry adopts a tab or creates one.
+//
+// The agent id has TWO provenances and this must agree with the CLI's own resolution, which
+// prefers the --agent-id persistent flag over the environment. Reading only the environment
+// calls a flag-identified caller anonymous, and the retry then names an ADOPTED tab as newly
+// opened — the inverse of the defect the notice exists to report.
+func isIdentifiedCaller(cmd *cobra.Command) bool {
 	return strings.TrimSpace(os.Getenv("PINCHTAB_SESSION")) != "" ||
-		strings.TrimSpace(os.Getenv("PINCHTAB_AGENT_ID")) != ""
+		strings.TrimSpace(os.Getenv("PINCHTAB_AGENT_ID")) != "" ||
+		agentIDFlag(cmd) != ""
+}
+
+// agentIDFlag reads the root's persistent --agent-id off whichever command is running.
+//
+// Both lookups are needed. Flags() carries the flag only once cobra has parsed and merged
+// the persistent set, so a command tree built directly — every test here, and any caller
+// that has not executed — sees nil there and finds it through InheritedFlags(). Checking
+// only Flags() would leave the guard reading empty in exactly the tests meant to pin it.
+//
+// A command with no parent has no root flags to inherit, so an absent flag means anonymous
+// rather than an error: newNavigateCmd() is built standalone.
+func agentIDFlag(cmd *cobra.Command) string {
+	if cmd == nil {
+		return ""
+	}
+	for _, set := range []*pflag.FlagSet{cmd.Flags(), cmd.InheritedFlags()} {
+		if flag := set.Lookup("agent-id"); flag != nil {
+			if v := strings.TrimSpace(flag.Value.String()); v != "" {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 func tabIDFromNavigateResult(result map[string]any) string {
