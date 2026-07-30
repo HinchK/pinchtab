@@ -11,26 +11,12 @@ import (
 	"testing"
 )
 
-// gotestsumBinary is the token that marks a line as an invocation rather than a mention.
-// Lines that merely install, locate or name the tool are excluded below, so a resolver
-// script that spells the word a dozen times contributes no false positives.
 const gotestsumBinary = "gotestsum"
 
-// hiddenOutputSummary is the flag under ban. gotestsum's output summary is the section
-// that carries file:line and expected-versus-actual beneath each failing test name;
-// hiding it reduces a failure to "=== FAIL: pkg TestName (0.9s)" with the cause nowhere
-// in the log.
-const hiddenOutputSummary = "--hide-summary=output"
+const hideSummaryFlag = "--hide-summary="
 
-// The rule is deliberately ONE-SIDED: no invocation may hide the output summary. It is
-// NOT "the invocations must agree". They are meant to differ — scripts/test.sh hides the
-// skipped section because print_skipped_tests re-renders it with each skip reason, and CI
-// has no equivalent, so an agreement rule would be satisfiable by making CI hide skipped
-// and lose those reasons. That is the wrong fix passing the check.
-//
-// Found by scanning rather than by naming the two files known today: this repo has
-// already been bitten by a one-owner guard that checked two paths by name and was blind
-// to everything else, and a third invocation added later must be covered by construction.
+const bannedSummarySection = "output"
+
 func TestNoGotestsumInvocationHidesTheOutputSummary(t *testing.T) {
 	root := repoRoot(t)
 
@@ -58,9 +44,9 @@ func TestNoGotestsumInvocationHidesTheOutputSummary(t *testing.T) {
 				continue
 			}
 			invocations++
-			if strings.Contains(line, hiddenOutputSummary) {
+			if hidesOutputSummary(line) {
 				offenders++
-				t.Errorf("%s:%d hides the gotestsum output summary, so a failure there prints a bare test name with the cause nowhere in the log:\n\t%s",
+				t.Errorf("%s:%d hides the gotestsum output summary, so a failure there prints a bare test name with the cause nowhere in the log; the rule is one-sided — hiding other sections is fine, hiding output is not:\n\t%s",
 					rel, i+1, strings.TrimSpace(line))
 			}
 		}
@@ -78,21 +64,38 @@ func TestNoGotestsumInvocationHidesTheOutputSummary(t *testing.T) {
 	}
 }
 
-// isGotestsumInvocation keeps the ban on lines that RUN the tool. The resolver in
-// scripts/test.sh and the doctor check both mention it repeatedly while installing or
-// locating it, and a ban that fired on those would be noise — a guard that cries wolf
-// gets deleted, which is how the gap it protects comes back.
+// hidesOutputSummary parses --hide-summary as the comma-separated list gotestsum accepts,
+// so "skipped,output" is caught as surely as "output". gotestsum rejects every other
+// spelling — a space instead of =, a single dash, uppercase section names — so the fields
+// of the =-joined lowercase list are the whole class.
+func hidesOutputSummary(line string) bool {
+	rest := line
+	for {
+		at := strings.Index(rest, hideSummaryFlag)
+		if at < 0 {
+			return false
+		}
+		rest = rest[at+len(hideSummaryFlag):]
+		value := rest
+		if end := strings.IndexAny(value, " \t"); end >= 0 {
+			value = value[:end]
+		}
+		for _, section := range strings.Split(value, ",") {
+			if strings.TrimSpace(section) == bannedSummarySection {
+				return true
+			}
+		}
+	}
+}
+
 func isGotestsumInvocation(line string) bool {
 	trimmed := strings.TrimSpace(line)
-	// Case-insensitive because a shell script invokes the tool through "$GOTESTSUM_BIN",
-	// which a lowercase-only match misses entirely — the scan then sees one invocation
-	// where there are two, and the floor below is what caught that.
+	// Case-insensitive: scripts/test.sh invokes the tool through "$GOTESTSUM_BIN", which a
+	// lowercase-only match misses entirely.
 	if strings.HasPrefix(trimmed, "#") || !strings.Contains(strings.ToLower(trimmed), gotestsumBinary) {
 		return false
 	}
-	// An invocation passes flags to the tool; every mention that merely installs or
-	// locates it does not.
-	return strings.Contains(trimmed, "--format=") || strings.Contains(trimmed, "--hide-summary=")
+	return strings.Contains(trimmed, "--format=") || strings.Contains(trimmed, hideSummaryFlag)
 }
 
 func scannableForInvocations(path string) bool {
