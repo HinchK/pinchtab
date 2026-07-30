@@ -36,27 +36,30 @@ func TestSessionCreateAdviceDiffersPerUnavailableState(t *testing.T) {
 		register   func(*http.ServeMux)
 		path       string
 		wantAdvice bool
-		wantRemedy string
-		banned     string
-		why        string
+		// wantGuidance is matched against hint AND remedy together: the two states carry
+		// their guidance in different fields, because only one of them has a single command
+		// to run, and the CLI prints whichever is present.
+		wantGuidance string
+		banned       string
+		why          string
 	}{
 		{
-			name:       "bridge mode",
-			register:   server.RegisterSessionsUnavailableInBridgeMode,
-			path:       "/sessions",
-			wantAdvice: true,
-			wantRemedy: "pinchtab server",
-			banned:     "sessions.agent.enabled",
-			why:        "no config value mounts the family on a bridge, so a config remedy is the unescapable loop this card fixes",
+			name:         "bridge mode",
+			register:     server.RegisterSessionsUnavailableInBridgeMode,
+			path:         "/sessions",
+			wantAdvice:   true,
+			wantGuidance: "pinchtab server",
+			banned:       "sessions.agent.enabled",
+			why:          "no config value mounts the family on a bridge, so a config remedy is the unescapable loop this card fixes",
 		},
 		{
-			name:       "server with sessions disabled",
-			register:   server.RegisterSessionsDisabled,
-			path:       "/sessions",
-			wantAdvice: true,
-			wantRemedy: "sessions.agent.enabled",
-			banned:     "",
-			why:        "this is the one state the config remedy fits",
+			name:         "server with sessions disabled",
+			register:     server.RegisterSessionsDisabled,
+			path:         "/sessions",
+			wantAdvice:   true,
+			wantGuidance: "sessions.agent.enabled",
+			banned:       "",
+			why:          "this is the one state the config edit fits, and it is a file edit rather than a command",
 		},
 		{
 			name:       "unknown path",
@@ -69,7 +72,8 @@ func TestSessionCreateAdviceDiffersPerUnavailableState(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := sessionCreateResponse(t, tc.register, tc.path)
 
-			message, remedy, ok := sessionUnavailableAdvice(body)
+			message, hint, remedy, ok := sessionUnavailableAdvice(body)
+			guidance := hint + " " + remedy
 			if ok != tc.wantAdvice {
 				t.Fatalf("advice recognised = %v, want %v; %s (body=%s)", ok, tc.wantAdvice, tc.why, body)
 			}
@@ -79,11 +83,11 @@ func TestSessionCreateAdviceDiffersPerUnavailableState(t *testing.T) {
 			if message == "" {
 				t.Errorf("no message, so the CLI prints an empty Error: line")
 			}
-			if !strings.Contains(remedy, tc.wantRemedy) {
-				t.Errorf("remedy = %q, want it to name %q; %s", remedy, tc.wantRemedy, tc.why)
+			if !strings.Contains(guidance, tc.wantGuidance) {
+				t.Errorf("guidance = %q, want it to name %q; %s", guidance, tc.wantGuidance, tc.why)
 			}
-			if tc.banned != "" && strings.Contains(remedy, tc.banned) {
-				t.Errorf("remedy = %q, which prescribes %q; %s", remedy, tc.banned, tc.why)
+			if tc.banned != "" && strings.Contains(guidance, tc.banned) {
+				t.Errorf("guidance = %q, which prescribes %q; %s", guidance, tc.banned, tc.why)
 			}
 		})
 	}
@@ -100,7 +104,7 @@ func TestAnUnrecognisedCodeGetsNoSessionAdvice(t *testing.T) {
 		`404 page not found`,
 		``,
 	} {
-		if _, _, ok := sessionUnavailableAdvice([]byte(body)); ok {
+		if _, _, _, ok := sessionUnavailableAdvice([]byte(body)); ok {
 			t.Errorf("body %q was treated as a known unavailable state; an unrecognised code must fall through to the generic error", body)
 		}
 	}

@@ -133,30 +133,37 @@ func init() {
 // carries no code at all — falls through to the generic API error. A permissive default
 // here would silently reuse the config remedy for the next mode, which is the conflation
 // this replaced.
-func sessionUnavailableAdvice(rawBody []byte) (message, remedy string, ok bool) {
+// Both halves are read because only one state has a remedy: enabling agent sessions on a
+// full server is a file edit plus a restart, which is not one command, so that state carries
+// its guidance as a hint. A reader of the remedy alone would print nothing there.
+func sessionUnavailableAdvice(rawBody []byte) (message, hint, remedy string, ok bool) {
 	var resp struct {
 		Code    string `json:"code"`
 		Error   string `json:"error"`
 		Details struct {
+			Hint   string `json:"hint"`
 			Remedy string `json:"remedy"`
 		} `json:"details"`
 	}
 	if json.Unmarshal(rawBody, &resp) != nil {
-		return "", "", false
+		return "", "", "", false
 	}
 	switch resp.Code {
 	case server.CodeSessionsUnavailableInBridgeMode, server.CodeSessionsDisabled:
-		return resp.Error, resp.Details.Remedy, true
+		return resp.Error, resp.Details.Hint, resp.Details.Remedy, true
 	}
-	return "", "", false
+	return "", "", "", false
 }
 
 func exitSessionUnavailable(rawBody []byte) {
-	message, remedy, ok := sessionUnavailableAdvice(rawBody)
+	message, hint, remedy, ok := sessionUnavailableAdvice(rawBody)
 	if !ok {
 		return
 	}
 	fmt.Fprintf(os.Stderr, "Error: %s\n", message)
+	if hint != "" {
+		output.Hint(hint)
+	}
 	if remedy != "" {
 		output.Hint(remedy)
 	}

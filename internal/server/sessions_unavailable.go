@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/pinchtab/pinchtab/internal/httpx"
+	"github.com/pinchtab/pinchtab/internal/remedy"
 	"github.com/pinchtab/pinchtab/internal/session"
 )
 
@@ -23,15 +24,20 @@ const (
 
 const (
 	msgSessionsUnavailableInBridgeMode = "agent sessions are unavailable in bridge mode"
-	remedySessionsUnavailableInBridge  = "run the full server instead: pinchtab server"
+	hintSessionsUnavailableInBridge    = "no config value mounts the session family on a bridge; the full server is what serves it."
 
 	msgSessionsDisabled = "agent sessions are not enabled on this server"
 	// The config editor knows sessions.dashboard.* and no sessions.agent.* field, so
 	// "pinchtab config set sessions.agent.enabled true" answers "unknown field" — the same
-	// dead end this family's remedy existed to remove, one state over. The file edit works,
-	// and it is what the shared CLI hint already tells a reader.
-	remedySessionsDisabled = "set sessions.agent.enabled = true in config.json, then restart the server"
+	// dead end this family's remedy existed to remove, one state over. So this state has NO
+	// remedy: the fix is a file edit plus a restart, which is not one command, and the hint
+	// says so rather than a remedy naming a command that dead-ends.
+	hintSessionsDisabled = "set sessions.agent.enabled = true in config.json and restart the server; the config editor has no field for that path, so it cannot be changed from the command line."
 )
+
+// Running the full server is the bridge's whole remedy. The verb it used to lead with —
+// "run the full server instead: pinchtab server" — put the command behind prose.
+var runFullServer = remedy.Declare("pinchtab server")
 
 // registerSessionsUnavailable answers the whole session family with one coded refusal.
 // Both modes that do not mount the family call it, and it ranges over the same
@@ -39,12 +45,12 @@ const (
 // route added later being reachable in server mode and a bare 404 everywhere else.
 //
 // The status stays 404: the family genuinely is not here. What changes is that the body is
-// the product's error envelope with a code and a remedy instead of net/http's bare
+// the product's error envelope with a code and guidance instead of net/http's bare
 // "404 page not found", which escaped the envelope entirely because no route was
 // registered at all.
-func registerSessionsUnavailable(mux *http.ServeMux, code, message, remedy string) {
-	handler := func(w http.ResponseWriter, r *http.Request) {
-		httpx.ErrorCode(w, http.StatusNotFound, code, message, false, map[string]any{"remedy": remedy})
+func registerSessionsUnavailable(mux *http.ServeMux, code, message, hint string, r remedy.Remedy) {
+	handler := func(w http.ResponseWriter, _ *http.Request) {
+		httpx.ErrorCode(w, http.StatusNotFound, code, message, false, remedy.Details(hint, r))
 	}
 	for _, pattern := range session.RoutePatterns() {
 		mux.HandleFunc(pattern, handler)
@@ -54,11 +60,11 @@ func registerSessionsUnavailable(mux *http.ServeMux, code, message, remedy strin
 // RegisterSessionsUnavailableInBridgeMode is the bridge's answer for the family.
 func RegisterSessionsUnavailableInBridgeMode(mux *http.ServeMux) {
 	registerSessionsUnavailable(mux, CodeSessionsUnavailableInBridgeMode,
-		msgSessionsUnavailableInBridgeMode, remedySessionsUnavailableInBridge)
+		msgSessionsUnavailableInBridgeMode, hintSessionsUnavailableInBridge, runFullServer.Remedy())
 }
 
 // RegisterSessionsDisabled is the full server's answer when sessions.agent.enabled is off.
 func RegisterSessionsDisabled(mux *http.ServeMux) {
 	registerSessionsUnavailable(mux, CodeSessionsDisabled,
-		msgSessionsDisabled, remedySessionsDisabled)
+		msgSessionsDisabled, hintSessionsDisabled, remedy.None)
 }

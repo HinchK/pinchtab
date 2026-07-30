@@ -17,6 +17,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/pinchtab/pinchtab/internal/navguard"
+	"github.com/pinchtab/pinchtab/internal/remedy"
 )
 
 // HandleNavigate navigates a tab to a URL or creates a new tab.
@@ -692,12 +693,15 @@ func isNavigateAbortedOnBinary(err error, url string) bool {
 	return false
 }
 
+// The pair used to be inverted: the remedy held the bare verb "download" and the hint held
+// the command. The URL is known here, so the remedy is the whole command.
+var downloadInstead = remedy.Declare(`pinchtab download "<url>"`)
+
 func navigateErrorWithHint(w http.ResponseWriter, code int, err error, url string) {
 	if isNavigateAbortedOnBinary(err, url) {
-		httpx.ErrorCode(w, 502, "nav_binary_aborted", fmt.Sprintf("navigate: %s", err.Error()), false, map[string]any{
-			"remedy": "download",
-			"hint":   fmt.Sprintf("Chrome cannot render binary/compressed files. Use: pinchtab download %q", url),
-		})
+		httpx.ErrorCode(w, 502, "nav_binary_aborted", fmt.Sprintf("navigate: %s", err.Error()), false,
+			remedy.Details("Chrome cannot render binary/compressed files, so this URL has to be downloaded instead.",
+				downloadInstead.Fill(url)))
 		return
 	}
 	httpx.Error(w, code, fmt.Errorf("navigate: %w", err))

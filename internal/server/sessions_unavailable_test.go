@@ -11,20 +11,25 @@ import (
 	"github.com/pinchtab/pinchtab/internal/session"
 )
 
-func decodeSessionRefusal(t *testing.T, w *httptest.ResponseRecorder) (code, message, remedy string) {
+// Both guidance fields are decoded because the two modes carry it in different ones: only
+// the bridge has a single command to run, so the disabled mode's guidance is a hint and its
+// remedy is absent. A decoder reading only the remedy would report the disabled mode as
+// carrying no guidance at all.
+func decodeSessionRefusal(t *testing.T, w *httptest.ResponseRecorder) (code, message, hint, remedy string) {
 	t.Helper()
 
 	var resp struct {
 		Code    string `json:"code"`
 		Error   string `json:"error"`
 		Details struct {
+			Hint   string `json:"hint"`
 			Remedy string `json:"remedy"`
 		} `json:"details"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("body is not the product's error envelope (%v): %s", err, w.Body.String())
 	}
-	return resp.Code, resp.Error, resp.Details.Remedy
+	return resp.Code, resp.Error, resp.Details.Hint, resp.Details.Remedy
 }
 
 func requestFor(pattern string) *http.Request {
@@ -42,9 +47,12 @@ func TestBothUnavailableModesAnswerEveryRouteInTheFamilyWithACode(t *testing.T) 
 		register   func(*http.ServeMux)
 		wantCode   string
 		wantRemedy string
+		wantGuide  string
 	}{
-		{"bridge", RegisterSessionsUnavailableInBridgeMode, CodeSessionsUnavailableInBridgeMode, "pinchtab server"},
-		{"sessions disabled", RegisterSessionsDisabled, CodeSessionsDisabled, "sessions.agent.enabled"},
+		{"bridge", RegisterSessionsUnavailableInBridgeMode, CodeSessionsUnavailableInBridgeMode, "pinchtab server", "bridge"},
+		// No remedy: enabling the family is a file edit plus a restart, which is not one
+		// command a caller can run, so the guidance is a hint and the field is absent.
+		{"sessions disabled", RegisterSessionsDisabled, CodeSessionsDisabled, "", "sessions.agent.enabled"},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			mux := http.NewServeMux()
@@ -64,15 +72,18 @@ func TestBothUnavailableModesAnswerEveryRouteInTheFamilyWithACode(t *testing.T) 
 				if strings.Contains(w.Body.String(), "404 page not found") {
 					t.Errorf("%s: still the bare mux 404, which carries no code: %s", pattern, w.Body.String())
 				}
-				code, message, remedy := decodeSessionRefusal(t, w)
+				code, message, hint, remedy := decodeSessionRefusal(t, w)
 				if code != mode.wantCode {
 					t.Errorf("%s: code = %q, want %q", pattern, code, mode.wantCode)
 				}
 				if message == "" {
 					t.Errorf("%s: refusal carries no message", pattern)
 				}
-				if !strings.Contains(remedy, mode.wantRemedy) {
-					t.Errorf("%s: remedy = %q, want it to name %q — the remedy that can actually succeed in this mode", pattern, remedy, mode.wantRemedy)
+				if remedy != mode.wantRemedy {
+					t.Errorf("%s: remedy = %q, want %q — the only command that can succeed in this mode, or none when there is no single command", pattern, remedy, mode.wantRemedy)
+				}
+				if !strings.Contains(hint, mode.wantGuide) {
+					t.Errorf("%s: hint = %q, want it to explain %q — the guidance this mode cannot express as a command", pattern, hint, mode.wantGuide)
 				}
 			}
 		})
@@ -87,24 +98,26 @@ func TestTheTwoUnavailableModesDoNotShareARemedy(t *testing.T) {
 		register(mux)
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, httptest.NewRequest(http.MethodPost, "/sessions", nil))
-		code, _, remedy := decodeSessionRefusal(t, w)
-		return code, remedy
+		code, _, hint, remedy := decodeSessionRefusal(t, w)
+		// The guidance is what must not converge, and the two modes carry it in different
+		// fields, so the comparison is over both rather than over the remedy alone.
+		return code, hint + " " + remedy
 	}
 
-	bridgeCode, bridgeRemedy := answer(RegisterSessionsUnavailableInBridgeMode)
-	disabledCode, disabledRemedy := answer(RegisterSessionsDisabled)
+	bridgeCode, bridgeGuidance := answer(RegisterSessionsUnavailableInBridgeMode)
+	disabledCode, disabledGuidance := answer(RegisterSessionsDisabled)
 
 	if bridgeCode == disabledCode {
 		t.Errorf("both modes answer with %q, so the caller cannot tell them apart", bridgeCode)
 	}
-	if bridgeRemedy == disabledRemedy {
-		t.Errorf("both modes prescribe %q; one of them cannot work", bridgeRemedy)
+	if bridgeGuidance == disabledGuidance {
+		t.Errorf("both modes prescribe %q; one of them cannot work", bridgeGuidance)
 	}
-	if strings.Contains(bridgeRemedy, "sessions.agent.enabled") {
-		t.Errorf("the bridge remedy prescribes a config edit, which is the unescapable loop this fixes: %q", bridgeRemedy)
+	if strings.Contains(bridgeGuidance, "sessions.agent.enabled") {
+		t.Errorf("the bridge guidance prescribes a config edit, which is the unescapable loop this fixes: %q", bridgeGuidance)
 	}
 
-	for mode, remedy := range map[string]string{"bridge": bridgeRemedy, "disabled": disabledRemedy} {
+	for mode, remedy := range map[string]string{"bridge": bridgeGuidance, "disabled": disabledGuidance} {
 		if field, prescribed := configSetFieldIn(remedy); prescribed {
 			if err := config.SetConfigValue(&config.FileConfig{}, field, "true"); err != nil {
 				t.Errorf("the %s remedy says to run `pinchtab config set %s`, and the config editor answers %v — a remedy that cannot run is the dead end this family's codes exist to remove", mode, field, err)

@@ -317,10 +317,14 @@ func TestSupplyingATokenWhereAnIDGoesExplainsTheDifference(t *testing.T) {
 			if !strings.Contains(details["hint"], "TOKEN") || !strings.Contains(details["hint"], "not a session id") {
 				t.Errorf("hint does not name the id/token distinction: %q", details["hint"])
 			}
-			for _, want := range []string{"session info", "session list"} {
-				if !strings.Contains(details["remedy"], want) {
-					t.Errorf("remedy %q does not point at %q, so the id is unreachable without already knowing it", details["remedy"], want)
-				}
+			// The listing is the remedy because it is the one command that works with
+			// nothing else set up; `session info` needs PINCHTAB_SESSION exported, a
+			// precondition a remedy cannot state, so it is named in the hint instead.
+			if want := "pinchtab session list"; details["remedy"] != want {
+				t.Errorf("remedy = %q, want %q — the id is unreachable without a command that lists it", details["remedy"], want)
+			}
+			if !strings.Contains(details["hint"], "session info") {
+				t.Errorf("hint %q does not mention session info, the other way to reach the id", details["hint"])
 			}
 		})
 	}

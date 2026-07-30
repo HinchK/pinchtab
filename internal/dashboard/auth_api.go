@@ -12,6 +12,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/browsersession"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/httpx"
+	"github.com/pinchtab/pinchtab/internal/remedy"
 )
 
 type AuthAPI struct {
@@ -82,10 +83,11 @@ func (a *AuthAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if a.requiresHTTPSForDashboardSession(r) {
-		httpx.ErrorCode(w, http.StatusBadRequest, "secure_cookie_requires_https", "server.cookieSecure=true requires HTTPS for dashboard login", false, map[string]any{
-			"hint":   "Use HTTPS directly or through a trusted reverse proxy, or set server.cookieSecure back to auto/false for plain HTTP local use.",
-			"remedy": "If TLS terminates in front of PinchTab, also enable server.trustProxyHeaders so forwarded https requests are recognized.",
-		})
+		// No remedy: the fix is a choice between three postures, not one command, and an
+		// absent field says that truthfully. The guidance survives in the hint.
+		httpx.ErrorCode(w, http.StatusBadRequest, "secure_cookie_requires_https", "server.cookieSecure=true requires HTTPS for dashboard login", false,
+			remedy.Details("Use HTTPS directly or through a trusted reverse proxy, or set server.cookieSecure back to auto/false for plain HTTP local use. If TLS terminates in front of PinchTab, also enable server.trustProxyHeaders so forwarded https requests are recognized.",
+				remedy.None))
 		return
 	}
 

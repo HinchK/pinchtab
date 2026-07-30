@@ -9,6 +9,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/authn"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/httpx"
+	"github.com/pinchtab/pinchtab/internal/remedy"
 	"github.com/pinchtab/pinchtab/internal/session"
 )
 
@@ -147,19 +148,25 @@ func (a *SessionAPI) handleGet(w http.ResponseWriter, r *http.Request) {
 // authenticated as one at all. Handing that back is safe — the caller already holds
 // that session's secret — and it is the whole remedy, so they need no second command.
 // Returns nil for anything that is not a token, leaving the plain refusal alone.
+//
+// When the caller's own id is unknown the remedy is the listing, because that is the one
+// command that always works here: `session info` needs PINCHTAB_SESSION exported, which is
+// a precondition this refusal cannot verify, so it belongs in the hint.
 func tokenSuppliedForIDDetails(supplied, callerSessionID string) map[string]any {
 	if !session.LooksLikeToken(supplied) {
 		return nil
 	}
-	remedy := "pinchtab session info (with PINCHTAB_SESSION set) prints the id, or pinchtab session list"
+	r := listSessions.Remedy()
 	if callerSessionID != "" {
-		remedy = "pinchtab session revoke " + callerSessionID
+		r = revokeCallerSession.Fill(callerSessionID)
 	}
-	return map[string]any{
-		"hint":   "that is a session TOKEN, not a session id — these endpoints take the id so an operator can end a session without holding its secret",
-		"remedy": remedy,
-	}
+	return remedy.Details("that is a session TOKEN, not a session id — these endpoints take the id so an operator can end a session without holding its secret. With PINCHTAB_SESSION set, pinchtab session info prints the id.", r)
 }
+
+var (
+	listSessions        = remedy.Declare("pinchtab session list")
+	revokeCallerSession = remedy.Declare("pinchtab session revoke <session-id>")
+)
 
 func respondSessionNotFound(w http.ResponseWriter, supplied string) {
 	httpx.ErrorCode(w, http.StatusNotFound, "session_not_found", "session not found", false,

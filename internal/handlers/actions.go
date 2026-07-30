@@ -18,6 +18,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/browsers"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/httpx"
+	"github.com/pinchtab/pinchtab/internal/remedy"
 	"github.com/pinchtab/pinchtab/internal/routes"
 	"github.com/pinchtab/pinchtab/internal/selector"
 	"github.com/pinchtab/pinchtab/internal/session"
@@ -85,15 +86,16 @@ func rejectMultiStepSubmitClicks(w http.ResponseWriter, actions []bridge.ActionR
 	return true
 }
 
-const navigationChangedHint = "The action navigated the page, which the guard reports unless the request declares it: set waitNav true to wait for the navigation, or submit true when the click submits a form."
+const navigationChangedHint = "The action navigated the page, which the guard reports unless the request declares it: set waitNav true to wait for the navigation, or submit true when the click submits a form. From the CLI those are --wait-nav and --submit."
 
-const navigationChangedRemedy = "pinchtab click <ref> --wait-nav (use --submit instead when the click submits a form)"
+// The ref stays a placeholder: this guard reports on an action it did not receive the ref
+// for — it is reached from the post-action navigation check, which sees only the error —
+// so there is no value here to interpolate. The alternative flag stays in the hint,
+// because a remedy names one command to run.
+var navigationChangedRemedy = remedy.Declare("pinchtab click <ref> --wait-nav")
 
 func navigationChangedDetails(err error) map[string]any {
-	details := map[string]any{
-		"hint":   navigationChangedHint,
-		"remedy": navigationChangedRemedy,
-	}
+	details := remedy.Details(navigationChangedHint, navigationChangedRemedy.Remedy())
 	if url := navigatedToURL(err); url != "" {
 		details["url"] = url
 	}

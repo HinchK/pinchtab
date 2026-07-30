@@ -45,7 +45,7 @@ func decodeDialogBlocked(t *testing.T, w *httptest.ResponseRecorder, dialog *bri
 	if failure.Details.DialogType != dialog.Type || failure.Details.DialogMessage != dialog.Message {
 		t.Fatalf("dialog not named: %s", w.Body.String())
 	}
-	if failure.Details.Remedy != dialogBlockedRemedy {
+	if failure.Details.Remedy != dialogBlockedRemedy.String() {
 		t.Fatalf("remedy = %q, want %q", failure.Details.Remedy, dialogBlockedRemedy)
 	}
 	if failure.Details.Hint == "" {

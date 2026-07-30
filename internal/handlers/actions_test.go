@@ -677,11 +677,17 @@ func TestHandleAction_NavigationChangedCarriesHintAndRemedy(t *testing.T) {
 			t.Fatalf("hint %q does not name request field %q", hint, want)
 		}
 	}
-	remedy, _ := resp.Details["remedy"].(string)
-	for _, want := range []string{"--wait-nav", "--submit"} {
-		if !strings.Contains(remedy, want) {
-			t.Fatalf("remedy %q does not name CLI flag %q", remedy, want)
-		}
+	// One command, one flag: the remedy is a line a caller can run, so the alternative
+	// flag belongs in the hint. Naming both here is what made the field unrunnable.
+	line, _ := resp.Details["remedy"].(string)
+	if want := "pinchtab click <ref> --wait-nav"; line != want {
+		t.Fatalf("remedy = %q, want %q", line, want)
+	}
+	if strings.Contains(line, "--submit") {
+		t.Fatalf("remedy %q offers two flags, so it is not one command to run", line)
+	}
+	if !strings.Contains(hint, "--submit") {
+		t.Fatalf("hint %q does not name the --submit alternative the remedy dropped", hint)
 	}
 	if got, _ := resp.Details["url"].(string); got != "https://pinchtab.com/docs/" {
 		t.Fatalf("details[url] = %q, want the resulting URL", got)

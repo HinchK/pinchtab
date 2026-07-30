@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"strings"
+
+	"github.com/pinchtab/pinchtab/internal/remedy"
 )
 
 // mustRequest is doRequest with the common fatal-on-transport-error policy.
@@ -99,15 +101,22 @@ func namesCachedTab(statusCode int, body []byte) bool {
 		bytes.Contains(body, []byte(cachedTab.TabID))
 }
 
-// staleTabRemedy says where the id came from, and claims nothing about the cache's
+// A fresh tab is the one command this CLI-side advice can name. The prose that used to
+// carry it — where the id came from, and that a retry is enough — is a hint, because this
+// line prints into the same slot a server remedy does and a caller cannot tell them apart:
+// see internal/remedy for what that slot promises.
+var openFreshTab = remedy.Declare("pinchtab nav <url>")
+
+// staleTabAdvice says where the id came from, and claims nothing about the cache's
 // current state — it is emitted on returning paths too, where nothing is cleared.
 // A retry is still the right advice there: the cached id is re-probed at the start
 // of every command, so the next one drops it.
-func staleTabRemedy(statusCode int, body []byte) string {
+func staleTabAdvice(statusCode int, body []byte) (string, remedy.Remedy) {
 	if !namesCachedTab(statusCode, body) {
-		return ""
+		return "", remedy.None
 	}
-	return fmt.Sprintf("   Remedy: that tab id is this CLI's cached current tab for %s, not something you asked for; retry the command (or run `pinchtab nav <url>` to open a fresh tab)\n", cachedTab.Base)
+	return fmt.Sprintf("that tab id is this CLI's cached current tab for %s, not something you asked for; retry the command, or open a fresh tab", cachedTab.Base),
+		openFreshTab.Remedy()
 }
 
 // clearCachedTabOnFailure drops the cache that produced the dead id and reports
@@ -143,14 +152,24 @@ func renderAPIErrorBody(statusCode int, body []byte) string {
 	}
 
 	if errResp.Details != nil {
-		if hint, ok := errResp.Details["hint"].(string); ok && hint != "" {
-			fmt.Fprintf(&b, "\n💡 %s\n", hint)
-		}
-		if remedy, ok := errResp.Details["remedy"].(string); ok && remedy != "" {
-			fmt.Fprintf(&b, "   Remedy: %s\n", remedy)
-		}
+		hint, _ := errResp.Details["hint"].(string)
+		line, _ := errResp.Details["remedy"].(string)
+		b.WriteString(renderGuidance(hint, remedy.Remedy(line)))
 	}
-	b.WriteString(staleTabRemedy(statusCode, body))
+	b.WriteString(renderGuidance(staleTabAdvice(statusCode, body)))
+	return b.String()
+}
+
+// renderGuidance is the ONE writer of both guidance slots, so a second producer cannot
+// print prose into the line a caller reads as executable. Either half may be absent.
+func renderGuidance(hint string, r remedy.Remedy) string {
+	var b strings.Builder
+	if hint != "" {
+		fmt.Fprintf(&b, "\n💡 %s\n", hint)
+	}
+	if !r.Empty() {
+		fmt.Fprintf(&b, "   Remedy: %s\n", r)
+	}
 	return b.String()
 }
 
