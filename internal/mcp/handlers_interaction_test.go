@@ -305,6 +305,80 @@ func TestHandleScrollDirectionHonoursAnExplicitPixelsOverride(t *testing.T) {
 	}
 }
 
+// A supplied pixels:0 is a caller asking for NO movement — the agent computing a remaining
+// distance that reaches zero exactly when it wants to stop. It used to fall through to the
+// keyword step and scroll the full 800px in the direction named, answering success, so the
+// agent re-measured and asked again and walked the page a step per turn.
+//
+// The fix is presence, not truthiness: the zero travels on the direction's axis and reaches
+// the shared zero-delta resolver that refuses it for every other spelling. That refusal is
+// the bridge's and is pinned in internal/bridge; what belongs here is that the zero reaches
+// the wire at all, since the old code substituted a magnitude before the request was ever
+// built. The mock server cannot refuse, which is exactly why the assertion is on the body.
+// The direction rows are asserted TOGETHER with the four spellings that already forwarded
+// their zero, because the defect was not that the zero was mishandled — it was that one
+// route out of five never reached the rule. A table covering only the fixed route would
+// pass again the next time a branch learns to substitute a magnitude of its own.
+func TestEverySpellingOfAZeroReachesTheResolverRatherThanASubstitutedMagnitude(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		axis string
+	}{
+		{name: "direction down", args: map[string]any{"direction": "down", "pixels": float64(0)}, axis: "scrollY"},
+		{name: "direction up", args: map[string]any{"direction": "up", "pixels": float64(0)}, axis: "scrollY"},
+		{name: "direction left", args: map[string]any{"direction": "left", "pixels": float64(0)}, axis: "scrollX"},
+		{name: "pixels alone", args: map[string]any{"pixels": float64(0)}, axis: "scrollY"},
+		{name: "pixels at a coordinate", args: map[string]any{"pixels": float64(0), "x": float64(200), "y": float64(200)}, axis: "deltaY"},
+		{name: "pixels at an element", args: map[string]any{"pixels": float64(0), "selector": "#t"}, axis: "deltaY"},
+		{name: "the wheel spelling", args: map[string]any{"deltaY": float64(0)}, axis: "deltaY"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := mockPinchTab()
+			defer srv.Close()
+
+			r := callTool(t, "pinchtab_scroll", tc.args, srv)
+
+			body, _ := resultJSON(t, r)["body"].(map[string]any)
+			value, present := body[tc.axis]
+			if !present {
+				t.Fatalf("payload carries no %s, so the bridge cannot refuse a zero it never receives: %v", tc.axis, body)
+			}
+			if got, _ := value.(float64); got != 0 {
+				t.Errorf("%s = %v, want 0 — the caller supplied the magnitude and asked for none", tc.axis, got)
+			}
+		})
+	}
+}
+
+// The other half, asserted separately so neither can carry the other: absence still means
+// the keyword step, and a supplied non-zero still overrides it with the direction's sign.
+// Making a supplied zero honoured must not make an ABSENT pixels honoured as zero.
+func TestScrollDirectionKeepsItsStepWhenPixelsIsAbsentOrNonZero(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want float64
+	}{
+		{name: "absent pixels keeps the keyword step", args: map[string]any{"direction": "down"}, want: float64(scroll.StepPixels)},
+		{name: "absent pixels still multiplies by steps", args: map[string]any{"direction": "down", "steps": float64(2)}, want: float64(2 * scroll.StepPixels)},
+		{name: "a supplied non-zero still overrides", args: map[string]any{"direction": "down", "pixels": float64(50)}, want: 50},
+		{name: "the override takes the direction's sign", args: map[string]any{"direction": "up", "pixels": float64(50)}, want: -50},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := mockPinchTab()
+			defer srv.Close()
+
+			r := callTool(t, "pinchtab_scroll", tc.args, srv)
+
+			body, _ := resultJSON(t, r)["body"].(map[string]any)
+			if got, _ := body["scrollY"].(float64); got != tc.want {
+				t.Errorf("scrollY = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestHandleScrollSelectorPixelsUsesMouseWheel(t *testing.T) {
 	srv := mockPinchTab()
 	defer srv.Close()

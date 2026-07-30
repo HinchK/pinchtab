@@ -213,8 +213,15 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 						"direction and deltaX/deltaY each set a scroll magnitude; send one — direction for a %s step, or an explicit delta for a precise wheel move",
 						scrollStepDescription)), nil
 				}
+				// Presence, not truthiness. hasPixels already says the caller supplied a
+				// magnitude, and re-testing it for non-zero threw that away: a computed
+				// pixels:0 fell through to the keyword step and scrolled a full step in the
+				// direction the caller named, from a caller asking for no movement. Honouring
+				// the zero routes it into the shared zero-delta resolver, which already
+				// refuses it for every other spelling — so the rule keeps one owner and this
+				// caller stops being the one that never reaches it.
 				distance := resolved.Delta * steps
-				if hasPixels && pixels != 0 {
+				if hasPixels {
 					magnitude := pixels
 					if magnitude < 0 {
 						magnitude = -magnitude
