@@ -320,20 +320,13 @@ func PlatformVersionFor(uaDataPlatform string) string {
 	return defaultPlatformVersions[uaDataPlatform]
 }
 
-// architectureFor derives the UA-CH architecture the persona advertises. The host
-// is consulted under the same gate hostPlatformVersion applies to the OS version:
-// only a persona describing this host may read it. Without that gate a Windows or
-// Linux persona on an Apple Silicon host answered getHighEntropyValues with arm
-// while its own UA said "Win64; x64" — a contradiction a detector reads for free.
-//
-// macOS is the only host arm, and not merely because hostPlatformVersion has two:
-// real Chrome on Apple Silicon ships the "Intel Mac OS X" UA with architecture arm,
-// so there the host value agrees with the UA. The shipped Windows and Linux UAs
-// carry x64 and x86_64 literally, so the host may never override them — those
-// personas always report x86 today, since no matrix UA carries an ARM token.
-// The UA branch below is what a future ARM matrix entry would travel through; it is
-// unreachable rather than dead, and deleting it would remove the only correct way
-// to offer an ARM persona.
+// architectureFor derives the UA-CH architecture the persona advertises. The host is
+// read only when the persona describes it — the gate hostPlatformVersion applies to
+// the OS version — because real Chrome on Apple Silicon ships the "Intel Mac OS X" UA
+// WITH architecture arm, so macOS is the one platform whose host value agrees with its
+// UA. The UA-token branch is unreachable rather than dead: no shipped matrix UA carries
+// an ARM token, so Windows and Linux report x86 today, and a future ARM matrix entry
+// (which must also set the hardcoded bitness) is the supported way to add one.
 func architectureFor(ua, uaDataPlatform string) string {
 	return architectureForHost(ua, uaDataPlatform, goruntime.GOOS, goruntime.GOARCH)
 }
