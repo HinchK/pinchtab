@@ -242,10 +242,17 @@ func TestReadabilityCollapsed_FloorKeepsShortPages(t *testing.T) {
 
 func textResponseRecorder(t *testing.T, extraction textExtraction, maxChars int, format string) *httptest.ResponseRecorder {
 	t.Helper()
+	return scopedTextResponseRecorder(t, extraction, maxChars, format, nil)
+}
+
+// scopedTextResponseRecorder drives the same writer with a frame disclosure, which is the
+// only difference a scoped read makes to this envelope.
+func scopedTextResponseRecorder(t *testing.T, extraction textExtraction, maxChars int, format string, scope *frameDisclosure) *httptest.ResponseRecorder {
+	t.Helper()
 	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/text", nil)
-	h.writeTextResponse(w, r, context.Background(), extraction, maxChars, format, nil)
+	h.writeTextResponse(w, r, context.Background(), extraction, maxChars, format, nil, scope)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
 	}

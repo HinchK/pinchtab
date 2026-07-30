@@ -44,6 +44,77 @@ func (h *Handlers) selectorFrameID(tabID string) string {
 	return scope.FrameID
 }
 
+// frameDisclosure is what a read publishes when the tab is frame-scoped. The scope is
+// per-tab server state that outlives the caller who set it, so a reader who did not set it
+// — a later turn, or a different caller on a shared tab — otherwise sees child content under
+// the parent's title and url with nothing in the payload to say so.
+//
+// It is the scope object /frame already returns plus the frame's live title, so the wire has
+// one spelling of this value rather than a second shape under the same key.
+type frameDisclosure struct {
+	bridge.FrameScope
+	FrameTitle string `json:"frameTitle,omitempty"`
+}
+
+// frameIdentityScript reads the frame's own identity at read time. The stored scope carries
+// the url the frame had when the scope was set, and a frame that navigated since would have
+// the read attributed to a document it no longer holds — which is the defect one level down.
+const frameIdentityScript = `({title: document.title || "", url: String(location.href)})`
+
+// frameDisclosureFor answers "what frame was this read served from", nil for a whole-document
+// read so an unscoped payload gains nothing. frameID is the frame the caller ALREADY resolved
+// and read through, so the disclosure cannot describe a scope the read did not use; the
+// stored scope is consulted only to name that frame, through currentFrameScope, the accessor
+// the scoping itself goes through. A read scoped by an explicit ?frameId= is disclosed the
+// same way, with whatever the stored scope knows about that frame when the two agree.
+func (h *Handlers) frameDisclosureFor(ctx context.Context, tabID, frameID string) *frameDisclosure {
+	if frameID == "" {
+		return nil
+	}
+	scope := bridge.FrameScope{FrameID: frameID}
+	if stored, ok := h.currentFrameScope(tabID); ok && stored.FrameID == frameID {
+		scope = stored
+	}
+	disclosure := &frameDisclosure{FrameScope: scope}
+	var identity struct {
+		Title string `json:"title"`
+		URL   string `json:"url"`
+	}
+	if err := h.Bridge.EvaluateInFrame(ctx, frameID, frameIdentityScript, &identity, bridge.EvalOpts{}); err == nil {
+		disclosure.FrameTitle = identity.Title
+		if identity.URL != "" {
+			disclosure.FrameURL = identity.URL
+		}
+	}
+	return disclosure
+}
+
+// marker is the short form the plain-text headers carry. It prefers the owner ref because
+// that is the handle `pinchtab frame <target>` accepts — a raw frame id is not a target it
+// resolves — so a reader who spots the marker can act on it.
+func (d *frameDisclosure) marker() string {
+	if d == nil {
+		return ""
+	}
+	if d.OwnerRef != "" {
+		return "frame " + d.OwnerRef
+	}
+	id := d.FrameID
+	if len(id) > 12 {
+		id = id[:12] + "…"
+	}
+	return "frame " + id
+}
+
+// attach publishes the disclosure on a response map. Absent when unscoped: the third
+// acceptance criterion is that nothing new appears in the common case.
+func (d *frameDisclosure) attach(payload map[string]any) map[string]any {
+	if d != nil {
+		payload["frame"] = d
+	}
+	return payload
+}
+
 func (h *Handlers) resolveSelectorNodeID(ctx context.Context, tabID, raw string) (int64, error) {
 	return h.resolveSelectorNodeIDInFrame(ctx, tabID, raw, "")
 }

@@ -260,6 +260,44 @@ cells stay two fields rather than one number.
 `/text` is also frame-aware. `frameId` targets a specific iframe for a one-shot
 read; otherwise the endpoint inherits the tab's current `/frame` scope.
 
+### The `frame` Disclosure On Scoped Reads
+
+A `/frame` scope is per-tab server state, not a per-request argument: it survives every
+later command until something clears it, so the caller who reads a scoped tab is often not
+the one who scoped it. `/snapshot` and `/text` therefore publish the frame they were served
+from:
+
+```json
+"frame": {
+  "frameId": "886601397BFA0B332880152438BD0153",
+  "frameUrl": "http://127.0.0.1:18798/inner.html",
+  "frameName": "payment-frame",
+  "frameTitle": "Inner",
+  "ownerRef": "e3"
+}
+```
+
+- The key is **absent** on a whole-document read, so nothing changes for an unscoped caller.
+- `frameUrl` and `frameTitle` are read from the frame at request time and are what the
+  returned content belongs to; a frame that navigated since the scope was set reports where
+  it is now.
+- Top-level `url` and `title` keep their meaning in every response, scoped or not: they are
+  the TAB's document. They are never re-pointed at the frame — a field that meant one thing
+  usually and another under invisible state is the defect this disclosure exists to remove.
+- `format=compact` and `format=text` carry the same fact in the header, as
+  `# Outer | http://127.0.0.1:18798/ | frame e3 | 3 nodes`. The marker names the owner ref
+  when one is known, because that is the handle `POST /frame` takes as a `target`; a raw
+  frame id is not. Without a known ref it names a shortened frame id.
+- The object is the one `GET /frame` returns under `frame`, plus `frameTitle`.
+
+`/capture` reports the same frame id as `epoch.frameId`. That key is unchanged and stays
+part of the epoch contract — it pairs a capture with the DOM epoch it was taken against
+rather than disclosing a scope — so the two carry the same value under different contracts.
+
+`/html` and `/styles` already disclose their frame as a top-level `frameId`, and their `url`
+and `title` come from the frame's own document rather than the tab's, so a scoped read there
+was never attributed to the parent.
+
 Find body fields:
 
 - `query`

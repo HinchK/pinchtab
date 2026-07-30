@@ -106,10 +106,11 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, status, err)
 			return
 		}
+		scopeInfo := h.frameDisclosureFor(tCtx, resolvedTabID, targetFrameID)
 		if selectorParam != "" || refParam != "" {
-			h.writeElementTextResponse(w, r, tCtx, text)
+			h.writeElementTextResponse(w, r, tCtx, text, scopeInfo)
 		} else {
-			h.writeTextResponse(w, r, tCtx, extraction, maxChars, format, textRoute)
+			h.writeTextResponse(w, r, tCtx, extraction, maxChars, format, textRoute, scopeInfo)
 		}
 		return
 	}
@@ -117,15 +118,15 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeElementTextResponse writes an already scope-validated element read.
-func (h *Handlers) writeElementTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, text string) {
+func (h *Handlers) writeElementTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, text string, scope *frameDisclosure) {
 	url, _ := h.Bridge.CurrentURL(tCtx)
 	title, _ := h.Bridge.CurrentTitle(tCtx)
 	h.recordResolvedURL(r, url)
-	httpx.JSON(w, 200, map[string]any{
+	httpx.JSON(w, 200, scope.attach(map[string]any{
 		"url":   url,
 		"title": title,
 		"text":  text,
-	})
+	}))
 }
 
 const rawTextScript = `document.body.innerText`
@@ -262,7 +263,7 @@ func truncateChars(s string, limit int) (string, bool) {
 
 // writeTextResponse truncates, IDPI-scans, and writes the document text as
 // plain text (format text/plain) or the JSON envelope.
-func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, extraction textExtraction, maxChars int, format string, route *browserops.RouteMetadata) {
+func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, extraction textExtraction, maxChars int, format string, route *browserops.RouteMetadata, scope *frameDisclosure) {
 	text := extraction.Text
 	truncated := false
 	if maxChars > -1 {
@@ -290,7 +291,7 @@ func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCt
 		return
 	}
 
-	resp := map[string]any{
+	resp := scope.attach(map[string]any{
 		"url":        url,
 		"title":      title,
 		"text":       text,
@@ -298,7 +299,7 @@ func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCt
 		"route":      route,
 		"extraction": extraction.Mode,
 		"textLength": utf8.RuneCountInString(text),
-	}
+	})
 	if extraction.RawKnown {
 		resp["rawLength"] = extraction.RawLength
 	}

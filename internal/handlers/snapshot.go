@@ -113,6 +113,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	var scopeNodeID int64
 
 	frameScope := h.selectorFrameID(resolvedTabID)
+	scopeInfo := h.frameDisclosureFor(tCtx, resolvedTabID, frameScope)
 	ghostRoute := snapChromeRoute != nil && snapChromeRoute.UsedBrowser == config.BrowserGhostChrome
 	var modalOpen bool
 	if frameScope != "" || selector != "" || !ghostRoute {
@@ -250,19 +251,19 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		switch format {
 		case "text":
 			ext = ".txt"
-			textContent := fmt.Sprintf("# %s\n# %s\n# %d nodes\n# %s\n\n%s",
-				title, url, len(flat), time.Now().Format(time.RFC3339),
+			textContent := fmt.Sprintf("%s\n# %s\n\n%s",
+				snapshotTextHeader(title, url, len(flat), scopeInfo), time.Now().Format(time.RFC3339),
 				bridge.FormatSnapshotText(flat))
 			content = []byte(textContent)
 		case "yaml":
 			ext = ".yaml"
-			data := map[string]any{
+			data := scopeInfo.attach(map[string]any{
 				"url":       url,
 				"title":     title,
 				"timestamp": time.Now().Format(time.RFC3339),
 				"nodes":     flat,
 				"count":     len(flat),
-			}
+			})
 			if doDiff && prevNodes != nil {
 				added, changed, removed := bridge.DiffSnapshot(prevNodes, flat)
 				data["diff"] = true
@@ -284,13 +285,13 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		default:
 			ext = ".json"
-			data := map[string]any{
+			data := scopeInfo.attach(map[string]any{
 				"url":       url,
 				"title":     title,
 				"timestamp": time.Now().Format(time.RFC3339),
 				"nodes":     flat,
 				"count":     len(flat),
-			}
+			})
 			if doDiff && prevNodes != nil {
 				added, changed, removed := bridge.DiffSnapshot(prevNodes, flat)
 				data["diff"] = true
@@ -361,8 +362,8 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		if format == "compact" {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.WriteHeader(200)
-			_, _ = fmt.Fprintf(w, "# %s | %s | %d nodes | +%d ~%d -%d",
-				title, url, len(flat), len(added), len(changed), len(removed))
+			_, _ = fmt.Fprintf(w, "%s | +%d ~%d -%d",
+				snapshotCompactHeader(title, url, len(flat), scopeInfo), len(added), len(changed), len(removed))
 			if truncated {
 				_, _ = fmt.Fprintf(w, " (truncated to ~%d tokens)", maxTokens)
 			}
@@ -375,7 +376,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		httpx.JSON(w, 200, map[string]any{
+		httpx.JSON(w, 200, scopeInfo.attach(map[string]any{
 			"url":     url,
 			"title":   title,
 			"route":   snapChromeRoute,
@@ -389,7 +390,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 				"removed": len(removed),
 				"total":   len(flat),
 			},
-		})
+		}))
 		return
 	}
 
@@ -397,7 +398,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	case "compact":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(200)
-		_, _ = fmt.Fprintf(w, "# %s | %s | %d nodes", title, url, len(flat))
+		_, _ = fmt.Fprintf(w, "%s", snapshotCompactHeader(title, url, len(flat), scopeInfo))
 		if truncated {
 			_, _ = fmt.Fprintf(w, " (truncated to ~%d tokens)", maxTokens)
 		}
@@ -413,7 +414,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	case "text":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(200)
-		_, _ = fmt.Fprintf(w, "# %s\n# %s\n# %d nodes\n", title, url, len(flat))
+		_, _ = fmt.Fprintf(w, "%s\n", snapshotTextHeader(title, url, len(flat), scopeInfo))
 		if scopedEmptyHint != "" {
 			_, _ = fmt.Fprintf(w, "# hint: %s\n", scopedEmptyHint)
 		}
@@ -424,12 +425,12 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = w.Write([]byte(content))
 	case "yaml":
-		data := map[string]any{
+		data := scopeInfo.attach(map[string]any{
 			"url":   url,
 			"title": title,
 			"nodes": flat,
 			"count": len(flat),
-		}
+		})
 		if scopedEmptyHint != "" {
 			data["hint"] = scopedEmptyHint
 		}
@@ -442,13 +443,13 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		_, _ = w.Write(yamlContent)
 	default:
-		resp := map[string]any{
+		resp := scopeInfo.attach(map[string]any{
 			"url":   url,
 			"title": title,
 			"route": snapChromeRoute,
 			"nodes": flat,
 			"count": len(flat),
-		}
+		})
 		if truncated {
 			resp["truncated"] = true
 			resp["maxTokens"] = maxTokens
@@ -465,6 +466,27 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.JSON(w, 200, resp)
 	}
+}
+
+// snapshotCompactHeader and snapshotTextHeader are the one place each header shape is built,
+// so the scope marker cannot reach three of the four sites that print one. The marker keeps
+// title and url meaning what they always meant — the TAB's document — and adds the fact that
+// the nodes below came from a frame inside it; re-pointing url at the frame would make one
+// field mean two things depending on invisible state, which is the defect being fixed.
+func snapshotCompactHeader(title, url string, count int, scope *frameDisclosure) string {
+	parts := []string{"# " + title, url}
+	if marker := scope.marker(); marker != "" {
+		parts = append(parts, marker)
+	}
+	return strings.Join(append(parts, fmt.Sprintf("%d nodes", count)), " | ")
+}
+
+func snapshotTextHeader(title, url string, count int, scope *frameDisclosure) string {
+	header := fmt.Sprintf("# %s\n# %s\n", title, url)
+	if marker := scope.marker(); marker != "" {
+		header += "# " + marker + "\n"
+	}
+	return header + fmt.Sprintf("# %d nodes", count)
 }
 
 func (h *Handlers) scopedSnapshotNodes(
