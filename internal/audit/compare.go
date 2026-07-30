@@ -244,10 +244,10 @@ func diffPageData(live, staging PageResult) []DataDrift {
 		record("consoleErrors", liveErrs, stagingErrs)
 	}
 	if liveJS, stagingJS := jsErrorIdentities(live), jsErrorIdentities(staging); !slices.Equal(liveJS, stagingJS) {
-		record("jsErrors", jsErrorDriftValue(liveJS), jsErrorDriftValue(stagingJS))
+		record("jsErrors", identityDriftValue(liveJS), identityDriftValue(stagingJS))
 	}
-	if lb, sb := len(live.Browser.BrokenAssets), len(staging.Browser.BrokenAssets); lb != sb {
-		record("brokenAssets", lb, sb)
+	if liveAssets, stagingAssets := brokenAssetIdentities(live), brokenAssetIdentities(staging); !slices.Equal(liveAssets, stagingAssets) {
+		record("brokenAssets", identityDriftValue(liveAssets), identityDriftValue(stagingAssets))
 	}
 	if live.Browser.AccessibilityScore != staging.Browser.AccessibilityScore {
 		record("accessibilityScore", live.Browser.AccessibilityScore, staging.Browser.AccessibilityScore)
@@ -258,9 +258,18 @@ func diffPageData(live, staging PageResult) []DataDrift {
 	return drift
 }
 
-// jsErrorOriginPlaceholder stands in for a page's own scheme://host inside an
-// exception message, so the same failure on two base URLs reads as one identity.
-const jsErrorOriginPlaceholder = "<origin>"
+// originPlaceholder stands in for a page's own scheme://host inside an identity, so the same
+// failure on two base URLs reads as one identity. One masking rule, shared by every identity
+// this file builds: a second copy would let the two comparisons drift apart on the one
+// property that makes them comparable at all.
+const originPlaceholder = "<origin>"
+
+func maskOrigin(value, origin string) string {
+	if origin == "" {
+		return value
+	}
+	return strings.ReplaceAll(value, origin, originPlaceholder)
+}
 
 // jsErrorIdentities is the sorted multiset of uncaught exceptions on a page.
 // Unlike the count-based fields, uncaught errors are compared by identity: a
@@ -280,10 +289,34 @@ func jsErrorIdentities(p PageResult) []string {
 
 func jsErrorIdentity(message, origin string) string {
 	first, _, _ := strings.Cut(message, "\n")
-	if origin != "" {
-		first = strings.ReplaceAll(first, origin, jsErrorOriginPlaceholder)
+	return strings.TrimSpace(maskOrigin(first, origin))
+}
+
+// brokenAssetIdentities is the sorted multiset of assets that failed with an HTTP STATUS,
+// each as its url with the page's own origin masked. Comparing identities rather than counts
+// is what lets a 404 present on BOTH sides stop reading as clean and a swap — a different
+// asset broken on each side at the same count — stop reading as a wash.
+//
+// TRANSPORT ERRORS ARE EXCLUDED, and this is the only place they are: observe.IsBrokenAsset
+// counts a failed request as broken for /network and every other consumer, where a connection
+// reset genuinely IS a broken load and must stay visible. What that rule cannot survive is
+// being the input to a CI gate. A reset, a slow favicon landing outside the collection window
+// or a still-warming environment happens on ONE side only, so two identical pages reported a
+// brokenAssets drift about one run in five — and a gate that reds a clean deploy for no reason
+// is switched off, which gives back every regression it was there to catch. A failure carrying
+// an HTTP status is a property of the deployment and is compared; a failure without one is a
+// property of the run.
+func brokenAssetIdentities(p PageResult) []string {
+	origin := urlOrigin(p.URL)
+	identities := make([]string, 0, len(p.Browser.BrokenAssets))
+	for _, asset := range p.Browser.BrokenAssets {
+		if asset.Status < 400 {
+			continue
+		}
+		identities = append(identities, fmt.Sprintf("%s %d", maskOrigin(asset.URL, origin), asset.Status))
 	}
-	return strings.TrimSpace(first)
+	sort.Strings(identities)
+	return identities
 }
 
 func urlOrigin(raw string) string {
@@ -294,9 +327,9 @@ func urlOrigin(raw string) string {
 	return u.Scheme + "://" + u.Host
 }
 
-// jsErrorDriftValue names the exceptions behind the count, so a reader can tell
-// a substitution (1 vs 1) from an unchanged page.
-func jsErrorDriftValue(identities []string) string {
+// identityDriftValue names what is behind the count, so a reader can tell a substitution
+// (1 vs 1) from an unchanged page. Shared by every identity-compared field.
+func identityDriftValue(identities []string) string {
 	if len(identities) == 0 {
 		return "0"
 	}

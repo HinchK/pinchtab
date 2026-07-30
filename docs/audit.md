@@ -125,13 +125,22 @@ screenshot pairs, and diffs the data (uncaught JS errors, console error count,
 broken assets, accessibility score, load time with a noise threshold). Pages
 present on only one side are reported as `added`/`removed`.
 
-Uncaught JS errors (`jsErrors`) are compared by identity rather than by count:
-each exception's first message line, with the page's own `scheme://host`
-masked, so the same failure on two base URLs matches. An exception on one side
-only — or one swapped for another — is drift; the same exception on both sides
-is not, since this gate compares two deploys and does not judge absolute page
-health. The other fields, `consoleErrors` included, compare counts, so
-substituting one console message for another stays invisible.
+Uncaught JS errors (`jsErrors`) and broken assets (`brokenAssets`) are compared
+by identity rather than by count, both with the page's own `scheme://host`
+masked so the same failure on two base URLs matches: an exception's first
+message line, and an asset's `url` plus its HTTP status. A failure on one side
+only — or one swapped for another at the same count — is drift; the same
+failure on both sides is not, since this gate compares two deploys and does not
+judge absolute page health. The other fields, `consoleErrors` included, compare
+counts, so substituting one console message for another stays invisible.
+
+A broken asset with no HTTP status — a transport error such as a connection
+reset, or a request that never completed inside the collection window — is not
+compared. `--fail-on-diff` is a gate on the deployment, and which request a run
+happened to lose is a property of the run: counting those made two identical
+sites fail roughly one run in five. They are still reported in full by the
+audit itself and by `/network`, where a failed load is a real finding; the
+exclusion applies only to this comparison.
 
 | Flag | Default | Meaning |
 |---|---|---|
