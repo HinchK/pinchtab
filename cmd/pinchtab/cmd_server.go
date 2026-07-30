@@ -117,10 +117,36 @@ func applyServerAddressFlags(cfg *config.RuntimeConfig, bind, port string) {
 // starts resolves its own. Give either of them a level flag and it must route
 // through here.
 func resolveLogLevel(cfg *config.RuntimeConfig, logLevel string, verbose bool) {
+	notice := verboseLevelNotice(logLevel, cfg.LogLevel, verbose)
 	if v := strings.TrimSpace(logLevel); v != "" {
 		cfg.LogLevel = v
 	}
 	applyLogLevel(cfg, verbose)
+	if notice != "" {
+		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.WarningStyle, notice))
+	}
+}
+
+// verboseLevelNotice explains the one case where -v looks like a no-op: it always adds
+// the banner, but it only raises the level when neither --log-level nor server.logLevel
+// has set one. It reads both sources BEFORE resolveLogLevel folds the flag into
+// cfg.LogLevel, which is the only point at which they are still distinguishable.
+func verboseLevelNotice(flagLevel, configLevel string, verbose bool) string {
+	if !verbose {
+		return ""
+	}
+	level, source := strings.TrimSpace(flagLevel), "--log-level"
+	if level == "" {
+		level, source = strings.TrimSpace(configLevel), "server.logLevel in the config file"
+	}
+	if level == "" {
+		return ""
+	}
+	parsed, err := safelog.ParseLevel(level)
+	if err != nil || parsed == slog.LevelDebug {
+		return ""
+	}
+	return fmt.Sprintf("-v: log level stays %s, set by %s; pass --log-level debug to raise it", level, source)
 }
 
 func applyLogLevel(cfg *config.RuntimeConfig, verbose bool) {

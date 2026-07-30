@@ -166,6 +166,121 @@ func TestLogLevelPrecedenceFlagBeatsConfigBeatsDefault(t *testing.T) {
 	}
 }
 
+// -v always adds the banner but only raises the level when nothing else set one. That
+// is the documented precedence and it stays; the notice is what makes it discoverable
+// instead of a silent no-op. It is a diagnostic for a person who typed -v, so every
+// other shape — the sources agreeing, -v being the thing that sets the level, a run
+// with no -v at all — must stay silent.
+func TestVerboseLevelNoticeNamesTheSourceThatWon(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		flag        string
+		configLevel string
+		verbose     bool
+		want        string
+	}{
+		{
+			name:        "config beats verbose",
+			configLevel: "warn",
+			verbose:     true,
+			want:        "-v: log level stays warn, set by server.logLevel in the config file; pass --log-level debug to raise it",
+		},
+		{
+			name:    "flag beats verbose",
+			flag:    "error",
+			verbose: true,
+			want:    "-v: log level stays error, set by --log-level; pass --log-level debug to raise it",
+		},
+		{
+			name:        "flag beats config and is named as the source",
+			flag:        "error",
+			configLevel: "warn",
+			verbose:     true,
+			want:        "-v: log level stays error, set by --log-level; pass --log-level debug to raise it",
+		},
+		{name: "sources agree via the flag", flag: "debug", verbose: true},
+		{name: "sources agree via the config", configLevel: "debug", verbose: true},
+		{name: "sources agree in another case", configLevel: "DEBUG", verbose: true},
+		{name: "verbose is the thing setting the level", verbose: true},
+		{name: "blank flag and blank config", flag: "   ", configLevel: "  ", verbose: true},
+		{name: "instance-style config without verbose", configLevel: "warn"},
+		{name: "flag without verbose", flag: "error"},
+		{name: "nothing at all"},
+		{name: "an invalid level is applyLogLevel's business", configLevel: "shout", verbose: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := verboseLevelNotice(tc.flag, tc.configLevel, tc.verbose); got != tc.want {
+				t.Errorf("verboseLevelNotice(%q, %q, %v) = %q, want %q", tc.flag, tc.configLevel, tc.verbose, got, tc.want)
+			}
+		})
+	}
+}
+
+// The notice is only worth anything if resolveLogLevel actually emits it, and it must
+// land on stderr: stdout belongs to commands whose output is a consumed value.
+func TestResolveLogLevelEmitsTheVerboseNoticeOnStderr(t *testing.T) {
+	t.Cleanup(func() { safelog.SetLevel(safelog.DefaultLevel) })
+
+	for _, tc := range []struct {
+		name        string
+		configLevel string
+		verbose     bool
+		wantNotice  bool
+	}{
+		{name: "verbose against a persisted level", configLevel: "warn", verbose: true, wantNotice: true},
+		{name: "instance-style config with no verbose", configLevel: "warn"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			safelog.SetLevel(slog.LevelInfo)
+			cfg := &config.RuntimeConfig{LogLevel: tc.configLevel}
+
+			stdout, stderr := captureStdoutStderr(t, func() { resolveLogLevel(cfg, "", tc.verbose) })
+
+			if got := strings.Contains(stderr, "pass --log-level debug to raise it"); got != tc.wantNotice {
+				t.Errorf("stderr carries the notice = %v, want %v (stderr = %q)", got, tc.wantNotice, stderr)
+			}
+			if stdout != "" {
+				t.Errorf("stdout = %q, want nothing; the notice is a diagnostic", stdout)
+			}
+			if got := safelog.CurrentLevel(); got != slog.LevelWarn {
+				t.Errorf("level = %v, want warn; the notice must not change the precedence", got)
+			}
+		})
+	}
+}
+
+func captureStdoutStderr(t *testing.T, fn func()) (string, string) {
+	t.Helper()
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	origOut, origErr := os.Stdout, os.Stderr
+	os.Stdout, os.Stderr = outW, errW
+
+	fn()
+
+	os.Stdout, os.Stderr = origOut, origErr
+	if err := outW.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := errW.Close(); err != nil {
+		t.Fatal(err)
+	}
+	var outBuf, errBuf bytes.Buffer
+	if _, err := outBuf.ReadFrom(outR); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := errBuf.ReadFrom(errR); err != nil {
+		t.Fatal(err)
+	}
+	return outBuf.String(), errBuf.String()
+}
+
 // The daemon install and the auto-started server both launch `pinchtab server`
 // with no flags, so the config file is the only way either can ask for a level.
 // This drives the flagless path end to end: file config in, resolved threshold out.
