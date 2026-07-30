@@ -51,11 +51,14 @@ var (
 	// candidate. A comma is NOT a terminator — it separates a data URI's own metadata
 	// from its payload, so excluding it would leave every base64 blob behind.
 	//
-	// A URI only begins where one of those delimiters (or the start) precedes it,
-	// captured in group 1 and re-emitted on replace. Without that, "data:" matched
-	// inside a word — "Metadata:" became "Meta" — stripping the page text this helper
-	// exists to keep. A "data-" attribute is safe either way: it has a hyphen, not a colon.
-	reDataURI    = regexp.MustCompile(`(?i)(\A|["'(,=\s])data:[^"'()<>\s]*`)
+	// Two guards, because each alone corrupts something. The leading delimiter (or start
+	// of input), captured in group 1 and re-emitted on replace, stops "data:" matching
+	// inside a word — without it "Metadata:" became "Meta". It has to include '>', or a
+	// URI opening an element's text content is missed and the whole blob survives. But '>'
+	// alone would then eat the prose label "<td>Data:</td>", so the payload must also look
+	// like a URI: a MIME-shaped prefix and one of '/', ';' or ','. A bare "data:" carries
+	// none of those and is left alone.
+	reDataURI    = regexp.MustCompile(`(?i)(\A|["'(,=\s>])data:[a-z0-9.+-]*[/;,][^"'()<>\s]*`)
 	reWhitespace = regexp.MustCompile(`[ \t]+`)
 	reNewlines   = regexp.MustCompile(`\n{3,}`)
 )

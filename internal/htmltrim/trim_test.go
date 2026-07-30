@@ -154,16 +154,44 @@ func TestTrimHTMLStillStripsWholeValueDataURIs(t *testing.T) {
 	}
 }
 
+// A URI opening an element's text content is preceded by '>', not by a quote, paren, comma,
+// '=' or whitespace. Licensing only those delimiters missed it and the whole blob survived
+// — the budget cost this helper exists to prevent, reintroduced by the guard against
+// over-matching. Text position is where a URI is most expensive, since nothing else in the
+// pipeline strips it.
+func TestTrimHTMLStripsADataURIOpeningTextContent(t *testing.T) {
+	blob := strings.Repeat("A", 64)
+
+	for _, tc := range []struct{ name, html string }{
+		{"table cell", `<td>data:image/png;base64,` + blob + `</td>`},
+		{"code block", `<code>data:text/html,hello</code>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := TrimHTML(tc.html)
+			for _, unwanted := range []string{"data:", blob, "text/html"} {
+				if strings.Contains(got, unwanted) {
+					t.Errorf("still carries %q, so a URI in text position costs the whole budget:\n%s", unwanted, got)
+				}
+			}
+		})
+	}
+}
+
 // The data-URI pattern strips a URI, not the letters "data:" wherever they fall. Widening
 // it to match anywhere inside a value also let it match inside a word — "Metadata:" in page
 // text became "Meta", eating the interactive markup this helper exists to carry. A real URI
-// is preceded by a quote, paren, comma, '=' or whitespace, so those are what license the
-// strip. Reverting the delimiter guard corrupts every one of these.
+// is preceded by a quote, paren, comma, '=', whitespace or '>', so those are what license
+// the strip. Reverting either guard corrupts one of these.
 func TestTrimHTMLLeavesDataColonInsideAWordAlone(t *testing.T) {
 	for _, tc := range []struct{ name, html, want string }{
 		{"prose label", `<p>Metadata: 2024</p>`, `<p>Metadata: 2024</p>`},
 		{"word with a mime tail", `<td>metadata:image/png here</td>`, `<td>metadata:image/png here</td>`},
 		{"data- attribute is unaffected", `<div data-src="keep">x</div>`, `<div data-src="keep">x</div>`},
+		// A field label opening a cell has a delimiter before it — the '>' that closes the
+		// tag — so the delimiter guard cannot save it. What does is the payload shape: a
+		// label carries no MIME prefix and no '/', ';' or ','.
+		{"bare label opening a cell", `<td>Data:</td>`, `<td>Data:</td>`},
+		{"labelled value opening a cell", `<td>Data: 42</td>`, `<td>Data: 42</td>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := TrimHTML(tc.html); got != tc.want {
