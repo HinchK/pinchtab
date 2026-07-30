@@ -267,3 +267,157 @@ func passesButtonOn(fn *ast.FuncDecl) bool {
 	})
 	return found
 }
+
+// dragCapture records what one DragBetweenPoints put on the wire, without a browser: the
+// press/release payloads and the button state of every interpolated move.
+type dragCapture struct {
+	pressed  []map[string]any
+	moveEnum []input.MouseButton
+	moveMask []int64
+}
+
+func captureDrag(t *testing.T, button string) (*dragCapture, error) {
+	t.Helper()
+	origEvent, origMove := dispatchMouseEventFunc, dispatchRealMouseMoveFunc
+	t.Cleanup(func() {
+		dispatchMouseEventFunc = origEvent
+		dispatchRealMouseMoveFunc = origMove
+	})
+
+	got := &dragCapture{}
+	dispatchMouseEventFunc = func(_ context.Context, payload map[string]any) error {
+		got.pressed = append(got.pressed, payload)
+		return nil
+	}
+	dispatchRealMouseMoveFunc = func(_ context.Context, _, _ float64, b input.MouseButton, mask int64) error {
+		got.moveEnum = append(got.moveEnum, b)
+		got.moveMask = append(got.moveMask, mask)
+		return nil
+	}
+	return got, DragBetweenPoints(context.Background(), 10, 10, 200, 200, button)
+}
+
+// THE ASSERTION THAT WOULD HAVE CAUGHT THE SPLIT, driven at the call site and enumerated
+// over the table rather than over three restated names: a drag used to take its press
+// button from the NAME and its held moves from a hand-written switch, so a fourth entry
+// would have pressed one button and moved under another. Adding a row to the table brings
+// it into this test with no edit here.
+func TestEveryButtonInTheTableIsPressedAndHeldAsItself(t *testing.T) {
+	for _, want := range mouseButtonTable {
+		t.Run(want.name, func(t *testing.T) {
+			got, err := captureDrag(t, want.name)
+			if err != nil {
+				t.Fatalf("DragBetweenPoints(%q): %v", want.name, err)
+			}
+
+			if len(got.pressed) != 2 {
+				t.Fatalf("press/release events = %d, want 2: %v", len(got.pressed), got.pressed)
+			}
+			for _, payload := range got.pressed {
+				if payload["button"] != want.name {
+					t.Errorf("%v carries button %v, want %q", payload["type"], payload["button"], want.name)
+				}
+			}
+
+			if len(got.moveEnum) == 0 {
+				t.Fatal("no interpolated moves were dispatched, so nothing pins what the drag held")
+			}
+			heldMoves := 0
+			for i, enum := range got.moveEnum {
+				if got.moveMask[i] == 0 && enum == input.None {
+					continue // the initial position move, dispatched before the press
+				}
+				heldMoves++
+				if enum != want.enum {
+					t.Errorf("move %d held enum %v, want %v — the press said %q", i, enum, want.enum, want.name)
+				}
+				if got.moveMask[i] != want.held {
+					t.Errorf("move %d held mask %d, want %d", i, got.moveMask[i], want.held)
+				}
+			}
+			if heldMoves == 0 {
+				t.Fatal("every move was button-less, so the held state is unpinned")
+			}
+		})
+	}
+}
+
+// Unspecified means the default; unrecognised is a caller error. The second half is the
+// silent fallback this card removed — heldButton answered left for any name, so a button
+// the validator would have refused still dragged, as left.
+func TestHeldButtonSeparatesUnspecifiedFromUnrecognised(t *testing.T) {
+	for _, unspecified := range []string{"", "   ", "\t"} {
+		row, err := heldButton(unspecified)
+		if err != nil {
+			t.Errorf("heldButton(%q) = %v; an unspecified button is the default, not an error", unspecified, err)
+			continue
+		}
+		if row.name != DefaultMouseButton {
+			t.Errorf("heldButton(%q) = %q, want the default %q", unspecified, row.name, DefaultMouseButton)
+		}
+	}
+
+	// Derived, not listed: a name that later joins the table must stop being a fixture
+	// here rather than turning this test into a false alarm about its own staleness.
+	for _, unrecognised := range namesOutsideTheTable("back", "forward", "primary", "LEFTish") {
+		if row, err := heldButton(unrecognised); err == nil {
+			t.Errorf("heldButton(%q) = %+v with no error; an unrecognised name must not be reinterpreted", unrecognised, row)
+		} else if !strings.Contains(err.Error(), strings.Join(MouseButtons(), ", ")) {
+			t.Errorf("heldButton(%q) error = %q; it must name the buttons that do exist", unrecognised, err)
+		}
+	}
+
+	outside := namesOutsideTheTable("back", "forward")
+	if len(outside) == 0 {
+		t.Skip("every candidate name is now a real button, so there is no unrecognised case to drive")
+	}
+	if _, err := captureDrag(t, outside[0]); err == nil {
+		t.Errorf("DragBetweenPoints accepted %q; the drag is where the silent left used to happen", outside[0])
+	}
+}
+
+// namesOutsideTheTable keeps the candidates that are genuinely not buttons.
+func namesOutsideTheTable(candidates ...string) []string {
+	outside := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		if _, ok := mouseButtonNamed(strings.ToLower(strings.TrimSpace(candidate))); !ok {
+			outside = append(outside, candidate)
+		}
+	}
+	return outside
+}
+
+// Every fact about a button is on its row, so the enum, the mask and the JS code cannot be
+// spelled a second time. The masks are the CDP "buttons" bits and must stay distinct powers
+// of two, or two buttons would be indistinguishable while held.
+func TestTheButtonTableIsTheOnlyPlaceAButtonFactIsWritten(t *testing.T) {
+	if len(mouseButtonTable) < 3 {
+		t.Fatalf("table = %+v; a census over fewer than the three documented buttons would pass vacuously", mouseButtonTable)
+	}
+
+	seenName, seenEnum, seenMask := map[string]bool{}, map[input.MouseButton]bool{}, map[int64]bool{}
+	for _, b := range mouseButtonTable {
+		if seenName[b.name] || seenEnum[b.enum] || seenMask[b.held] {
+			t.Errorf("row %+v repeats a name, enum or mask already in the table", b)
+		}
+		seenName[b.name], seenEnum[b.enum], seenMask[b.held] = true, true, true
+		if b.held == 0 || b.held&(b.held-1) != 0 {
+			t.Errorf("row %+v has held mask %d; the CDP buttons field is a bitmask, so each button owns one bit", b, b.held)
+		}
+		if _, ok := mouseButtonForEnum(b.enum); !ok {
+			t.Errorf("row %+v is not reachable by enum, so mouseButtonCode cannot derive its JS code", b)
+		}
+		if code := mouseButtonCode(b.enum); code != b.jsCode {
+			t.Errorf("mouseButtonCode(%v) = %d, want the row's %d", b.enum, code, b.jsCode)
+		}
+	}
+
+	// A move with nothing pressed is not a left click: input.None has no row, and its zero
+	// is the DOM's "no button" rather than a stand-in for left.
+	if _, ok := mouseButtonForEnum(input.None); ok {
+		t.Error("input.None has a table row; it is the absence of a button, not one of them")
+	}
+	if got := mouseButtonCode(input.None); got != noButtonJSCode {
+		t.Errorf("mouseButtonCode(input.None) = %d, want %d", got, noButtonJSCode)
+	}
+}

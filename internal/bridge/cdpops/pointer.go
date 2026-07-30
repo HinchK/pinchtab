@@ -23,13 +23,53 @@ const mouseMoveDispatchTimeout = 50 * time.Millisecond
 // default; an unrecognised NAME is a caller error, and the two used to share this answer.
 const DefaultMouseButton = "left"
 
-var mouseButtons = []string{DefaultMouseButton, "right", "middle"}
+// mouseButton is one row of the button vocabulary: the name a caller writes, the CDP enum,
+// the "buttons" bitmask that says it is held, and MouseEvent.button for the synthetic DOM
+// fallback. Every fact about a button lives on its row, so a name that validates dispatches
+// correctly BY CONSTRUCTION — the vocabulary used to have one owner for which names exist
+// and hand-written switches for what each name means, so a fourth entry would have passed
+// validation and then been dispatched as left, with a drag pressing one button and moving
+// under another.
+type mouseButton struct {
+	name   string
+	enum   input.MouseButton
+	held   int64
+	jsCode int
+}
 
-// MouseButtons is the one owner of the button vocabulary. The normalizer, the refusal
-// message and the CLI flag help all derive from it, so a fourth button cannot be accepted
-// in one place and refused in another.
+var mouseButtonTable = []mouseButton{
+	{name: DefaultMouseButton, enum: input.Left, held: 1, jsCode: 0},
+	{name: "right", enum: input.Right, held: 2, jsCode: 2},
+	{name: "middle", enum: input.Middle, held: 4, jsCode: 1},
+}
+
+// MouseButtons is the button vocabulary, derived from the table rather than maintained
+// beside it. The normalizer, the refusal message and the CLI flag help all read this, so a
+// fourth button cannot be accepted in one place and refused in another.
 func MouseButtons() []string {
-	return append([]string(nil), mouseButtons...)
+	names := make([]string, 0, len(mouseButtonTable))
+	for _, b := range mouseButtonTable {
+		names = append(names, b.name)
+	}
+	return names
+}
+
+func mouseButtonNamed(name string) (mouseButton, bool) {
+	for _, b := range mouseButtonTable {
+		if b.name == name {
+			return b, true
+		}
+	}
+	return mouseButton{}, false
+}
+
+func mouseButtonForEnum(enum input.MouseButton) (mouseButton, bool) {
+	for _, b := range mouseButtonTable {
+		if b.enum == enum {
+			return b, true
+		}
+	}
+	return mouseButton{}, false
 }
 
 // ValidateMouseButton refuses a name that is not a button, naming the ones that are. Empty
@@ -41,22 +81,18 @@ func ValidateMouseButton(button string) error {
 	if normalized == "" {
 		return nil
 	}
-	for _, name := range mouseButtons {
-		if normalized == name {
-			return nil
-		}
+	if _, ok := mouseButtonNamed(normalized); ok {
+		return nil
 	}
-	return fmt.Errorf("button %q is not a mouse button; use one of %s", button, strings.Join(mouseButtons, ", "))
+	return fmt.Errorf("button %q is not a mouse button; use one of %s", button, strings.Join(MouseButtons(), ", "))
 }
 
 // normalizeMouseButton keeps its permissive default and its plain-string return: by the time
 // a value reaches it, ValidateMouseButton has already refused every name that is not here.
 func normalizeMouseButton(button string) string {
 	normalized := strings.ToLower(strings.TrimSpace(button))
-	for _, name := range mouseButtons {
-		if normalized == name {
-			return normalized
-		}
+	if _, ok := mouseButtonNamed(normalized); ok {
+		return normalized
 	}
 	return DefaultMouseButton
 }
@@ -85,13 +121,13 @@ func mousePressReleaseActions(x, y float64, clickCount int) []chromedp.Action {
 	return []chromedp.Action{
 		mouseEventAction(map[string]any{
 			"type":       "mousePressed",
-			"button":     "left",
+			"button":     DefaultMouseButton,
 			"clickCount": clickCount,
 			"x":          x, "y": y,
 		}),
 		mouseEventAction(map[string]any{
 			"type":       "mouseReleased",
-			"button":     "left",
+			"button":     DefaultMouseButton,
 			"clickCount": clickCount,
 			"x":          x, "y": y,
 		}),
@@ -117,6 +153,10 @@ var (
 	dispatchRealMouseMoveFunc            = dispatchRealMouseMove
 	dispatchSyntheticMouseMoveFunc       = dispatchSyntheticMouseMove
 	dispatchSyntheticMouseMoveOnNodeFunc = dispatchSyntheticMouseMoveOnNode
+	// dispatchMouseEventFunc joins them so a drag's press payload is observable without a
+	// browser: the button a drag PRESSES and the button its moves HOLD have to be compared
+	// to each other, and only the call site can show they agree.
+	dispatchMouseEventFunc = dispatchMouseEvent
 )
 
 func dispatchMouseMove(ctx context.Context, x, y float64, button input.MouseButton, buttons int64) error {
@@ -196,16 +236,21 @@ func dispatchSyntheticMouseMoveOnNode(ctx context.Context, nodeID int64, button 
 	}))
 }
 
+// mouseButtonCode is MouseEvent.button for the synthetic DOM fallback, read off the table.
+// Unlike heldButton, its no-row case has a legitimate caller: a plain move carries
+// input.None, which the DOM encodes as button 0 beside buttons 0. So the zero here is the
+// answer for "nothing pressed", not a stand-in for left.
 func mouseButtonCode(button input.MouseButton) int {
-	switch button {
-	case input.Middle:
-		return 1
-	case input.Right:
-		return 2
-	default:
-		return 0
+	if row, ok := mouseButtonForEnum(button); ok {
+		return row.jsCode
 	}
+	return noButtonJSCode
 }
+
+// noButtonJSCode is MouseEvent.button when no button is pressed. It equals left's code
+// because the DOM says so, which is why the two cases must be told apart by their reason
+// rather than by their value.
+const noButtonJSCode = 0
 
 func MouseMoveByCoordinate(ctx context.Context, x, y float64) error {
 	if err := validatePointerCoordinates(x, y); err != nil {
@@ -230,7 +275,7 @@ func MouseDownByCoordinate(ctx context.Context, x, y float64, button string, mod
 	if err := validatePointerCoordinates(x, y); err != nil {
 		return err
 	}
-	return dispatchMouseEvent(ctx, map[string]any{
+	return dispatchMouseEventFunc(ctx, map[string]any{
 		"type":       "mousePressed",
 		"button":     normalizeMouseButton(button),
 		"clickCount": 1,
@@ -244,7 +289,7 @@ func MouseUpByCoordinate(ctx context.Context, x, y float64, button string, modif
 	if err := validatePointerCoordinates(x, y); err != nil {
 		return err
 	}
-	return dispatchMouseEvent(ctx, map[string]any{
+	return dispatchMouseEventFunc(ctx, map[string]any{
 		"type":       "mouseReleased",
 		"button":     normalizeMouseButton(button),
 		"clickCount": 1,
@@ -354,7 +399,7 @@ func DoubleClickByCoordinate(ctx context.Context, x, y float64) error {
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			return chromedp.FromContext(ctx).Target.Execute(ctx, "Input.dispatchMouseEvent", map[string]any{
 				"type":       "mousePressed",
-				"button":     "left",
+				"button":     DefaultMouseButton,
 				"clickCount": 2,
 				"x":          x,
 				"y":          y,
@@ -363,7 +408,7 @@ func DoubleClickByCoordinate(ctx context.Context, x, y float64) error {
 		chromedp.ActionFunc(func(ctx context.Context) error {
 			return chromedp.FromContext(ctx).Target.Execute(ctx, "Input.dispatchMouseEvent", map[string]any{
 				"type":       "mouseReleased",
-				"button":     "left",
+				"button":     DefaultMouseButton,
 				"clickCount": 2,
 				"x":          x,
 				"y":          y,
@@ -395,17 +440,21 @@ func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int, button string) 
 	return DragBetweenPoints(ctx, x, y, x+float64(dx), y+float64(dy), button)
 }
 
-// heldButton maps a button name to the pair Input.dispatchMouseEvent needs while that
-// button is down: the enum for "button" and the bitmask for "buttons".
-func heldButton(button string) (input.MouseButton, int64) {
-	switch normalizeMouseButton(button) {
-	case "right":
-		return input.Right, 2
-	case "middle":
-		return input.Middle, 4
-	default:
-		return input.Left, 1
+// heldButton resolves a name to its whole row, so the press payload and the held moves of
+// one drag cannot describe different buttons. It resolves empty-means-default itself rather
+// than borrowing normalizeMouseButton, whose permissive contract answers left for an
+// unrecognised name too — routing through it would have moved the silent fallback rather
+// than removing it. Unspecified is a default; unrecognised is a caller error.
+func heldButton(button string) (mouseButton, error) {
+	name := strings.ToLower(strings.TrimSpace(button))
+	if name == "" {
+		name = DefaultMouseButton
 	}
+	row, ok := mouseButtonNamed(name)
+	if !ok {
+		return mouseButton{}, fmt.Errorf("button %q is not a mouse button; use one of %s", button, strings.Join(MouseButtons(), ", "))
+	}
+	return row, nil
 }
 
 // Chrome starts an HTML5 drag only after sustained movement follows the press, so the
@@ -421,15 +470,17 @@ func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64, button str
 	if steps > 20 {
 		steps = 20
 	}
-	held, heldMask := heldButton(button)
-	name := normalizeMouseButton(button)
+	held, err := heldButton(button)
+	if err != nil {
+		return err
+	}
 
 	if err := dispatchMouseMove(ctx, x, y, input.None, 0); err != nil {
 		return err
 	}
-	if err := dispatchMouseEvent(ctx, map[string]any{
+	if err := dispatchMouseEventFunc(ctx, map[string]any{
 		"type":       "mousePressed",
-		"button":     name,
+		"button":     held.name,
 		"clickCount": 1,
 		"x":          x, "y": y,
 	}); err != nil {
@@ -437,13 +488,13 @@ func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64, button str
 	}
 	for i := 1; i <= steps; i++ {
 		t := float64(i) / float64(steps)
-		if err := dispatchMouseMove(ctx, x+t*dx, y+t*dy, held, heldMask); err != nil {
+		if err := dispatchMouseMove(ctx, x+t*dx, y+t*dy, held.enum, held.held); err != nil {
 			return err
 		}
 	}
-	return dispatchMouseEvent(ctx, map[string]any{
+	return dispatchMouseEventFunc(ctx, map[string]any{
 		"type":       "mouseReleased",
-		"button":     name,
+		"button":     held.name,
 		"clickCount": 1,
 		"x":          endX, "y": endY,
 	})
