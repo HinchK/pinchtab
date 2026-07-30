@@ -257,7 +257,7 @@ func TestWrapperArmsAreWiredToTheirOwnScope(t *testing.T) {
 	}
 	src := string(raw)
 
-	for _, tc := range []struct {
+	entries := []struct {
 		entry string
 		want  string
 		other string
@@ -272,7 +272,14 @@ func TestWrapperArmsAreWiredToTheirOwnScope(t *testing.T) {
 			want:  "resolveWrapper(ctx, nodeScope{scopeBackendNodeID}, sel, refCache)",
 			other: "frameScope{",
 		},
-	} {
+	}
+
+	if sites := strings.Count(src, "resolveWrapper(ctx, "); sites != len(entries) {
+		t.Fatalf("action_resolve.go hands the wrapper recursion a scope at %d sites but this guard checks %d — a scope entry point nobody listed here is unguarded, which is how the swap this test exists to catch comes back. Add the new entry point to the table; if resolveWrapper has been replaced, pin the same property (each entry point passes its OWN scope and never the other) against whatever replaced it rather than deleting this test",
+			sites, len(entries))
+	}
+
+	for _, tc := range entries {
 		body := src[strings.Index(src, tc.entry):]
 		if end := strings.Index(body, "\nfunc "); end >= 0 {
 			body = body[:end]
