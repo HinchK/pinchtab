@@ -155,9 +155,6 @@ func (m *visibleMockBridge) GetRefCache(tabID string) *bridge.RefCache {
 	return m.refCache
 }
 
-// visibleFixtureHTML pairs each positioned case with an identically-styled twin that differs
-// only in WHERE the CSS was written, since that is the only input the defect turned on, and
-// adds the hidden cases as negative controls so a guard loosened too far is caught.
 const visibleFixtureHTML = `<style>
 #fixedByStylesheet { position: fixed; top:10px; left:10px; width:120px; height:40px }
 #stickyByStylesheet { position: sticky; top:0; width:120px; height:40px }
@@ -174,8 +171,6 @@ const visibleFixtureHTML = `<style>
 <div id="opacityZero" style="opacity:0; width:120px; height:40px">opacity zero</div>
 <div id="zeroSize" style="width:0; height:0">zero size</div>`
 
-// runElementVisibleJS drives the production predicate against a real element, because the
-// defect lived entirely inside the browser: the endpoint's own plumbing was never wrong.
 func runElementVisibleJS(t *testing.T, ctx context.Context, selector string) bool {
 	t.Helper()
 
@@ -207,10 +202,6 @@ func runElementVisibleJS(t *testing.T, ctx context.Context, selector string) boo
 	return visible
 }
 
-// offsetParent is null for every fixed element, so the branch that rescues that case decided
-// the answer on its own — and while it read the inline style attribute it only rescued an
-// element whose author wrote position in a style= attribute. A modal, cookie banner or
-// toolbar positioned by a stylesheet rule reported not visible with real on-screen geometry.
 func TestTheVisibleEndpointReadsThePositionCSSComputed(t *testing.T) {
 	chromePath := testbrowser.Path(t)
 
@@ -256,9 +247,7 @@ func TestTheVisibleEndpointReadsThePositionCSSComputed(t *testing.T) {
 	}
 }
 
-// The browser-backed table above does not run where no browser is installed, and this is the
-// invariant it exists to protect: the position must come from the computed style, and from
-// the one call the predicate already makes rather than a second one.
+// The browser-backed table above does not run where no browser is installed.
 func TestTheVisiblePredicateNeverReadsTheInlineStyleAttribute(t *testing.T) {
 	if strings.Contains(elementVisibleJS, "el.style.") {
 		t.Errorf("the visible predicate reads the inline style attribute:\n%s", elementVisibleJS)
