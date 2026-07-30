@@ -51,22 +51,11 @@ func (i *Instance) CaptureScreenshot(ctx context.Context, format string, quality
 			cdpFormat = page.CaptureScreenshotFormatJpeg
 		}
 
-		shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(captureFromSurface(clip))
-		if clip != nil {
-			// Scale 0 means native, the contract bridge.ScreenshotOpts states and
-			// normalises. CDP does not: it discards a scale-0 clip and returns the
-			// whole viewport, which is the defect this path already had once.
-			scale := clip.Scale
-			if scale == 0 {
-				scale = 1
-			}
-			shot = shot.WithClip(&page.Viewport{
-				X:      clip.X,
-				Y:      clip.Y,
-				Width:  clip.Width,
-				Height: clip.Height,
-				Scale:  scale,
-			})
+		const beyondViewport = false
+		vp := cdptk.ClipViewport(clip)
+		shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(cdptk.CaptureFromSurface(beyondViewport, vp))
+		if vp != nil {
+			shot = shot.WithClip(vp)
 		}
 		if cdpFormat == page.CaptureScreenshotFormatJpeg && quality > 0 {
 			shot = shot.WithQuality(int64(quality))
@@ -79,33 +68,6 @@ func (i *Instance) CaptureScreenshot(ctx context.Context, format string, quality
 		return nil, fmt.Errorf("screenshot: %w", err)
 	}
 	return buf, nil
-}
-
-// captureFromSurface reports whether a capture has to go through the
-// compositor surface. Only a clipped one does.
-//
-// fromSurface=false reads the renderer's current view directly instead of
-// waiting for a fresh compositor surface frame. On idle pages in headed
-// browsers (e.g. Cloak) the surface stops swapping frames, so the default
-// fromSurface=true blocks until the action deadline (~30s) — stalling one-shot
-// screenshots and polling screencast alike.
-//
-// Reading the view also discards the clip and returns the whole viewport
-// whatever region was asked for, so a clipped capture pays the surface path and
-// the BringToFront above is what keeps that affordable. Screencast polls with a
-// nil clip and keeps the fast read.
-//
-// Measured in headless Chrome on a 120x60 clip, so the flag is not a no-op
-// there and a clipped capture is exactly what makes it observable:
-//
-//	fromSurface=true  clip -> 120x60      fromSurface=false clip -> 756x413
-//	fromSurface=true  nil  -> 756x413     fromSurface=false nil  -> 756x413
-//
-// The nil-clip pair matches on dimensions, which is why the unclipped browser
-// test cannot pin this choice; its pixels do differ, but asserting that would
-// couple the test to Chrome's encoder. Hence the predicate test beside it.
-func captureFromSurface(clip *cdptk.ScreenshotClip) bool {
-	return clip != nil
 }
 
 func (i *Instance) Evaluate(ctx context.Context, expression string, result any, opts browsers.EvalOpts) error {

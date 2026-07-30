@@ -136,24 +136,6 @@ func scaledScreenshotClip(opts ScreenshotOpts, viewportWidth, viewportHeight, do
 	}
 }
 
-// captureFromSurface decides the Page.captureScreenshot fromSurface flag.
-//
-// fromSurface=false reads the renderer's current view directly instead of
-// waiting for a fresh compositor surface frame. On idle pages in headed browsers
-// (e.g. Cloak) the surface stops swapping frames, so the default fromSurface=true
-// blocks until the action deadline (~30s); reading from the view avoids that for
-// plain captures.
-//
-// Anything that changes the captured region needs the page recomposited, which
-// only happens with fromSurface=true: capture-beyond-viewport, a render-time
-// rescale, and the clip itself. Reading the view ignores the clip outright and
-// returns the whole viewport, so every non-nil clip takes the surface path —
-// keeping it off for a native-scale clip is what made a selector capture come
-// back byte-identical to an unclipped one.
-func captureFromSurface(beyondViewport bool, clip *page.Viewport) bool {
-	return beyondViewport || clip != nil
-}
-
 // captureScreenshotWithoutActivation wakes a background renderer before
 // capturing it. Focus emulation alone does not resume a backgrounded tab's
 // compositor — that requires Page.bringToFront — so unless disableActivation
@@ -207,7 +189,7 @@ func CaptureScreenshot(ctx context.Context, opts ScreenshotOpts) ([]byte, error)
 		clip = scaledScreenshotClip(opts, viewportWidth, viewportHeight, documentWidth, documentHeight)
 	}
 
-	fromSurface := captureFromSurface(opts.BeyondViewport, clip)
+	fromSurface := cdptk.CaptureFromSurface(opts.BeyondViewport, clip)
 
 	var buf []byte
 	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
@@ -324,16 +306,7 @@ func (b *Bridge) CaptureScreenshot(ctx context.Context, format string, quality i
 	if format == "png" {
 		cdpFormat = page.CaptureScreenshotFormatPng
 	}
-	var vp *page.Viewport
-	if clip != nil {
-		vp = &page.Viewport{
-			X:      clip.X,
-			Y:      clip.Y,
-			Width:  clip.Width,
-			Height: clip.Height,
-			Scale:  clip.Scale,
-		}
-	}
+	vp := cdptk.ClipViewport(clip)
 	disableActivation := b.Config != nil && !b.Config.CaptureAllowActivation
 	buf, err := CaptureScreenshot(ctx, ScreenshotOpts{
 		Format:            cdpFormat,

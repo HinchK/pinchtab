@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 )
 
@@ -107,4 +108,60 @@ func ClipForNode(ctx context.Context, nodeID int64, css1x bool) (*ScreenshotClip
 		Height: box.Height,
 		Scale:  scale,
 	}, nil
+}
+
+// CaptureFromSurface decides the Page.captureScreenshot fromSurface flag. It is the one
+// owner of that rule: it had two implementations that could not import each other, and
+// they had already drifted once — the bridge path was fixed while the RuntimeInstance
+// path kept fromSurface=false and went on applying a clip CDP discarded, so scoped and
+// beyond-viewport captures returned the full viewport with their annotation boxes mapped
+// into the clip's coordinate space.
+//
+// fromSurface=false reads the renderer's current view directly instead of waiting for a
+// fresh compositor surface frame. On idle pages in headed browsers (e.g. Cloak) the
+// surface stops swapping frames, so the default fromSurface=true blocks until the action
+// deadline (~30s) — stalling one-shot screenshots and polling screencast alike. That is
+// why the nil-clip fast path matters and must be preserved.
+//
+// Anything that changes the captured region needs the page recomposited, which only
+// happens with fromSurface=true: capture-beyond-viewport, a render-time rescale, and the
+// clip itself. Reading the view ignores the clip outright and returns the whole viewport,
+// so every non-nil clip takes the surface path — keeping it off for a native-scale clip
+// is what made a selector capture come back byte-identical to an unclipped one.
+//
+// Measured in headless Chrome on a 120x60 clip, so the flag is not a no-op there and a
+// clipped capture is exactly what makes it observable:
+//
+//	fromSurface=true  clip -> 120x60      fromSurface=false clip -> 756x413
+//	fromSurface=true  nil  -> 756x413     fromSurface=false nil  -> 756x413
+//
+// The nil-clip pair matches on dimensions, which is why an unclipped browser test cannot
+// pin this choice; hence the table test beside this function.
+func CaptureFromSurface(beyondViewport bool, clip *page.Viewport) bool {
+	return beyondViewport || clip != nil
+}
+
+// ClipViewport converts a ScreenshotClip into the page.Viewport CDP takes, and is the one
+// place the non-zero-scale rule is applied. A nil clip converts to nil, so callers keep
+// the nil-clip fast path CaptureFromSurface describes.
+//
+// Scale 0 means native — the contract ScreenshotOpts states and normalises. CDP does not:
+// it discards a scale-0 clip and returns the whole viewport, no error, exactly as it
+// discards a clip passed with fromSurface=false. Same symptom, same silence, so the two
+// rules belong to the same conversion rather than to whichever call site remembered.
+func ClipViewport(clip *ScreenshotClip) *page.Viewport {
+	if clip == nil {
+		return nil
+	}
+	scale := clip.Scale
+	if scale == 0 {
+		scale = 1
+	}
+	return &page.Viewport{
+		X:      clip.X,
+		Y:      clip.Y,
+		Width:  clip.Width,
+		Height: clip.Height,
+		Scale:  scale,
+	}
 }

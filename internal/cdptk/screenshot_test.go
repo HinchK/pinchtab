@@ -3,9 +3,14 @@ package cdptk_test
 import (
 	"context"
 	"encoding/base64"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/cdptk"
 	"github.com/pinchtab/pinchtab/internal/testbrowser"
@@ -279,5 +284,116 @@ func TestAnnotationRectForNodeAppliesFrameOffset(t *testing.T) {
 	}
 	if rect.W != wantW || rect.H != wantH {
 		t.Errorf("in-frame rect size = %.0fx%.0f, want %dx%d", rect.W, rect.H, wantW, wantH)
+	}
+}
+
+// The fromSurface rule had two implementations in packages that cannot import each other,
+// and they had already drifted once. This is the table that now stands for both.
+func TestCaptureFromSurface(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		beyondViewport bool
+		clip           *page.Viewport
+		want           bool
+	}{
+		{name: "plain capture keeps the fast read", beyondViewport: false, clip: nil, want: false},
+		{name: "any clip needs the surface", beyondViewport: false, clip: &page.Viewport{Width: 120, Height: 60, Scale: 1}, want: true},
+		{name: "a native-scale clip still needs it", beyondViewport: false, clip: &page.Viewport{Width: 120, Height: 60, Scale: 1}, want: true},
+		{name: "beyond viewport needs it with no clip", beyondViewport: true, clip: nil, want: true},
+		{name: "both", beyondViewport: true, clip: &page.Viewport{Width: 10, Height: 10, Scale: 1}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cdptk.CaptureFromSurface(tc.beyondViewport, tc.clip); got != tc.want {
+				t.Errorf("cdptk.CaptureFromSurface(%v, %+v) = %v, want %v", tc.beyondViewport, tc.clip, got, tc.want)
+			}
+		})
+	}
+}
+
+// CDP discards a scale-0 clip exactly as it discards one passed with fromSurface=false —
+// whole viewport back, no error. No producer emits a scale-0 clip today, so this is a
+// latent guard rather than a live fix, and the clip has to be built by hand to reach it.
+func TestClipViewportAppliesTheNonZeroScaleRule(t *testing.T) {
+	if got := cdptk.ClipViewport(nil); got != nil {
+		t.Errorf("cdptk.ClipViewport(nil) = %+v, want nil so the nil-clip fast path survives", got)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		clip      cdptk.ScreenshotClip
+		wantScale float64
+	}{
+		{name: "scale 0 means native, which CDP spells 1", clip: cdptk.ScreenshotClip{X: 40, Y: 60, Width: 120, Height: 60, Scale: 0}, wantScale: 1},
+		{name: "an explicit native scale is unchanged", clip: cdptk.ScreenshotClip{X: 40, Y: 60, Width: 120, Height: 60, Scale: 1}, wantScale: 1},
+		{name: "a real rescale is carried through", clip: cdptk.ScreenshotClip{X: 40, Y: 60, Width: 120, Height: 60, Scale: 0.5}, wantScale: 0.5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := cdptk.ClipViewport(&tc.clip)
+			if got == nil {
+				t.Fatal("cdptk.ClipViewport returned nil for a non-nil clip")
+			}
+			if got.Scale != tc.wantScale {
+				t.Errorf("scale = %v, want %v — CDP silently discards a scale-0 clip", got.Scale, tc.wantScale)
+			}
+			if got.X != tc.clip.X || got.Y != tc.clip.Y || got.Width != tc.clip.Width || got.Height != tc.clip.Height {
+				t.Errorf("geometry = %+v, want it copied from %+v", got, tc.clip)
+			}
+		})
+	}
+}
+
+// The two rules are only "stated once" while nothing else converts a clip on its own. The
+// browser proof of the scale rule needs a browser and skips in the lightweight run, so
+// this is the browserless half: exactly one conversion of a cdptk.ScreenshotClip into a
+// page.Viewport in non-test code, and it is the one in this package.
+func TestOnlyCdptkConvertsAScreenshotClipToAViewport(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var scanned, converters int
+	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "dist" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		body, readErr := os.ReadFile(path) // #nosec G304 -- files walked from this repo's own tree.
+		if readErr != nil {
+			return readErr
+		}
+		scanned++
+		src := string(body)
+		if !strings.Contains(src, "page.Viewport{") {
+			return nil
+		}
+		// A clip conversion reads a clip's fields; scaledScreenshotClip synthesises a
+		// viewport-covering clip from width/height instead and is not one.
+		if !strings.Contains(src, "clip.Width") || !strings.Contains(src, "clip.Height") {
+			return nil
+		}
+		converters++
+		rel, _ := filepath.Rel(root, path)
+		if filepath.Dir(rel) != filepath.Join("internal", "cdptk") {
+			t.Errorf("%s builds a page.Viewport from a clip's fields; that conversion carries the non-zero-scale rule and belongs to cdptk.ClipViewport alone", rel)
+		}
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatalf("cannot scan the repo, so this census checks nothing: %v", walkErr)
+	}
+	if scanned < 100 {
+		t.Fatalf("scanned only %d Go files; this census would pass vacuously", scanned)
+	}
+	if converters == 0 {
+		t.Fatal("found no clip-to-viewport conversion at all; if ClipViewport was renamed or restructured, re-point this census rather than deleting it")
 	}
 }
