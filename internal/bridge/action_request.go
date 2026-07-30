@@ -80,8 +80,14 @@ type ActionRequest struct {
 	// held during a press, enabling keyboard chords such as Ctrl+C or Shift+Arrow.
 	Modifiers int `json:"modifiers,omitempty"`
 
-	ScrollX int `json:"scrollX"`
-	ScrollY int `json:"scrollY"`
+	// ScrollX/ScrollY use omitempty for the same reason X/Y do: UnmarshalJSON
+	// infers HasScroll from the presence of these keys, so a re-marshal that
+	// re-introduced "scrollX":0 would turn every bare scroll into an explicit
+	// zero and refuse it. The explicit zero survives the omission because
+	// HasScroll is itself marshaled and the decoder ORs it back in — that is
+	// what keeps an explicit zero from decaying into the default 120px step.
+	ScrollX int `json:"scrollX,omitempty"`
+	ScrollY int `json:"scrollY,omitempty"`
 
 	HasScroll bool `json:"hasScroll,omitempty"`
 	// DeltaX/DeltaY are the wheel spelling; ScrollX/ScrollY remain for compatibility.

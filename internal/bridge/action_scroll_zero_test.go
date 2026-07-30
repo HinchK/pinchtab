@@ -3,6 +3,12 @@ package bridge
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -32,6 +38,158 @@ func TestHasScrollSeparatesAnAbsentDeltaFromAnExplicitZero(t *testing.T) {
 	} {
 		if got := decodeScrollRequest(t, tc.body).HasScroll; got != tc.want {
 			t.Errorf("%s: HasScroll = %v, want %v", tc.body, got, tc.want)
+		}
+	}
+}
+
+// presenceFlagOf names, for each JSON key whose meaning is inferred from its presence, the
+// flag that carries that meaning once the key is gone. The census below derives the key set
+// from the hasJSONKey call sites, so a new presence-inferred field fails here until it is
+// listed and round-tripped rather than being silently uncovered.
+var presenceFlagOf = map[string]string{
+	"x":       "HasXY",
+	"y":       "HasXY",
+	"toX":     "HasToXY",
+	"toY":     "HasToXY",
+	"scrollX": "HasScroll",
+	"scrollY": "HasScroll",
+	"text":    "HasText",
+	"value":   "HasText",
+	"deltaX":  "HasDelta",
+	"deltaY":  "HasDelta",
+}
+
+func presenceInferredKeys(t *testing.T) []string {
+	t.Helper()
+
+	file, err := parser.ParseFile(token.NewFileSet(), "action_request.go", nil, 0)
+	if err != nil {
+		t.Fatalf("parse action_request.go: %v", err)
+	}
+	var keys []string
+	ast.Inspect(file, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		fn, ok := call.Fun.(*ast.Ident)
+		if !ok || fn.Name != "hasJSONKey" || len(call.Args) != 2 {
+			return true
+		}
+		lit, ok := call.Args[1].(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			t.Fatalf("hasJSONKey is called with a computed key, so the census cannot enumerate it")
+		}
+		key, uErr := strconv.Unquote(lit.Value)
+		if uErr != nil {
+			t.Fatalf("unquote %s: %v", lit.Value, uErr)
+		}
+		keys = append(keys, key)
+		return true
+	})
+	if len(keys) == 0 {
+		t.Fatal("no hasJSONKey call sites found; the census is reading the wrong file")
+	}
+	return keys
+}
+
+func jsonFieldByName(t *testing.T, name string) reflect.StructField {
+	t.Helper()
+
+	typ := reflect.TypeOf(ActionRequest{})
+	for i := 0; i < typ.NumField(); i++ {
+		field := typ.Field(i)
+		if jsonTagName(field) == name {
+			return field
+		}
+	}
+	t.Fatalf("no ActionRequest field is marshaled as %q", name)
+	return reflect.StructField{}
+}
+
+func jsonTagName(field reflect.StructField) string {
+	name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+	return name
+}
+
+func omitsEmpty(field reflect.StructField) bool {
+	_, opts, _ := strings.Cut(field.Tag.Get("json"), ",")
+	for _, opt := range strings.Split(opts, ",") {
+		if opt == "omitempty" {
+			return true
+		}
+	}
+	return false
+}
+
+func zeroJSONLiteral(field reflect.StructField) string {
+	if field.Type.Kind() == reflect.String {
+		return `""`
+	}
+	return "0"
+}
+
+func roundTrip(t *testing.T, req ActionRequest) ActionRequest {
+	t.Helper()
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return decodeScrollRequest(t, string(data))
+}
+
+func presenceFlag(t *testing.T, req ActionRequest, name string) bool {
+	t.Helper()
+
+	value := reflect.ValueOf(req).FieldByName(name)
+	if !value.IsValid() {
+		t.Fatalf("ActionRequest has no field %s", name)
+	}
+	return value.Bool()
+}
+
+// The absent-versus-explicit-zero rule is inferred from JSON key presence, which survives a
+// round trip only if the payload field omits its zero AND the flag that records the explicit
+// case is itself marshaled. Marshal-then-decode is not on any path today; this closes the
+// hazard by construction so that a proxy hop, replay or request log cannot reopen it.
+func TestPresenceInferredFieldsSurviveAMarshalRoundTrip(t *testing.T) {
+	covered := map[string]bool{}
+
+	for _, key := range presenceInferredKeys(t) {
+		flagName, ok := presenceFlagOf[key]
+		if !ok {
+			t.Fatalf("%q infers its meaning from key presence but no round trip covers it", key)
+		}
+		covered[key] = true
+
+		field := jsonFieldByName(t, key)
+		if !omitsEmpty(field) {
+			t.Errorf("%s lacks omitempty, so a re-marshal of an absent %s re-introduces it as an explicit zero", field.Name, key)
+		}
+		flag, ok := reflect.TypeOf(ActionRequest{}).FieldByName(flagName)
+		if !ok {
+			t.Fatalf("ActionRequest has no field %s", flagName)
+		}
+		if name := jsonTagName(flag); name == "" || name == "-" {
+			t.Errorf("%s is not marshaled, so an explicit zero cannot survive the omission of %s", flagName, key)
+		}
+
+		absent := roundTrip(t, decodeScrollRequest(t, `{"kind":"scroll"}`))
+		if presenceFlag(t, absent, flagName) {
+			t.Errorf("%s: a request with no %s round-tripped into %s=true, so the default was refused as an explicit zero", key, key, flagName)
+		}
+
+		body := fmt.Sprintf(`{"kind":"scroll","%s":%s}`, key, zeroJSONLiteral(field))
+		explicit := roundTrip(t, decodeScrollRequest(t, body))
+		if !presenceFlag(t, explicit, flagName) {
+			t.Errorf("%s: an explicit zero round-tripped into %s=false, so it decayed into the default step", body, flagName)
+		}
+	}
+
+	for key := range presenceFlagOf {
+		if !covered[key] {
+			t.Errorf("%q is listed as presence-inferred but no hasJSONKey call site reads it", key)
 		}
 	}
 }
