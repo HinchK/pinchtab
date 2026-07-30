@@ -82,3 +82,134 @@ func TestTrimHTMLSpendsTheBudgetOnMarkupNotOnStrippedContent(t *testing.T) {
 		}
 	}
 }
+
+// A base64 image is usually the single largest token contributor on a page, and the cap
+// is applied AFTER stripping — so one payload that survives spends the whole prompt
+// budget on a picture and pushes the interactive markup off the end. The old pattern was
+// anchored on the whole attribute value, so it only ever saw src="data:…" and missed the
+// commonest carrier of all: a URL inside an inline style declaration.
+func TestTrimHTMLStripsADataURIEmbeddedInAValue(t *testing.T) {
+	const payload = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo="
+
+	for _, tc := range []struct {
+		name string
+		html string
+		want string
+	}{
+		{
+			name: "css url, unquoted",
+			html: `<div style="background:url(data:image/png;base64,` + payload + `)">x</div>`,
+			want: `<div style="background:url()">x</div>`,
+		},
+		{
+			name: "css url, single-quoted",
+			html: `<div style="background-image:url('data:image/png;base64,` + payload + `')">x</div>`,
+			want: `<div style="background-image:url('')">x</div>`,
+		},
+		{
+			name: "css url among other declarations",
+			html: `<div style="color:red;background:url(data:image/gif;base64,` + payload + `);border:1px">x</div>`,
+			want: `<div style="color:red;background:url();border:1px">x</div>`,
+		},
+		{
+			name: "whole value, the already-covered form",
+			html: `<img src="data:image/png;base64,` + payload + `">`,
+			want: `<img src="">`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := TrimHTML(tc.html)
+			if strings.Contains(got, payload) {
+				t.Errorf("the base64 payload survived:\n%s", got)
+			}
+			if strings.Contains(got, "data:") {
+				t.Errorf("the data URI survived:\n%s", got)
+			}
+			if got != tc.want {
+				t.Errorf("TrimHTML =\n  %s\nwant\n  %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// The widened pattern must not regress the forms that already stripped. srcset carries
+// several URIs in one value separated by commas, and a comma also separates a data URI's
+// own metadata from its payload — so the pattern cannot treat commas as a terminator,
+// and this is the case that proves it does not.
+func TestTrimHTMLStillStripsWholeValueDataURIs(t *testing.T) {
+	html := `<img srcset="data:image/png;base64,AAAABBBBCCCC 1x, data:image/png;base64,DDDDEEEEFFFF 2x" alt="pic">`
+
+	got := TrimHTML(html)
+
+	for _, unwanted := range []string{"data:", "base64", "AAAABBBBCCCC", "DDDDEEEEFFFF"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("srcset still carries %q:\n%s", unwanted, got)
+		}
+	}
+	// The descriptors and the rest of the tag are markup, not payload, and stay.
+	for _, want := range []string{"1x", "2x", `alt="pic"`, "<img"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("srcset stripping removed %q, which is markup rather than payload:\n%s", want, got)
+		}
+	}
+}
+
+// SVG is foreign content and nests legally, so a nested <svg> reaches this helper through
+// DOM serialisation. The non-greedy regex stopped at the FIRST </svg>, leaving the outer
+// element's path data and a stray closing tag in the prompt.
+func TestTrimHTMLStripsNestedSVGWhole(t *testing.T) {
+	got := TrimHTML(`<svg>a<svg>b</svg>PATHDATA</svg>tail`)
+
+	for _, unwanted := range []string{"<svg", "</svg", "PATHDATA"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("nested SVG left %q behind: %q", unwanted, got)
+		}
+	}
+	if got != "tail" {
+		t.Errorf("TrimHTML = %q, want %q", got, "tail")
+	}
+}
+
+// Depth counting must not become a greedy match: greedy runs to the LAST </svg> in the
+// document and would swallow every interactive element between two sibling icons, which
+// is worse than the nesting bug it fixes.
+func TestTrimHTMLKeepsMarkupBetweenSiblingSVGs(t *testing.T) {
+	got := TrimHTML(`<svg><path d="M0 0"/></svg><button id="go">Go</button><svg><circle r="1"/></svg>`)
+
+	if !strings.Contains(got, `<button id="go">Go</button>`) {
+		t.Errorf("markup between two sibling SVGs was swallowed: %q", got)
+	}
+	for _, unwanted := range []string{"<svg", "</svg", "<path", "<circle"} {
+		if strings.Contains(got, unwanted) {
+			t.Errorf("sibling SVG left %q behind: %q", unwanted, got)
+		}
+	}
+}
+
+// An element whose name merely starts with "svg" is ordinary markup and must survive; the
+// boundary check is what separates <svg> from <svgicon>.
+func TestTrimHTMLKeepsElementsMerelyNamedLikeSVG(t *testing.T) {
+	html := `<svgicon id="keep">label</svgicon>`
+	if got := TrimHTML(html); got != html {
+		t.Errorf("TrimHTML(%q) = %q, want it unchanged", html, got)
+	}
+}
+
+// PINNED BOUNDARY, not a defect: a raw-text element ends at the FIRST </script per the
+// HTML tokenizer, so the tail after it is page-visible text that the browser renders too
+// — golang.org/x/net/html picks byte-for-byte the same boundary. Do not "fix" this.
+func TestTrimHTMLLeavesTheTailAfterAScriptStringLiteral(t *testing.T) {
+	got := TrimHTML(`<p>before</p><script>var s="</script>";var secret=2;</script><p>after</p>`)
+
+	if strings.Contains(got, "var s=") {
+		t.Errorf("script content reached the prompt: %q", got)
+	}
+	if !strings.Contains(got, `";var secret=2;`) {
+		t.Errorf("the tail is page text the browser also renders and must survive: %q", got)
+	}
+	for _, want := range []string{"<p>before</p>", "<p>after</p>"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("surrounding markup lost %q: %q", want, got)
+		}
+	}
+}
