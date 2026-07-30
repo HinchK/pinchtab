@@ -45,6 +45,12 @@ pinchtab find --threshold 0.5 --explain "primary submit button"
 pinchtab find --ref-only "search input"
 ```
 
+When nothing matches, `find` prints `No elements matched "<query>"` and exits 0 — an empty
+result is an answer, the same way `console` and `errors` report having nothing to show.
+`--ref-only` prints that line to stderr and exits non-zero instead, deliberately: it is
+built for `REF=$(pinchtab find … --ref-only)`, where an empty `REF` spent on a click is
+worse than a failed command.
+
 ## Using `POST /find`
 
 ```bash
