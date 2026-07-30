@@ -1067,9 +1067,13 @@ func TestEmptyLogSuffixMarksZeroByteArtifacts(t *testing.T) {
 // Every e2e server service must NAME its log level rather than inherit one. The
 // level used to be borrowed from --verbose, which once meant "log at all" and later
 // came to mean "debug"; the harness's diagnostic level moved when that definition
-// moved, which is the drift this pins. --verbose is still expected alongside, for
-// the startup banner alone — it is the only place the log states the guard posture
-// and the allowed-domain list. Bridge services take neither flag deliberately.
+// moved, which is the drift this pins. --verbose is still expected alongside for the
+// startup banner — the only place the log states the guard posture and the
+// allowed-domain list — and both flags are required together: --verbose contributes
+// only the banner WHILE --log-level is set, and would govern the level again if
+// --log-level were dropped. Bridge services are expected to carry neither, which
+// leaves them at info; that is this guard's scope, not a finding that info is the
+// right level for them.
 func TestComposeServerServicesNameTheirLogLevel(t *testing.T) {
 	const wantFlags = "pinchtab server --log-level debug --verbose"
 
@@ -1095,7 +1099,7 @@ func TestComposeServerServicesNameTheirLogLevel(t *testing.T) {
 					bridges++
 					for _, flag := range []string{"--verbose", "--log-level"} {
 						if strings.Contains(svc.command, flag) {
-							t.Errorf("bridge service %s gained %s; bridge mode never had the discard behaviour these flags worked around: %s", svc.name, flag, svc.command)
+							t.Errorf("bridge service %s gained %s, which this guard expects the bridges not to carry — they run at info by scope, not because info is known to be right for them. Raising the bridge level is a separate decision, tracked on PIN-152; if it has been made, update this guard and the compose header together rather than only here: %s", svc.name, flag, svc.command)
 						}
 					}
 				default:
