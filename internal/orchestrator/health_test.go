@@ -703,3 +703,107 @@ func TestCompactBodyLeavesShortAndEmptyBodiesAlone(t *testing.T) {
 		}
 	}
 }
+
+// The three callers embed compactBody in an operator-facing error, and until now only
+// the helper was driven — a correct helper says nothing about the sentence an operator
+// reads, which is the artefact this card is about. Each caller is driven against an
+// instance that answers its own route with a long non-ASCII body, and the assertion is
+// on the ERROR STRING: valid UTF-8, no U+FFFD, and the marker present so a cut body is
+// distinguishable from a short one.
+func TestOperatorFacingErrorsCarryAValidUTF8BodyFragment(t *testing.T) {
+	const runeWidth = len("€")
+	// The fixture must straddle a rune at the cut or a byte slice and a rune-safe cut
+	// agree and this test cannot tell them apart — the same trap the helper test guards.
+	for _, cut := range []int{maxCompactBodyBytes, maxCompactBodyBytes - len(sanitize.TruncationSuffix)} {
+		if cut%runeWidth == 0 {
+			t.Fatalf("budget %d puts cut %d on a rune boundary; widen the fixture rune", maxCompactBodyBytes, cut)
+		}
+	}
+	remoteMessage := strings.Repeat("€", maxCompactBodyBytes)
+
+	failOn := func(path string) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != path {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"tabId":"tab_warm"}`)),
+					Header:     http.Header{},
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Body:       io.NopCloser(strings.NewReader(remoteMessage)),
+				Header:     http.Header{},
+			}, nil
+		})}
+	}
+
+	base, err := url.Parse("http://127.0.0.1:9999")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		path   string
+		prefix string
+		drive  func(*Orchestrator, *InstanceInternal) error
+	}{
+		{
+			name:   "create tab",
+			path:   "/tab",
+			prefix: "create tab HTTP 500: ",
+			drive: func(o *Orchestrator, inst *InstanceInternal) error {
+				_, err := o.warmInstanceTabLifecycle(inst, base)
+				return err
+			},
+		},
+		{
+			name:   "close warmup tab",
+			path:   "/close",
+			prefix: "close warmup tab HTTP 500: ",
+			drive: func(o *Orchestrator, inst *InstanceInternal) error {
+				_, err := o.warmInstanceTabLifecycle(inst, base)
+				return err
+			},
+		},
+		{
+			name:   "ensure browser",
+			path:   "/browser/ensure",
+			prefix: "ensure-browser HTTP 500: ",
+			drive: func(o *Orchestrator, inst *InstanceInternal) error {
+				target := *base
+				target.Path = "/browser/ensure"
+				return o.ensureInstanceChrome(inst, &target)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := NewOrchestratorWithRunner(t.TempDir(), &mockRunner{portAvail: true})
+			o.client = failOn(tc.path)
+			inst := &InstanceInternal{
+				Instance: bridge.Instance{ID: "inst_utf80001", Port: "9999", Status: "running"},
+				URL:      base.String(),
+				logBuf:   newRingBuffer(1024),
+			}
+
+			err := tc.drive(o, inst)
+			if err == nil {
+				t.Fatalf("%s returned no error, so the refusal path was never reached", tc.name)
+			}
+			message := err.Error()
+			if !strings.HasPrefix(message, tc.prefix) {
+				t.Fatalf("message %q is not the %s refusal; the fixture drove the wrong path", message, tc.name)
+			}
+			if !utf8.ValidString(message) {
+				t.Errorf("operator message is not valid UTF-8: %q", message)
+			}
+			if strings.ContainsRune(message, utf8.RuneError) {
+				t.Errorf("operator message carries U+FFFD where the instance's own words should be: %q", message)
+			}
+			if !strings.HasSuffix(message, sanitize.TruncationSuffix) {
+				t.Errorf("operator message %q does not end in the truncation marker, so a cut body reads as a complete one", message)
+			}
+		})
+	}
+}
