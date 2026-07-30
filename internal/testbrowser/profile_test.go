@@ -85,25 +85,135 @@ func TestNoBrowserProfileIsPointedAtATestTempDir(t *testing.T) {
 	sites := 0
 
 	for _, file := range srccensus.TestTree(t, "../..", moduleTestFileFloor) {
-		parsed, parseErr := parser.ParseFile(token.NewFileSet(), file.Path, file.Text, 0)
-		if parseErr != nil {
-			continue
+		found, violations := profileDirSites(t, file.Path, file.Text)
+		sites += found
+		for _, at := range violations {
+			t.Errorf("%s hands a Chrome profile to t.TempDir at %s; use testbrowser.ProfileDir(t) — t.TempDir fails the test when the browser is still flushing its cache", file.Name, at)
 		}
-		ast.Inspect(parsed, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || !isSelectorCall(call.Fun, "chromedp", "UserDataDir") || len(call.Args) != 1 {
-				return true
-			}
-			sites++
-			if inner, ok := call.Args[0].(*ast.CallExpr); ok && isMethodCall(inner.Fun, "TempDir") {
-				t.Errorf("%s hands a Chrome profile to t.TempDir; use testbrowser.ProfileDir(t) — t.TempDir fails the test when the browser is still flushing its cache", file.Name)
-			}
-			return true
-		})
 	}
 
 	if sites < userDataDirSiteFloor {
 		t.Fatalf("found only %d chromedp.UserDataDir call sites; the census matched almost nothing and would pass vacuously", sites)
+	}
+}
+
+// profileDirSites counts the chromedp.UserDataDir calls in one file and names the ones whose
+// directory comes from t.TempDir.
+//
+// The argument is resolved through a local variable, because most sites in the tree hold the
+// path in one — they need it again for their own cleanup — so a rule reading only the
+// argument expression is blind to the majority of the call sites it appears to police.
+func profileDirSites(t *testing.T, path, src string) (int, []string) {
+	t.Helper()
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, path, src, 0)
+	if err != nil {
+		return 0, nil
+	}
+
+	whole := 0
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		if isUserDataDirCall(n) != nil {
+			whole++
+		}
+		return true
+	})
+
+	sites := 0
+	var violations []string
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			return true
+		}
+		locals := tempDirLocals(fn.Body)
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call := isUserDataDirCall(n)
+			if call == nil {
+				return true
+			}
+			sites++
+			if fromTempDir(call.Args[0], locals) {
+				violations = append(violations, fset.Position(call.Pos()).String())
+			}
+			return true
+		})
+		return true
+	})
+
+	// Resolving a local means walking function bodies, which is where every site sits today.
+	// A site outside one — a package-level option slice — would be counted by the whole-file
+	// pass and silently skipped by this one, so the two counts must agree or the census is
+	// quietly narrower than it reads.
+	if sites != whole {
+		t.Errorf("%s has %d chromedp.UserDataDir calls but only %d inside a function; a site outside a function body is not being checked", path, whole, sites)
+	}
+	return sites, violations
+}
+
+func isUserDataDirCall(n ast.Node) *ast.CallExpr {
+	call, ok := n.(*ast.CallExpr)
+	if !ok || !isSelectorCall(call.Fun, "chromedp", "UserDataDir") || len(call.Args) != 1 {
+		return nil
+	}
+	return call
+}
+
+// tempDirLocals names the variables a function assigns from t.TempDir(), by := or by =.
+func tempDirLocals(body *ast.BlockStmt) map[string]bool {
+	locals := map[string]bool{}
+	ast.Inspect(body, func(n ast.Node) bool {
+		assign, ok := n.(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) != 1 || len(assign.Rhs) != 1 {
+			return true
+		}
+		name, ok := assign.Lhs[0].(*ast.Ident)
+		if !ok {
+			return true
+		}
+		if fromTempDir(assign.Rhs[0], nil) {
+			locals[name.Name] = true
+		}
+		return true
+	})
+	return locals
+}
+
+func fromTempDir(expr ast.Expr, locals map[string]bool) bool {
+	switch e := expr.(type) {
+	case *ast.CallExpr:
+		return isMethodCall(e.Fun, "TempDir")
+	case *ast.Ident:
+		return locals[e.Name]
+	}
+	return false
+}
+
+// The two spellings a browser test actually uses, pinned as a pair: the module walk can only
+// report what the predicate recognises, so a rule reading the argument expression alone passes
+// over every site that holds the path in a variable — which is most of them, and is how a real
+// bare t.TempDir survived the sweep that was meant to remove them all.
+func TestTheProfileCensusReadsBothSpellingsOfTheDirectory(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		body      string
+		violation bool
+	}{
+		{name: "t.TempDir inline", body: `chromedp.UserDataDir(t.TempDir())`, violation: true},
+		{name: "t.TempDir through a local", body: "profile := t.TempDir()\n\tchromedp.UserDataDir(profile)", violation: true},
+		{name: "ProfileDir inline", body: `chromedp.UserDataDir(testbrowser.ProfileDir(t))`},
+		{name: "ProfileDir through a local", body: "profile := testbrowser.ProfileDir(t)\n\tchromedp.UserDataDir(profile)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "package p\n\nfunc f(t *testing.T) {\n\t" + tc.body + "\n}\n"
+			sites, violations := profileDirSites(t, "probe_test.go", src)
+			if sites != 1 {
+				t.Fatalf("counted %d UserDataDir sites in %q, want 1 — the census cannot report what it did not see", sites, tc.body)
+			}
+			if got := len(violations) > 0; got != tc.violation {
+				t.Errorf("violation = %v, want %v for %q", got, tc.violation, tc.body)
+			}
+		})
 	}
 }
 

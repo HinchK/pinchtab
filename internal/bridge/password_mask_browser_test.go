@@ -17,7 +17,7 @@ import (
 func TestSnapshotDistinguishesEmptyAndFilledPasswordInRealBrowser(t *testing.T) {
 	chromePath := testbrowser.Path(t)
 
-	profile := t.TempDir()
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
