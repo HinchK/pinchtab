@@ -463,6 +463,10 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
+		if errors.Is(actionErr, bridge.ErrInvalidActionRequest) {
+			httpx.ErrorCode(w, http.StatusBadRequest, "invalid_action_request", fmt.Sprintf("action %s: %v", req.Kind, actionErr), false, nil)
+			return
+		}
 		if errors.Is(actionErr, bridge.ErrUnexpectedNavigation) {
 			httpx.ErrorCode(w, 409, "navigation_changed", actionErr.Error(), false, navigationChangedDetails(actionErr))
 			return

@@ -15,8 +15,13 @@ var (
 	// but the page URL changed.
 	ErrUnexpectedNavigation = errors.New("unexpected page navigation")
 	// ErrElementStale indicates the targeted DOM/backend node is no longer valid.
-	ErrElementStale = errors.New("element reference is stale")
+	ErrElementStale         = errors.New("element reference is stale")
+	ErrInvalidActionRequest = errors.New("invalid action request")
 )
+
+func NewInvalidActionRequestError(msg string) error {
+	return fmt.Errorf("%w: %s", ErrInvalidActionRequest, msg)
+}
 
 // URLReader is used by guards to read the current tab URL from an action context.
 type URLReader func(ctx context.Context) (string, error)

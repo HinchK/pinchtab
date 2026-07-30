@@ -3,7 +3,9 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -408,6 +410,45 @@ func TestDragRefusesADestinationAndAnOffsetTogether(t *testing.T) {
 	}
 	if html5, _ := f.state(t); html5 != "no" {
 		t.Errorf("the refused drag still moved the pointer: h5=%q", html5)
+	}
+}
+
+func TestAnUnsatisfiableDragBodyRefusesWithTheCallerErrorSentinelWithoutActing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		req      ActionRequest
+		wantSays []string
+	}{
+		{
+			name:     "a destination and an offset together",
+			req:      ActionRequest{Kind: ActionDrag, Selector: "#src", ToSelector: "#dst", DragX: 180},
+			wantSays: []string{"toSelector/toNodeId/toX+toY", "dragX/dragY"},
+		},
+		{
+			name:     "an offset drag with no offset",
+			req:      ActionRequest{Kind: ActionDrag, Selector: "#src"},
+			wantSays: []string{"dragX or dragY"},
+		},
+		{
+			name:     "no target at all",
+			req:      ActionRequest{Kind: ActionDrag, DragX: 180},
+			wantSays: []string{"need selector, ref, or nodeId"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := (&Bridge{}).actionDrag(context.Background(), tc.req)
+			if result != nil {
+				t.Errorf("result = %v; a refusal must not report having acted", result)
+			}
+			if !errors.Is(err, ErrInvalidActionRequest) {
+				t.Fatalf("err = %v, want the ErrInvalidActionRequest sentinel; without it the handler reports this caller error as a retryable server fault", err)
+			}
+			for _, says := range tc.wantSays {
+				if !strings.Contains(err.Error(), says) {
+					t.Errorf("err = %q, want it to carry %q; the useful half of the message must survive the classification", err, says)
+				}
+			}
+		})
 	}
 }
 

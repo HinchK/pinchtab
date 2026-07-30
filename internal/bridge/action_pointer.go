@@ -623,12 +623,12 @@ func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[strin
 func (b *Bridge) actionDrag(ctx context.Context, req ActionRequest) (map[string]any, error) {
 	if req.hasDragDestination() {
 		if req.DragX != 0 || req.DragY != 0 {
-			return nil, fmt.Errorf("drag takes a destination (toSelector/toNodeId/toX+toY) or an offset (dragX/dragY), not both")
+			return nil, NewInvalidActionRequestError("drag takes a destination (toSelector/toNodeId/toX+toY) or an offset (dragX/dragY), not both")
 		}
 		return b.dragToDestination(ctx, req)
 	}
 	if req.DragX == 0 && req.DragY == 0 {
-		return nil, fmt.Errorf("dragX or dragY required for drag")
+		return nil, NewInvalidActionRequestError("dragX or dragY required for drag")
 	}
 	if req.NodeID > 0 {
 		err := DragByNodeID(ctx, req.NodeID, req.DragX, req.DragY, req.Button)
@@ -648,7 +648,7 @@ func (b *Bridge) actionDrag(ctx context.Context, req ActionRequest) (map[string]
 		}
 		return map[string]any{"dragged": true, "dragX": req.DragX, "dragY": req.DragY}, nil
 	}
-	return nil, fmt.Errorf("need selector, ref, or nodeId")
+	return nil, NewInvalidActionRequestError("need selector, ref, or nodeId")
 }
 
 func (b *Bridge) dragToDestination(ctx context.Context, req ActionRequest) (map[string]any, error) {
