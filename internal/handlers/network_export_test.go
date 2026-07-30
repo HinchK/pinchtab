@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
+	"github.com/pinchtab/pinchtab/internal/bridge/observe"
+	"github.com/pinchtab/pinchtab/internal/config"
 )
 
 // TestHandleNetworkExportPrefersRetainedBodyInOrder verifies the non-streaming
@@ -115,4 +118,115 @@ func TestCleanupStaleTmpExports(t *testing.T) {
 func TestCleanupStaleTmpExports_NoDir(t *testing.T) {
 	// Should not panic when exports/ doesn't exist.
 	CleanupStaleTmpExports(t.TempDir())
+}
+
+// failingExportEncoder fails at one named stage so every non-success exit of
+// writeExportFile can be driven. The reservation the auto-named path creates is a
+// real file, so each of these stages is a chance to abandon it.
+type failingExportEncoder struct {
+	failAt string
+}
+
+func (e failingExportEncoder) ContentType() string   { return "application/json" }
+func (e failingExportEncoder) FileExtension() string { return ".har" }
+
+func (e failingExportEncoder) Start(w io.Writer) error {
+	if e.failAt == "start" {
+		return fmt.Errorf("start refused")
+	}
+	_, err := w.Write([]byte("{"))
+	return err
+}
+
+func (e failingExportEncoder) Encode(entry observe.ExportEntry) error {
+	if e.failAt == "encode" {
+		return fmt.Errorf("encode refused")
+	}
+	return nil
+}
+
+func (e failingExportEncoder) Finish() error {
+	if e.failAt == "finish" {
+		return fmt.Errorf("finish refused")
+	}
+	return nil
+}
+
+func exportDirEntries(t *testing.T, stateDir string) []string {
+	t.Helper()
+
+	entries, err := os.ReadDir(filepath.Join(stateDir, "exports"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	return names
+}
+
+func TestAFailedAutoNamedExportLeavesNothingBehind(t *testing.T) {
+	for _, failAt := range []string{"start", "encode", "finish"} {
+		t.Run(failAt, func(t *testing.T) {
+			stateDir := t.TempDir()
+			h := New(&networkMockBridge{nm: bridge.NewNetworkMonitor(10)}, &config.RuntimeConfig{StateDir: stateDir}, nil, nil, nil)
+
+			req := httptest.NewRequest("GET", "/network/export", nil)
+			err := h.writeExportFile(httptest.NewRecorder(), req, failingExportEncoder{failAt: failAt}, "har",
+				func(emit func(observe.ExportEntry) error) error {
+					return emit(observe.ExportEntry{})
+				})
+			if err == nil {
+				t.Fatalf("precondition: an encoder failing at %s must fail the export", failAt)
+			}
+
+			for _, name := range exportDirEntries(t, stateDir) {
+				t.Errorf("an export that failed at %s left %s behind; the reserved name now holds an empty export", failAt, name)
+			}
+		})
+	}
+}
+
+// TestAFailedExportDoesNotPoisonTheNextName is the assertion that catches the
+// consequence rather than the litter: an abandoned reservation pushes the NEXT
+// export in the same second onto a -1 suffix, so the obvious name holds 0 bytes
+// while the real export hides behind a suffix nobody asked for. Counting the files
+// is what distinguishes that from a leak that merely litters.
+func TestAFailedExportDoesNotPoisonTheNextName(t *testing.T) {
+	stateDir := t.TempDir()
+	h := New(&networkMockBridge{nm: bridge.NewNetworkMonitor(10)}, &config.RuntimeConfig{StateDir: stateDir}, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/network/export", nil)
+
+	if err := h.writeExportFile(httptest.NewRecorder(), req, failingExportEncoder{failAt: "encode"}, "har",
+		func(emit func(observe.ExportEntry) error) error {
+			return emit(observe.ExportEntry{})
+		}); err == nil {
+		t.Fatal("precondition: the first export must fail")
+	}
+
+	if err := h.writeExportFile(httptest.NewRecorder(), req, failingExportEncoder{}, "har",
+		func(emit func(observe.ExportEntry) error) error {
+			return emit(observe.ExportEntry{})
+		}); err != nil {
+		t.Fatalf("second export: %v", err)
+	}
+
+	names := exportDirEntries(t, stateDir)
+	if len(names) != 1 {
+		t.Fatalf("exports dir holds %v, want exactly one file: a failed export must not leave a name behind for the next one to trip over", names)
+	}
+	if strings.Contains(names[0], "-1.") {
+		t.Errorf("the successful export landed on %s; the suffix means a stale reservation still holds the unsuffixed name", names[0])
+	}
+	info, err := os.Stat(filepath.Join(stateDir, "exports", names[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() == 0 {
+		t.Errorf("%s is empty; the file under the export's own name is a reservation, not an export", names[0])
+	}
 }

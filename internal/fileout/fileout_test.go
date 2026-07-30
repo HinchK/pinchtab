@@ -130,3 +130,45 @@ func assertContents(t *testing.T, path string, want []byte) {
 		t.Errorf("%s holds %q, want %q", path, got, want)
 	}
 }
+
+// TestWriteUniqueRemovesTheFileItCreatedWhenTheWriteFails pins the removal through
+// the creator seam: the stub creates a REAL file and hands back a closed handle, so
+// the write fails for a reason the caller cannot control and the file it left is the
+// thing under test. Without the removal the caller gets an error plus a 0-byte file
+// wearing the output's name.
+func TestWriteUniqueRemovesTheFileItCreatedWhenTheWriteFails(t *testing.T) {
+	dir := t.TempDir()
+	created := ""
+	closedHandle := func(dir, base, ext string) (*os.File, string, error) {
+		f, path, err := CreateUnique(dir, base, ext)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := f.Close(); err != nil {
+			return nil, "", err
+		}
+		created = path
+		return f, path, nil
+	}
+
+	path, err := writeUnique(dir, "capture-20260101_000000", ".png", []byte("bytes"), closedHandle)
+	if err == nil {
+		t.Fatal("precondition: writing through a closed handle must fail")
+	}
+	if path != "" {
+		t.Errorf("WriteUnique returned %q alongside its error; a failed write has no path to report", path)
+	}
+	if created == "" {
+		t.Fatal("the stub creator never ran, so this guard checked nothing")
+	}
+	if _, err := os.Stat(created); !os.IsNotExist(err) {
+		t.Errorf("%s survived a failed write (stat err = %v); the created file must be removed", created, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		t.Errorf("a failed write left %s in the output directory", entry.Name())
+	}
+}

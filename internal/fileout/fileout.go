@@ -57,16 +57,30 @@ func CreateUnique(dir, base, ext string) (*os.File, string, error) {
 
 // WriteUnique creates a fresh file under dir and writes buf to it, returning the path
 // actually used.
+// A failed write removes the file it created. CreateUnique reserves the name by
+// creating it, so returning an error while leaving it behind hands the caller a
+// 0-byte file under a name that reads like a real output — the same defect as an
+// abandoned reservation, one layer down.
 func WriteUnique(dir, base, ext string, buf []byte) (string, error) {
-	f, path, err := CreateUnique(dir, base, ext)
+	return writeUnique(dir, base, ext, buf, CreateUnique)
+}
+
+// writeUnique takes its creator as a parameter so a test can hand it a handle whose
+// write fails and assert the file it created is gone. A real write failure needs a
+// full disk or a revoked handle, neither of which a test can arrange portably, and an
+// unpinned removal is an unproven one.
+func writeUnique(dir, base, ext string, buf []byte, create func(string, string, string) (*os.File, string, error)) (string, error) {
+	f, path, err := create(dir, base, ext)
 	if err != nil {
 		return "", err
 	}
 	if _, err := f.Write(buf); err != nil {
 		_ = f.Close()
+		_ = os.Remove(path)
 		return "", err
 	}
 	if err := f.Close(); err != nil {
+		_ = os.Remove(path)
 		return "", err
 	}
 	return path, nil

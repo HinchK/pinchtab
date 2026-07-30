@@ -311,6 +311,17 @@ func (h *Handlers) writeExportFile(
 ) error {
 	userPath := r.URL.Query().Get("path")
 	autoNamed := userPath == ""
+	// A reservation is a real 0-byte file, so every exit that is not the completed
+	// rename has to remove it. Left behind it poisons the name twice over: the obvious
+	// name holds an empty export, and the next export in the same second is pushed onto
+	// a -1 suffix. Releasing it from a deferred check rather than at each return is what
+	// makes that exhaustive — a branch added later inherits it instead of forgetting it.
+	reservedPath, committed := "", false
+	defer func() {
+		if !committed && reservedPath != "" {
+			_ = os.Remove(reservedPath)
+		}
+	}()
 	if autoNamed {
 		// Reserve the generated name before resolveExportFile derives the tmp path from
 		// it. Two auto-named exports in the same second used to rename onto one file —
@@ -321,11 +332,12 @@ func (h *Handlers) writeExportFile(
 		if err := os.MkdirAll(exportDir, 0750); err != nil {
 			return fmt.Errorf("create dir: %w", err)
 		}
-		reserved, reservedPath, err := createUniqueFile(exportDir, "network-"+exportTimestamp(), enc.FileExtension())
+		reserved, path, err := createUniqueFile(exportDir, "network-"+exportTimestamp(), enc.FileExtension())
 		if err != nil {
 			return fmt.Errorf("reserve export name: %w", err)
 		}
 		_ = reserved.Close()
+		reservedPath = path
 		userPath = filepath.Base(reservedPath)
 	}
 
@@ -367,6 +379,7 @@ func (h *Handlers) writeExportFile(
 		_ = os.Remove(tmpPath)
 		return err
 	}
+	committed = true
 
 	httpx.JSON(w, 200, map[string]any{
 		"path":    absPath,
