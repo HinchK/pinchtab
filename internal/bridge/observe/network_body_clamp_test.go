@@ -270,6 +270,14 @@ func TestBodyClampsAndDisplayFieldsUseTheirOwnHelper(t *testing.T) {
 	if !strings.Contains(src, "clampRetainedBody(entry.PostData,") {
 		t.Error("PostData no longer goes through clampRetainedBody: a second clamp beside it drifts, and PostData loses the drop-with-reason cases the response body already handles")
 	}
+	// The scope this site passes is the wording an operator reads in the drop reason, and the
+	// branch that emits it cannot be reached through normalizeNetworkEntry — the cap is a
+	// constant far larger than any rune — so no behavioural test can see which scope
+	// production hands over. Read it from the source instead: passing a retention scope here
+	// would tell an operator the RESPONSE budget refused their request body.
+	if !strings.Contains(src, "maxNetworkPostDataBytes, postDataLimitScope)") {
+		t.Error("the PostData clamp no longer passes postDataLimitScope, so its drop reason would name a budget that did not refuse the body")
+	}
 	if strings.Contains(src, "entry.PostData = sanitize.") {
 		t.Error("PostData cuts with a sanitize helper directly again, bypassing the one payload clamp")
 	}

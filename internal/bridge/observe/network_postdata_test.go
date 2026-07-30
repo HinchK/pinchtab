@@ -336,16 +336,22 @@ func TestRequestEntryFlagsNothingForAnOrdinaryBody(t *testing.T) {
 
 // The sub-rune budget cannot arise through normalizeNetworkEntry — the cap is a constant far
 // larger than any rune — so the case is pinned where it lives, on the shared clamp, with the
-// scope name this call site passes. That name is what an operator reads in the reason.
+// scope name this call site passes. That name is what an operator reads in the reason, so the
+// expectation is the SENTENCE, spelled out the way the response-body rows above spell theirs.
+// Building it from postDataLimitScope instead would move with the constant: renaming the
+// scope to the response-retention wording — telling an operator the retention budget refused
+// their request body — would leave this test green while breaking the property it names.
 func TestTheRequestBodyScopeNamesItselfInTheDropReason(t *testing.T) {
+	const wantReason = "request body limit is smaller than the body's first character"
+
 	for limit := 1; limit < 4; limit++ {
 		clamped, truncated, reason := clampRetainedBody("🎯 body", false, limit, postDataLimitScope)
 
 		if clamped != "" || truncated {
 			t.Errorf("limit=%d: kept %q (truncated=%v) of a body whose first character does not fit", limit, clamped, truncated)
 		}
-		if reason != postDataLimitScope+" is smaller than the body's first character" {
-			t.Errorf("limit=%d: reason = %q, which does not name the request body budget", limit, reason)
+		if reason != wantReason {
+			t.Errorf("limit=%d: reason = %q, want %q — the scope this site passes is what names the budget an operator reads", limit, reason, wantReason)
 		}
 	}
 	if clamped, truncated, reason := clampRetainedBody("🎯 body", false, 4, postDataLimitScope); clamped != "🎯" || !truncated || reason != "" {
