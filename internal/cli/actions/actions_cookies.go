@@ -58,7 +58,7 @@ func CookiesSet(client *http.Client, base, token string, cmd *cobra.Command, nam
 	}
 
 	result := requireMap(apiclient.DoPost(client, base, token, "/cookies", body), 1, "Failed to set cookie")
-	if set, ok := result["set"].(float64); ok && set < 1 {
+	if !cookieWriteConfirmed(result) {
 		fmt.Fprintf(os.Stderr, "ERROR: cookies: %q was not set (%v)\n", name, jsonLine(result))
 		os.Exit(2)
 	}
@@ -81,6 +81,15 @@ func printCookiesResult(cmd *cobra.Command, result map[string]any) {
 		return
 	}
 	fmt.Println("OK")
+}
+
+// cookieWriteConfirmed reports whether a /cookies response proves the browser stored the
+// cookie. It fails CLOSED: an absent or unreadable "set" has not confirmed the write, which
+// is not the same as confirming it, so renaming the field breaks the command rather than
+// silently retiring the check. Separate from the exit path so the rule is testable.
+func cookieWriteConfirmed(result map[string]any) bool {
+	set, ok := result["set"].(float64)
+	return ok && set >= 1
 }
 
 func jsonLine(v any) string {

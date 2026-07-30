@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -102,8 +103,41 @@ func handleCookiesSet(c *Client) func(context.Context, mcp.CallToolRequest) (*mc
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
+		// /cookies answers 200 whether or not the browser stored anything, so
+		// resultFromBytes alone would report a cookie that was never set as a success —
+		// and this is the surface where nothing reads the body afterwards.
+		if unset := unsetCookieReport(respBody); unset != "" {
+			return mcp.NewToolResultError(fmt.Sprintf("cookie %q was not set: %s", name, unset)), nil
+		}
 		return resultFromBytes(respBody, code)
 	}
+}
+
+// unsetCookieReport returns a reason when a /cookies response shows fewer cookies stored
+// than were sent, or "" when every one landed. A response it cannot read counts as unset:
+// the point is to confirm the write, and an unparseable answer confirms nothing.
+func unsetCookieReport(respBody []byte) string {
+	var resp struct {
+		Set      *int `json:"set"`
+		Total    *int `json:"total"`
+		Failures []struct {
+			Name  string `json:"name"`
+			Error string `json:"error"`
+		} `json:"failures"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return fmt.Sprintf("unreadable response: %s", strings.TrimSpace(string(respBody)))
+	}
+	if resp.Set == nil || resp.Total == nil {
+		return fmt.Sprintf("response did not report how many cookies were set: %s", strings.TrimSpace(string(respBody)))
+	}
+	if *resp.Set >= *resp.Total {
+		return ""
+	}
+	if len(resp.Failures) > 0 {
+		return resp.Failures[0].Error
+	}
+	return fmt.Sprintf("%d of %d stored, with no reason given", *resp.Set, *resp.Total)
 }
 
 func handleConnectProfile(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {

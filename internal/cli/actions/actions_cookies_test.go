@@ -150,3 +150,27 @@ func TestCookiesSetForwardsOnlyTheFlagsGiven(t *testing.T) {
 		t.Errorf("body pins a url the caller never gave (%v); the server defaults it to the tab's page", body["url"])
 	}
 }
+
+// The confirmation must fail CLOSED. A response that cannot say how many cookies were
+// stored has not confirmed the write, and a check written as "if the field is readable AND
+// looks bad" silently retires itself the moment the field is renamed.
+func TestCookieWriteConfirmedFailsClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result map[string]any
+		want   bool
+	}{
+		{name: "one stored", result: map[string]any{"set": float64(1), "total": float64(1)}, want: true},
+		{name: "nothing stored", result: map[string]any{"set": float64(0), "total": float64(1)}},
+		{name: "field absent", result: map[string]any{"status": "ok"}},
+		{name: "field renamed", result: map[string]any{"stored": float64(1)}},
+		{name: "field not a number", result: map[string]any{"set": "1"}},
+		{name: "empty response", result: map[string]any{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := cookieWriteConfirmed(tc.result); got != tc.want {
+				t.Errorf("cookieWriteConfirmed(%v) = %v, want %v", tc.result, got, tc.want)
+			}
+		})
+	}
+}

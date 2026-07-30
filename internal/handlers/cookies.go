@@ -225,8 +225,13 @@ func (h *Handlers) HandleSetCookies(w http.ResponseWriter, r *http.Request) {
 	}
 
 	successCount := 0
-	for _, cookie := range req.Cookies {
-		if err := h.Bridge.SetCookie(tCtx, bridge.SetCookieParams{
+	// The reason each cookie was refused, not just how many were: a domain mismatch, an
+	// invalid SameSite and Secure-on-http are the same count and different remedies, and a
+	// caller that only learns the count cannot tell a malformed request from a retryable
+	// one. Reported per index so a multi-cookie request says WHICH.
+	failures := []map[string]any{}
+	for i, cookie := range req.Cookies {
+		err := h.Bridge.SetCookie(tCtx, bridge.SetCookieParams{
 			Name:     cookie.Name,
 			Value:    cookie.Value,
 			URL:      req.URL,
@@ -236,18 +241,29 @@ func (h *Handlers) HandleSetCookies(w http.ResponseWriter, r *http.Request) {
 			HTTPOnly: cookie.HTTPOnly,
 			SameSite: cookie.SameSite,
 			Expires:  cookie.Expires,
-		}); err == nil {
+		})
+		if err == nil {
 			successCount++
+			continue
 		}
+		failures = append(failures, map[string]any{
+			"index": i,
+			"name":  cookie.Name,
+			"error": err.Error(),
+		})
 	}
 
 	h.recordActivity(r, activity.Update{Action: "cookies.write"})
 
-	httpx.JSON(w, 200, map[string]any{
+	result := map[string]any{
 		"set":    successCount,
 		"failed": len(req.Cookies) - successCount,
 		"total":  len(req.Cookies),
-	})
+	}
+	if len(failures) > 0 {
+		result["failures"] = failures
+	}
+	httpx.JSON(w, 200, result)
 }
 
 // HandleTabSetCookies sets cookies for a tab identified by path ID.
