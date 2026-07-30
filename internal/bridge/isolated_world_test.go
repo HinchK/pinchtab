@@ -3,15 +3,13 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/selector"
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
@@ -159,6 +157,11 @@ func TestIsolatedNodeObjectIDFailsClosedWithoutContext(t *testing.T) {
 	}
 }
 
+// moduleGoFileFloor is the vacuity floor the module-wide censuses in this package pass to
+// srccensus.Tree. Set well under the real count so ordinary growth or deletion does not
+// touch it, but far above what a walk that lost the tree would return.
+const moduleGoFileFloor = 400
+
 // mainWorldResolvers is the boundary as it actually stands, as data. These files
 // still resolve a bare backend node id, so their Runtime.callFunctionOn work runs
 // in the main world. They are the OPERATION paths — what is done to a node once
@@ -196,31 +199,12 @@ var resolveNodeSpellings = []struct{ call, isolated string }{
 }
 
 func TestIsolatedWorldBoundaryCensus(t *testing.T) {
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	found := map[string]bool{}
 	checked := map[string]int{}
-	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		name := filepath.ToSlash(rel)
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
+	for _, file := range srccensus.Tree(t, "../..", moduleGoFileFloor) {
+		name := file.Name
 		for _, spelling := range resolveNodeSpellings {
-			for _, block := range strings.Split(string(raw), spelling.call)[1:] {
+			for _, block := range strings.Split(file.Text, spelling.call)[1:] {
 				checked[spelling.call]++
 				head := block
 				if len(head) > 200 {
@@ -235,10 +219,6 @@ func TestIsolatedWorldBoundaryCensus(t *testing.T) {
 				}
 			}
 		}
-		return nil
-	})
-	if walkErr != nil {
-		t.Fatal(walkErr)
 	}
 	// Per spelling, not in total: one spelling falling to zero sites is how a
 	// whole class of call site stops being scanned while the census stays green.

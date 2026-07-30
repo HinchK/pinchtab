@@ -11,7 +11,9 @@
 // recur. Shared here, so they cannot be forgotten:
 //
 //  1. SCOPE IS DERIVED, NEVER HAND-LISTED. Load enumerates a package's non-test sources
-//     rather than naming files, and the finders return EVERY match rather than the first.
+//     and Tree a whole subtree's, rather than naming files, and the finders return EVERY
+//     match rather than the first. Tree also owns the walk EXCLUSIONS, so a module-wide
+//     guard inherits them instead of each author remembering them.
 //     Every silent narrowing found in this repo came from a hand-listed scope — a pair of
 //     filenames, the first match per file, a literal list of the very constants whose
 //     addition the guard policed. The rule was right in all three; the scope covered less
@@ -43,7 +45,10 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -96,6 +101,89 @@ func Load(t testing.TB, dir string, minFiles int) *Package {
 		t.Fatalf("parsed %d non-test files in %s, want at least %d; the census matched almost nothing and would pass vacuously", len(pkg.files), dir, minFiles)
 	}
 	return pkg
+}
+
+// SourceFile is one non-test Go source found by a recursive walk, named the way a
+// module-wide rule table is keyed: module-relative and slash-separated, so an exemption
+// entry written on one machine matches on every other.
+type SourceFile struct {
+	Name string
+	Path string
+	Text string
+}
+
+// treeSkipDirs are excluded by NAME because they hold no module source: dependency and
+// build output trees. A nested checkout is caught by nestedCheckout instead, since its
+// directory name is arbitrary.
+var treeSkipDirs = map[string]bool{".git": true, "node_modules": true, "dist": true, "vendor": true}
+
+// Tree enumerates every non-test .go file under root for a census whose rule is
+// module-wide rather than package-scoped, and it exists so the EXCLUSIONS are inherited
+// rather than remembered. minFiles is the vacuity floor, same contract as Load.
+//
+// A directory holding a .git entry is skipped, root excepted. That is the rule rather
+// than a name list because the hazard it closes is a git worktree created inside the repo
+// — routine when copying a diff somewhere safe to mutate — whose directory name is
+// arbitrary. Its copies are walked as module source, and since keys are module-relative,
+// a nested copy of an exempt file cannot match the exemption and is reported as a
+// violation; a census keyed on counts instead silently doubles them. Either way the
+// remedy the failure suggests is a duplicate entry for a path that vanishes with the
+// worktree, so the guard's own advice makes the tree worse.
+//
+// The .git entry must be matched as EITHER kind: a nested clone carries a .git directory,
+// a nested worktree carries a .git FILE. A check written as d.IsDir() && name == ".git"
+// misses the worktree, which is the case that actually occurs.
+func Tree(t testing.TB, root string, minFiles int) []SourceFile {
+	t.Helper()
+
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		t.Fatalf("cannot resolve %s, so this census would check nothing: %v", root, err)
+	}
+
+	var files []SourceFile
+	walkErr := filepath.WalkDir(abs, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if path == abs {
+				return nil
+			}
+			if treeSkipDirs[entry.Name()] || nestedCheckout(path) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		rel, relErr := filepath.Rel(abs, path)
+		if relErr != nil {
+			return relErr
+		}
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		files = append(files, SourceFile{Name: filepath.ToSlash(rel), Path: path, Text: string(raw)})
+		return nil
+	})
+	if walkErr != nil {
+		t.Fatalf("cannot walk %s, so this census would check nothing: %v", abs, walkErr)
+	}
+	if len(files) < minFiles {
+		t.Fatalf("walked %d non-test files under %s, want at least %d; the census matched almost nothing and would pass vacuously", len(files), abs, minFiles)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].Name < files[j].Name })
+	return files
+}
+
+// nestedCheckout reports whether dir is the root of its own checkout, by the presence of a
+// .git entry of either kind. See Tree for why the kind matters.
+func nestedCheckout(dir string) bool {
+	_, err := os.Lstat(filepath.Join(dir, ".git"))
+	return err == nil
 }
 
 // Files reports the base names parsed, for a guard that needs to name one.

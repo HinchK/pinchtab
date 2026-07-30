@@ -237,3 +237,157 @@ func f(cfg *C, other *C) {
 		t.Errorf("found %d Port assignments, want 1", len(got))
 	}
 }
+
+// writeTree lays out files at paths relative to one root, creating parent directories, so
+// a walk test can describe a whole shape in one literal.
+func writeTree(t *testing.T, files map[string]string) string {
+	t.Helper()
+
+	root := t.TempDir()
+	for rel, body := range files {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+func treeNames(files []SourceFile) []string {
+	names := make([]string, 0, len(files))
+	for _, file := range files {
+		names = append(names, file.Name)
+	}
+	return names
+}
+
+// The hazard this closes: a git worktree created INSIDE the repo — routine when copying a
+// diff somewhere safe to mutate — is otherwise walked as module source. Its .git is a FILE,
+// not a directory, so the obvious `IsDir() && name == ".git"` check misses exactly the case
+// that occurs; and the nested directory's name is arbitrary, so no name list catches it.
+func TestTreeSkipsANestedCheckoutWhicheverKindOfGitEntryItHas(t *testing.T) {
+	// dir and gitEntry are separate because deriving the nested root from the .git path
+	// puts the clone's sources INSIDE .git, where the name skip excludes them and the
+	// subtest passes without ever testing a nested clone.
+	for _, tc := range []struct {
+		name     string
+		dir      string
+		gitEntry string
+		body     string
+	}{
+		{name: "worktree carries a .git file", dir: "scratch-7f3a", gitEntry: ".git", body: "gitdir: /elsewhere/.git/worktrees/scratch\n"},
+		{name: "clone carries a .git directory", dir: "vendored-copy", gitEntry: ".git/HEAD", body: "ref: refs/heads/main\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeTree(t, map[string]string{
+				"real.go":                  "package a\n",
+				"pkg/deep.go":              "package b\n",
+				tc.dir + "/" + tc.gitEntry: tc.body,
+				tc.dir + "/copy.go":        "package a\n",
+				tc.dir + "/pkg/sub.go":     "package b\n",
+			})
+
+			// The nested sources must exist where the walk would find them, or this
+			// subtest cannot distinguish an exclusion from a fixture that planted nothing.
+			for _, rel := range []string{tc.dir + "/copy.go", tc.dir + "/pkg/sub.go"} {
+				if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel))); err != nil {
+					t.Fatalf("fixture did not plant %s, so the exclusion would pass vacuously: %v", rel, err)
+				}
+			}
+
+			got := treeNames(Tree(t, root, 2))
+
+			want := []string{"pkg/deep.go", "real.go"}
+			if strings.Join(got, ",") != strings.Join(want, ",") {
+				t.Errorf("Tree = %v, want %v; a nested checkout's copies are walked as module source, and since rule tables are keyed module-relative, a copy of an exempt file cannot match its exemption", got, want)
+			}
+		})
+	}
+}
+
+// The root itself holds a .git entry, so the skip cannot be unconditional or a census run
+// from a real checkout enumerates nothing.
+func TestTreeStillWalksARootThatIsItselfACheckout(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		".git/HEAD":  "ref: refs/heads/main\n",
+		"real.go":    "package a\n",
+		"pkg/one.go": "package b\n",
+	})
+
+	if got := treeNames(Tree(t, root, 2)); len(got) != 2 {
+		t.Errorf("Tree = %v, want both files; the root's own .git must not exclude the module", got)
+	}
+}
+
+func TestTreeSkipsDependencyAndBuildTreesByName(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"real.go":               "package a\n",
+		"pkg/one.go":            "package b\n",
+		"node_modules/dep.go":   "package c\n",
+		"dist/built.go":         "package d\n",
+		"vendor/vendored.go":    "package e\n",
+		"dist/nested/deeper.go": "package f\n",
+	})
+
+	got := treeNames(Tree(t, root, 2))
+
+	want := []string{"pkg/one.go", "real.go"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Tree = %v, want %v", got, want)
+	}
+}
+
+func TestTreeExcludesTestFilesAndNonGoFiles(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"real.go":      "package a\n",
+		"pkg/one.go":   "package b\n",
+		"real_test.go": "package a\n",
+		"notes.md":     "# no\n",
+		"pkg/two.json": "{}\n",
+	})
+
+	got := treeNames(Tree(t, root, 2))
+
+	want := []string{"pkg/one.go", "real.go"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("Tree = %v, want %v", got, want)
+	}
+}
+
+// Tree carries Load's vacuity floor for the same reason: a walk that lost most of the tree
+// — an exclusion widened by mistake, a root pointed one level too deep — must fail rather
+// than report a clean census over almost nothing.
+func TestTreeFailsBelowItsFileFloor(t *testing.T) {
+	root := writeTree(t, map[string]string{"only.go": "package a\n"})
+
+	got := mustFatal(t, func(tb testing.TB) { Tree(tb, root, 5) })
+
+	for _, want := range []string{"walked 1 non-test files", "want at least 5", "pass vacuously"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("Fatalf = %q, want it to mention %q", got, want)
+		}
+	}
+}
+
+// The file contents are what every module-wide census actually reads, so a walk returning
+// names with empty bodies would let each one silently match nothing.
+func TestTreeCarriesEachFilesTextAndAModuleRelativeName(t *testing.T) {
+	root := writeTree(t, map[string]string{
+		"a.go":            "package a\n// marker-alpha\n",
+		"nested/pkg/b.go": "package b\n// marker-beta\n",
+	})
+
+	files := Tree(t, root, 2)
+	if len(files) != 2 {
+		t.Fatalf("Tree returned %d files, want 2", len(files))
+	}
+	if files[0].Name != "a.go" || !strings.Contains(files[0].Text, "marker-alpha") {
+		t.Errorf("first file = %+v, want a.go carrying its text", files[0])
+	}
+	if files[1].Name != "nested/pkg/b.go" || !strings.Contains(files[1].Text, "marker-beta") {
+		t.Errorf("second file = %+v, want a slash-separated relative name and its text", files[1])
+	}
+}

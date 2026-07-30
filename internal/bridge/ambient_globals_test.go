@@ -5,12 +5,11 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 // An isolated-world node handle lives in the TOP frame's isolated context, so
@@ -72,29 +71,9 @@ const isolatedResolveWindow = 200
 // going stale: a new producer under any name fails here, naming itself, instead of
 // quietly removing its own callers from the census.
 func TestIsolatedHandleProducersAreAllInScope(t *testing.T) {
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	producers := 0
-	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		name := filepath.ToSlash(rel)
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		src := string(raw)
+	for _, file := range srccensus.Tree(t, "../..", moduleGoFileFloor) {
+		name, src := file.Name, file.Text
 
 		// Both spellings, from the one table the resolution census already owns. That
 		// census added the typed pairing precisely because a check knowing only the
@@ -118,20 +97,21 @@ func TestIsolatedHandleProducersAreAllInScope(t *testing.T) {
 			}
 		}
 		if !isolating {
-			return nil
+			continue
 		}
 		producers++
 
+		inScope := false
 		for _, token := range isolatedHandleTokens {
 			if strings.Contains(src, token) {
-				return nil
+				inScope = true
+				break
 			}
 		}
+		if inScope {
+			continue
+		}
 		t.Errorf("%s resolves a node with an executionContextId, so its handles are top-frame isolated, but it matches no entry in isolatedHandleTokens — the ambient-globals census cannot see it or its callers. Add the producer's exported name to isolatedHandleTokens.", name)
-		return nil
-	})
-	if walkErr != nil {
-		t.Fatal(walkErr)
 	}
 	if producers == 0 {
 		t.Fatal("no file resolves a node with an executionContextId — this check is verifying nothing")
@@ -483,34 +463,14 @@ func sortedKeys[V any](m map[string]V) []string {
 }
 
 func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	scope := censusScope{
 		exercised:           map[string]int{},
 		canonicalOutOfScope: map[string]int{},
 		violations:          map[string]bool{},
 	}
 
-	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		name := filepath.ToSlash(rel)
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		src := string(raw)
+	for _, file := range srccensus.Tree(t, "../..", moduleGoFileFloor) {
+		name, src := file.Name, file.Text
 		canonical := strings.Count(jsCode(src), canonicalViewLine)
 
 		inScope := false
@@ -527,7 +487,7 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 			if canonical > 0 {
 				scope.canonicalOutOfScope[name] = canonical
 			}
-			return nil
+			continue
 		}
 		scope.scopedFiles++
 		scope.canonicalInScopedSrc += canonical
@@ -535,7 +495,7 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 		literals, parseErr := goRawLiterals(name, src)
 		if parseErr != nil {
 			t.Errorf("%s: parse: %v", name, parseErr)
-			return nil
+			continue
 		}
 		for _, decl := range callFunctionDeclarations(literals) {
 			scope.checkedDecls++
@@ -564,10 +524,6 @@ func TestIsolatedHandleDeclarationsShadowAmbientGlobals(t *testing.T) {
 					strings.Join(formLines(forms), "\n  "))
 			}
 		}
-		return nil
-	})
-	if walkErr != nil {
-		t.Fatal(walkErr)
 	}
 
 	t.Logf("census scope: %d files obtain isolated handles, %d callFunctionOn declarations scanned, ambient mentions %v, canonical preamble %d/%d in scope, %d out of scope",
