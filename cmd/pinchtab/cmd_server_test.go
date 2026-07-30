@@ -224,27 +224,61 @@ func TestResolveLogLevelEmitsTheVerboseNoticeOnStderr(t *testing.T) {
 
 	for _, tc := range []struct {
 		name        string
+		flag        string
 		configLevel string
 		verbose     bool
 		wantNotice  bool
+		wantSource  string
+		wantAbsent  string
+		wantLevel   slog.Level
 	}{
-		{name: "verbose against a persisted level", configLevel: "warn", verbose: true, wantNotice: true},
-		{name: "instance-style config with no verbose", configLevel: "warn"},
+		{
+			name:        "verbose against a persisted level",
+			configLevel: "warn",
+			verbose:     true,
+			wantNotice:  true,
+			wantSource:  "server.logLevel in the config file",
+			wantAbsent:  "set by --log-level",
+			wantLevel:   slog.LevelWarn,
+		},
+		{
+			// resolveLogLevel folds the flag into cfg.LogLevel, after which the two
+			// sources are one field. Only a flag row driven end to end can tell that
+			// the notice was computed before the fold: read cfg.LogLevel afterwards
+			// and the notice blames the config file for a level the caller typed.
+			name:        "the flag is named even though it lands in the config field",
+			flag:        "error",
+			configLevel: "warn",
+			verbose:     true,
+			wantNotice:  true,
+			wantSource:  "set by --log-level",
+			wantAbsent:  "config file",
+			wantLevel:   slog.LevelError,
+		},
+		{name: "instance-style config with no verbose", configLevel: "warn", wantLevel: slog.LevelWarn},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			safelog.SetLevel(slog.LevelInfo)
 			cfg := &config.RuntimeConfig{LogLevel: tc.configLevel}
 
-			stdout, stderr := captureStdoutStderr(t, func() { resolveLogLevel(cfg, "", tc.verbose) })
+			stdout, stderr := captureStdoutStderr(t, func() { resolveLogLevel(cfg, tc.flag, tc.verbose) })
 
 			if got := strings.Contains(stderr, "pass --log-level debug to raise it"); got != tc.wantNotice {
 				t.Errorf("stderr carries the notice = %v, want %v (stderr = %q)", got, tc.wantNotice, stderr)
 			}
+			if tc.wantNotice {
+				if !strings.Contains(stderr, tc.wantSource) {
+					t.Errorf("stderr = %q does not name %q as the source", stderr, tc.wantSource)
+				}
+				if strings.Contains(stderr, tc.wantAbsent) {
+					t.Errorf("stderr = %q names %q, which did not set the level", stderr, tc.wantAbsent)
+				}
+			}
 			if stdout != "" {
 				t.Errorf("stdout = %q, want nothing; the notice is a diagnostic", stdout)
 			}
-			if got := safelog.CurrentLevel(); got != slog.LevelWarn {
-				t.Errorf("level = %v, want warn; the notice must not change the precedence", got)
+			if got := safelog.CurrentLevel(); got != tc.wantLevel {
+				t.Errorf("level = %v, want %v; the notice must not change the precedence", got, tc.wantLevel)
 			}
 		})
 	}
