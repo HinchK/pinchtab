@@ -457,8 +457,8 @@ func heldButton(button string) (mouseButton, error) {
 	return row, nil
 }
 
-// Chrome starts an HTML5 drag only after sustained movement follows the press, so the
-// interpolation is load-bearing: a single jump from source to destination fires no dragstart.
+// Chrome enters the HTML5 drag pipeline only on movement that reports the pressed button, so
+// the held mask on these moves is what fires dragstart, not how many of them there are.
 func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64, button string) error {
 	dx := endX - x
 	dy := endY - y

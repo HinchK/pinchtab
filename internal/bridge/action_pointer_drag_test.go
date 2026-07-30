@@ -238,6 +238,56 @@ func TestThePointerPrimitivesStillDispatchOneJumpEach(t *testing.T) {
 	}
 }
 
+// The reason `drag` has to own the sequence is the button, not the number of steps: every
+// `mouse move` is its own request and knows of no press, so its moves report no button held
+// and Chrome never enters the drag pipeline. Measured both ways — one interpolated move with
+// the button held completes the drop, while these twenty without it do not — so a caller who
+// reads the limitation as "one jump" and answers it with small steps still gets nothing.
+func TestManySmallHandAssembledStepsStillCompleteNoHTML5Drop(t *testing.T) {
+	f := newDragFixture(t)
+	const moves = 20
+
+	// The mouse pair first, so the negative below cannot pass by the sequence never landing:
+	// the same twenty steps DO complete a mouse-driven drop.
+	f.reload(t)
+	f.handAssembledDragInSteps(t, "#mouseSrc", "#mouseDst", moves)
+	if _, mouse := f.state(t); mouse != "DROPPED" {
+		t.Fatalf("%d hand-assembled moves did not complete even a mouse-driven drop (mouse=%q), so the HTML5 reading below would prove nothing", moves, mouse)
+	}
+
+	f.reload(t)
+	f.handAssembledDragInSteps(t, "#h5Src", "#h5Dst", moves)
+	if html5, _ := f.state(t); html5 != "no" {
+		t.Errorf("%d hand-assembled moves recorded h5=%q; if the primitives now complete an HTML5 drop, the docs' held-button explanation is obsolete", moves, html5)
+	}
+}
+
+func (f *dragFixture) handAssembledDragInSteps(t *testing.T, from, to string, moves int) {
+	t.Helper()
+
+	srcX, srcY := f.point(t, from)
+	dstX, dstY := f.point(t, to)
+	at := func(i int) ActionRequest {
+		p := float64(i) / float64(moves)
+		return ActionRequest{X: srcX + p*(dstX-srcX), Y: srcY + p*(dstY-srcY), HasXY: true}
+	}
+
+	if _, err := f.b.actionMouseMove(f.ctx, at(0)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.b.actionMouseDown(f.ctx, at(0)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= moves; i++ {
+		if _, err := f.b.actionMouseMove(f.ctx, at(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := f.b.actionMouseUp(f.ctx, at(moves)); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func (f *dragFixture) buttonRecord(t *testing.T) (pressed int, held int) {
 	t.Helper()
 	if err := chromedp.Run(f.ctx,
