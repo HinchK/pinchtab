@@ -89,5 +89,5 @@ func PDF(client *http.Client, base, token string, cmd *cobra.Command) {
 	if err != nil {
 		cli.Fatal("Write failed: %v", err)
 	}
-	fmt.Println(cli.StyleStdout(cli.SuccessStyle, fmt.Sprintf("Saved %s (%d bytes)", saved, len(data))))
+	printSaved(saved, len(data))
 }

@@ -95,7 +95,7 @@ func Screenshot(client *http.Client, base, token string, cmd *cobra.Command) {
 		if err != nil {
 			cli.Fatal("Write failed: %v", err)
 		}
-		fmt.Println(cli.StyleStdout(cli.SuccessStyle, fmt.Sprintf("Saved %s (%d bytes)", saved, len(img))))
+		printSaved(saved, len(img))
 		// Print a human-readable legend so the operator can correlate visual
 		// labels with refs at a glance. The bracketed number must match what
 		// the overlay draws (the numeric portion of the ref) — using i+1
@@ -128,5 +128,5 @@ func Screenshot(client *http.Client, base, token string, cmd *cobra.Command) {
 	if err != nil {
 		cli.Fatal("Write failed: %v", err)
 	}
-	fmt.Println(cli.StyleStdout(cli.SuccessStyle, fmt.Sprintf("Saved %s (%d bytes)", saved, len(data))))
+	printSaved(saved, len(data))
 }

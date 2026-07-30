@@ -2,6 +2,7 @@ package actions
 
 import (
 	"encoding/base64"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,12 +33,16 @@ func TestDownloadTruncatesPrintedBase64(t *testing.T) {
 	}
 }
 
-func TestDownloadWithOutputSavesDecodedFileAndTruncatesPrintedBase64(t *testing.T) {
+// With -o the caller asked for a file, so stdout is the confirmation and nothing else.
+// The envelope used to print first, and its "data" field is truncated for display — so
+// the command emitted undecodable base64 and then, below it, the sentence saying the
+// whole payload was already on disk.
+func TestDownloadWithOutputConfirmsTheFileAndPrintsNoEnvelope(t *testing.T) {
 	data := []byte(strings.Repeat("image-bytes-", 40))
 	encoded := base64.StdEncoding.EncodeToString(data)
 
 	m := newMockServer()
-	m.response = `{"data":"` + encoded + `","contentType":"image/png","size":` + `480` + `}`
+	m.response = `{"data":"` + encoded + `","contentType":"image/png","size":480}`
 	defer m.close()
 
 	outFile := filepath.Join(t.TempDir(), "image.bin")
@@ -50,16 +55,115 @@ func TestDownloadWithOutputSavesDecodedFileAndTruncatesPrintedBase64(t *testing.
 		t.Fatalf("expected output file to be written: %v", err)
 	}
 	if string(written) != string(data) {
-		t.Fatalf("unexpected file content")
+		t.Fatal("the saved file is not byte-exact against the payload")
 	}
-	if !strings.Contains(output, `"dataTruncated": true`) {
-		t.Fatalf("expected truncated preview in output, got %q", output)
-	}
+
 	if !strings.Contains(output, "Saved "+outFile) {
-		t.Fatalf("expected save confirmation, got %q", output)
+		t.Errorf("output %q does not name the file it saved", output)
 	}
-	if strings.Contains(output, `"`+encoded+`"`) {
-		t.Fatalf("expected output to avoid printing the full base64 payload")
+	if !strings.Contains(output, fmt.Sprintf("(%d bytes)", len(data))) {
+		t.Errorf("output %q does not carry the byte count", output)
+	}
+	for _, banned := range []string{`"data"`, `"dataTruncated"`, `"dataLength"`, `"contentType"`, "(truncated)"} {
+		if strings.Contains(output, banned) {
+			t.Errorf("output %q still carries the envelope field %s", output, banned)
+		}
+	}
+	if strings.Contains(output, encoded[:downloadDataPreviewLimit]) {
+		t.Errorf("output %q still carries base64 from the payload", output)
+	}
+	if lines := strings.Count(strings.TrimSpace(output), "\n"); lines != 0 {
+		t.Errorf("output is %d lines, want the single confirmation:\n%s", lines+1, output)
+	}
+}
+
+// The wording is the one every artifact-saving command uses, so download's confirmation
+// must be indistinguishable from screenshot's and pdf's apart from the path and size.
+func TestTheSaveConfirmationIsTheSameSentenceEverywhere(t *testing.T) {
+	dir := t.TempDir()
+
+	download := func() string {
+		payload := []byte("0123456789")
+		m := newMockServer()
+		defer m.close()
+		m.response = `{"data":"` + base64.StdEncoding.EncodeToString(payload) + `"}`
+		return captureStdout(t, func() {
+			Download(m.server.Client(), m.base(), "", []string{"https://example.com/f.bin"}, filepath.Join(dir, "d.bin"), "")
+		})
+	}
+	screenshot := func() string {
+		m := newMockServer()
+		defer m.close()
+		m.response = "0123456789"
+		cmd := screenshotCmd()
+		_ = cmd.Flags().Set("output", filepath.Join(dir, "s.jpg"))
+		return captureStdout(t, func() { Screenshot(m.server.Client(), m.base(), "", cmd) })
+	}
+	pdf := func() string {
+		m := newMockServer()
+		defer m.close()
+		m.response = "0123456789"
+		cmd := pdfCmd()
+		_ = cmd.Flags().Set("output", filepath.Join(dir, "p.pdf"))
+		return captureStdout(t, func() { PDF(m.server.Client(), m.base(), "", cmd) })
+	}
+
+	want := "Saved " + filepath.Join(dir, "d.bin") + " (10 bytes)"
+	if got := strings.TrimSpace(download()); got != want {
+		t.Errorf("download printed %q, want %q", got, want)
+	}
+	for name, got := range map[string]string{
+		"screenshot": strings.TrimSpace(screenshot()),
+		"pdf":        strings.TrimSpace(pdf()),
+	} {
+		if !strings.HasPrefix(got, "Saved ") || !strings.HasSuffix(got, " (10 bytes)") {
+			t.Errorf("%s printed %q, which is not the shared sentence", name, got)
+		}
+	}
+}
+
+// The census: the sentence had four identical open-coded copies. Find the owner by its
+// declaration so moving printSaved to another file does not break this, and require the
+// literal at least once — a rename would otherwise make the ban pass over nothing.
+func TestTheSaveConfirmationHasOneOwner(t *testing.T) {
+	const sentence = `"Saved %s (%d bytes)"`
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var owner string
+	var others []string
+	var scanned int
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(name) // #nosec G304 -- files listed from this package's own directory.
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned++
+		if !strings.Contains(string(body), sentence) {
+			continue
+		}
+		if strings.Contains(string(body), "func printSaved(") {
+			owner = name
+			continue
+		}
+		others = append(others, name)
+	}
+
+	if scanned < 2 {
+		t.Fatalf("scanned %d files; this census would pass vacuously", scanned)
+	}
+	if owner == "" {
+		t.Fatalf("no file declares printSaved alongside %s; the sentence has no owner, so this census guards nothing", sentence)
+	}
+	if len(others) > 0 {
+		t.Errorf("%s is open-coded in %v as well as its owner %s; route those through printSaved", sentence, others, owner)
 	}
 }
 

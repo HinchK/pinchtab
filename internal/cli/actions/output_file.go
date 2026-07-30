@@ -1,8 +1,10 @@
 package actions
 
 import (
+	"fmt"
 	"os"
 
+	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/fileout"
 )
 
@@ -21,4 +23,17 @@ func writeOutputFile(path string, autoNamed bool, buf []byte) (string, error) {
 		return fileout.WriteUniquePath(path, buf)
 	}
 	return path, os.WriteFile(path, buf, 0600)
+}
+
+// printSaved is the confirmation every artifact-saving command prints once it has a
+// file: the path actually used and the byte count. download, pdf and screenshot (twice)
+// each open-coded the identical sentence.
+//
+// capture's lowercase "saved" and record's "Saved → %s" are deliberately NOT routed
+// here. They are different sentences for different shapes — capture prints a save line
+// alongside the snapshot that is half of what it returned, and record has no byte count
+// because it moves an already-encoded file — so folding them in would change their
+// output rather than remove a duplicate.
+func printSaved(path string, size int) {
+	fmt.Println(cli.StyleStdout(cli.SuccessStyle, fmt.Sprintf("Saved %s (%d bytes)", path, size)))
 }
