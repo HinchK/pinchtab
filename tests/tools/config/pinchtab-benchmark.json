@@ -21,7 +21,6 @@
   "multiInstance": {
     "strategy": "always-on",
     "allocationPolicy": "fcfs",
-    "poolSize": 2,
     "restart": {
       "maxRestarts": 10,
       "initBackoffSec": 2,
@@ -36,7 +35,6 @@
     "maxPerAgent": 5,
     "maxInflight": 3,
     "workerCount": 2,
-    "maxBatchSize": 5,
     "resultTTLSec": 300
   },
   "security": {
@@ -55,10 +53,5 @@
       "enabled": true,
       "wrapContent": false
     }
-  },
-  "activity": {
-    "enabled": true,
-    "maxEvents": 10000,
-    "retentionHours": 24
   }
 }
