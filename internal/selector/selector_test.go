@@ -1,6 +1,8 @@
 package selector
 
 import (
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -546,12 +548,9 @@ func TestPrefixTableCoversEveryKindWithAPrefix(t *testing.T) {
 	for _, pk := range prefixKinds {
 		tabled[pk.Kind] = true
 	}
-	for _, kind := range []Kind{
-		KindRef, KindCSS, KindXPath, KindText, KindSemantic, KindRole, KindLabel,
-		KindPlaceholder, KindAlt, KindTitle, KindTestID, KindFirst, KindLast, KindNth,
-	} {
+	for _, kind := range declaredKinds(t) {
 		if !tabled[kind] {
-			t.Errorf("kind %q has no prefix in prefixKinds", kind)
+			t.Errorf("kind %q is declared but has no prefix in prefixKinds, so Parse can never produce it and HasKnownPrefix cannot see it. Give it a prefix, or if it is deliberately unprefixed say so here", kind)
 		}
 	}
 	if got := Parse("semantic:login button"); got.Kind != KindSemantic {
@@ -560,6 +559,32 @@ func TestPrefixTableCoversEveryKindWithAPrefix(t *testing.T) {
 	if got := Parse("find:login button"); got.Kind != KindSemantic {
 		t.Errorf(`Parse("find:...").Kind = %q, want %q`, got.Kind, KindSemantic)
 	}
+}
+
+// Read from the declarations rather than listed here: the change this guard exists
+// to catch is a kind added to the grammar, and a hand-written list is one the same
+// commit would have to remember to update — which is the omission being guarded
+// against. KindNone is the absence of a kind and takes no prefix.
+func declaredKinds(t *testing.T) []Kind {
+	t.Helper()
+
+	raw, err := os.ReadFile("selector.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	declaration := regexp.MustCompile(`(?m)^\s*(?:const\s+)?Kind\w+\s+Kind = "([^"]*)"`)
+	var kinds []Kind
+	for _, m := range declaration.FindAllStringSubmatch(string(raw), -1) {
+		if m[1] == "" {
+			continue
+		}
+		kinds = append(kinds, Kind(m[1]))
+	}
+	if len(kinds) < 2 {
+		t.Fatalf("found %d declared kinds in selector.go; the scan matched almost nothing and the coverage check would pass vacuously", len(kinds))
+	}
+	return kinds
 }
 
 func TestHasKnownPrefixExcludesTheAutoDetectedForms(t *testing.T) {
