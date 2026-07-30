@@ -389,6 +389,41 @@ func TestSelector_SemanticQuery(t *testing.T) {
 	}
 }
 
+func TestPositionalWrapperOverSemanticFormDoesNotApplyItsIndex(t *testing.T) {
+	semanticPrefixes := []string{}
+	for _, pk := range prefixKinds {
+		if rawSelectorCanUseSemantic(pk.Prefix + "Save") {
+			semanticPrefixes = append(semanticPrefixes, pk.Prefix)
+		}
+	}
+	if len(semanticPrefixes) == 0 {
+		t.Fatal("no prefix routes to the semantic matcher, so this guard checked nothing")
+	}
+
+	for _, prefix := range semanticPrefixes {
+		bare := prefix + "Save"
+		for _, wrapped := range []string{"first:" + bare, "last:" + bare, "nth:0:" + bare, "nth:2:" + bare} {
+			query, ok := Parse(wrapped).SemanticQuery()
+			if !ok {
+				t.Errorf("%s no longer routes to the semantic matcher; docs/commands.md and positionalWrapperGrammar say a wrapper over a semantic form does not index, and that sentence must change with this", wrapped)
+				continue
+			}
+			if query != wrapped {
+				t.Errorf("SemanticQuery(%q) = %q: the index is now stripped from the query, so docs/commands.md and positionalWrapperGrammar must stop saying a wrapper over a semantic form does not index", wrapped, query)
+			}
+		}
+	}
+
+	for _, prefix := range []string{"css:", "xpath:", "text:"} {
+		bare := prefix + "Save"
+		for _, wrapped := range []string{bare, "first:" + bare, "last:" + bare, "nth:2:" + bare} {
+			if _, ok := Parse(wrapped).SemanticQuery(); ok {
+				t.Errorf("%s routes to the semantic matcher, so it cannot index in document order as the docs promise", wrapped)
+			}
+		}
+	}
+}
+
 func TestFromConstructors(t *testing.T) {
 	if s := FromRef("e5"); s.Kind != KindRef || s.Value != "e5" {
 		t.Errorf("FromRef(\"e5\"): %+v", s)

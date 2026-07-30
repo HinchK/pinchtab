@@ -636,6 +636,9 @@ func TestSelectorSchemasThatOfferWrappersStateWhatAnIndexMeans(t *testing.T) {
 			if !strings.Contains(property.Description, "text:X and first:text:X can differ") {
 				t.Errorf("%s.%s does not warn that a bare text: selector ranks rather than indexes: %q", tool.Name, name, property.Description)
 			}
+			if !strings.Contains(property.Description, "does not index at all") {
+				t.Errorf("%s.%s does not warn that a wrapper over a semantic form ignores its index: %q", tool.Name, name, property.Description)
+			}
 		}
 	}
 	if checked == 0 {

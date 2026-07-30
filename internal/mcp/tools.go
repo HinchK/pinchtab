@@ -2,12 +2,7 @@ package mcp
 
 import "github.com/mark3labs/mcp-go/mcp"
 
-// positionalWrapperGrammar states what an index means, for every tool whose
-// selector accepts first/last/nth. It is one constant because the rule is one
-// rule: a client that reads it in a click description must not learn something
-// different from the snapshot description. Indices used to follow an internal
-// ranking for text:, which made nth:1 resolve earlier in the page than nth:0.
-const positionalWrapperGrammar = " first/last/nth index matches in document order for every kind, so nth:0 is the first match in the page. A bare text: selector instead picks the most control-like smallest match, so text:X and first:text:X can differ."
+const positionalWrapperGrammar = " first/last/nth index matches in document order over css:, xpath: and text: selectors, so nth:0 is the first match in the page. A bare text: selector instead picks the most control-like smallest match, so text:X and first:text:X can differ. A wrapper over a semantic form (role:, label:, placeholder:, alt:, title:, testid:) does not index at all: the best-scoring match is returned whatever the index, so nth:2:role:button resolves the same element as role:button."
 
 // allTools returns every MCP tool exposed by the PinchTab MCP server.
 func allTools() []mcp.Tool {
