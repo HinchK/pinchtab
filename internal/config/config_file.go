@@ -1,7 +1,6 @@
 package config
 
 import (
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -212,8 +211,14 @@ func DefaultFileConfig() FileConfig {
 				ScanTimeoutSec: 5,
 			},
 		},
+		// BaseDir is deliberately empty. Pre-filling it with an absolute
+		// userConfigDir() path did two things: it baked a host home directory into any
+		// config that got written, and it made finalizeProfileConfig's
+		// filepath.Join(StateDir, "profiles") fallback unreachable, so server.stateDir
+		// could never relocate profiles. Left empty, the fallback is the live path and
+		// resolves to the same place for a default install, because StateDir itself
+		// defaults to userConfigDir().
 		Profiles: ProfilesConfig{
-			BaseDir:        filepath.Join(userConfigDir(), "profiles"),
 			DefaultProfile: "default",
 		},
 		MultiInstance: MultiInstanceConfig{

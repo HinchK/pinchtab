@@ -15,7 +15,9 @@ func TestRunNonInteractiveSetupDoesNotPrintToken(t *testing.T) {
 	cfg.Security.AllowedDomains = []string{"localhost"}
 
 	output := captureStdout(t, func() {
-		if !runNonInteractiveSetup(&cfg, configPath, true) {
+		// tokenGenerated=true: the only case that still writes, and the case whose
+		// output this test is about.
+		if !runNonInteractiveSetup(&cfg, configPath, true, true) {
 			t.Fatal("runNonInteractiveSetup() = false")
 		}
 	})
