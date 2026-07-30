@@ -271,14 +271,25 @@ func TestBodyClampsAndDisplayFieldsUseTheirOwnHelper(t *testing.T) {
 		t.Error("PostData no longer cuts with the suffix-free helper")
 	}
 
-	for _, field := range []string{"entry.URL", "entry.Method", "entry.ResourceType", "entry.StatusText", "entry.MimeType", "entry.Error"} {
+	displayFields := []string{"entry.URL", "entry.Method", "entry.ResourceType", "entry.StatusText", "entry.MimeType", "entry.Error"}
+	for _, field := range displayFields {
 		if !strings.Contains(src, field+" = sanitize.TruncateUTF8Bytes(") {
 			t.Errorf("%s no longer uses the ellipsis variant; a human reads it and the marker is the signal", field)
 		}
 	}
-	for _, headerClamp := range []string{"key = sanitize.TruncateUTF8Bytes(", "value = sanitize.TruncateUTF8Bytes("} {
+	headerClamps := []string{"key = sanitize.TruncateUTF8Bytes(", "value = sanitize.TruncateUTF8Bytes("}
+	for _, headerClamp := range headerClamps {
 		if !strings.Contains(src, headerClamp) {
 			t.Errorf("header clamp %q no longer uses the ellipsis variant", headerClamp)
 		}
+	}
+
+	// The checks above ask whether each site this test KNOWS about picked the right
+	// helper, which cannot see a site it does not know about — and an unlisted field
+	// taking the ellipsis by default is how the defect this file exists for arrived.
+	accounted := len(displayFields) + len(headerClamps) + 2 // the two body clamps: the retained body and PostData
+	if sites := strings.Count(src, "sanitize.TruncateUTF8Bytes(") + strings.Count(src, "sanitize.PrefixUTF8Bytes("); sites != accounted {
+		t.Errorf("network.go cuts a field at %d sites but this test classifies %d — a new field is picking a truncation policy nobody reviewed. Add it above: the ellipsis variant if a human reads it, the suffix-free one if it is machine-read and a marker would be fabricated content",
+			sites, accounted)
 	}
 }
