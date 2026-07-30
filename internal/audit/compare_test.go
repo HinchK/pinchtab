@@ -139,6 +139,16 @@ func TestDiffPageDataUncaughtJSErrors(t *testing.T) {
 			wantDrift: false,
 		},
 		{
+			// A single-line message carries its location inline, so the first-line cut
+			// cannot drop the host — only the origin mask can. Without it the same bug,
+			// broken identically on live and staging, reads as drift and fails the gate.
+			// The multi-line fixtures leave the mask redundant with the cut; this isolates it.
+			name:      "same inline-origin error on both sides is not a regression",
+			live:      []func(*PageResult){jsError("Uncaught Error: boom at " + live + "/app.js:3:9")},
+			staging:   []func(*PageResult){jsError("Uncaught Error: boom at " + staging + "/app.js:3:9")},
+			wantDrift: false,
+		},
+		{
 			name:      "one error swapped for another at the same count",
 			live:      []func(*PageResult){jsError("Uncaught: TypeError: a is not a function")},
 			staging:   []func(*PageResult){jsError("Uncaught: TypeError: b is not a function")},
