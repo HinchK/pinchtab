@@ -130,6 +130,8 @@ pinchtab mouse down --button left
 pinchtab mouse up e5 --button left
 pinchtab mouse up --button left
 pinchtab mouse wheel 240 --dx 40
+pinchtab mouse wheel -200
+pinchtab mouse move -5 -5
 pinchtab mouse move --x 400 --y 320
 pinchtab drag e5 400,320
 ```
@@ -137,11 +139,12 @@ pinchtab drag e5 400,320
 Use these for drag handles, canvas controls, precise hover choreography, or sites that require exact pointer sequencing.
 
 ### `pinchtab scroll <pixels|direction|selector>`
-Scroll the page or a specific element. Give either `--dy`/`--dx` or one positional argument, never both. A negative pixel count must use the flag: a leading minus on a positional is read as a bundle of shorthand flags and refused. Only one positional is accepted, so `--tab` must be a flag, never placed after `--`.
+Scroll the page or a specific element. Give either `--dy`/`--dx` or one positional argument, never both. A negative pixel count works in either spelling. Only one positional is accepted, so `--tab` must be a flag, never placed after `--`.
 
 ```bash
 pinchtab scroll 800            # scroll page down 800px
-pinchtab scroll --dy -300      # scroll page up 300px
+pinchtab scroll -300           # scroll page up 300px
+pinchtab scroll --dy -300      # the same, as a flag
 pinchtab scroll --dx -120      # scroll page left 120px
 pinchtab scroll down           # named direction: down, left, right, up
 pinchtab scroll '#footer'      # scroll a CSS selector into view

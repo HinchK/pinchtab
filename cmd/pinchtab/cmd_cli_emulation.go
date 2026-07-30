@@ -26,8 +26,14 @@ var setViewportCmd = &cobra.Command{
 var setGeoCmd = &cobra.Command{
 	Use:   "geo <latitude> <longitude>",
 	Short: "Set browser geolocation",
-	Long:  "Set the browser geolocation using CDP emulation. Accepts optional --accuracy flag.",
-	Args:  cobra.ExactArgs(2),
+	Long: `Set the browser geolocation using CDP emulation. Accepts optional --accuracy flag.
+
+Negative coordinates need no escaping, so the western hemisphere and everything
+south of the equator are written the same way as anywhere else:
+
+  pinchtab set geo 51.5 -0.12 --tab <id>     # London
+  pinchtab set geo -33.8 151.2 --tab <id>    # Sydney`,
+	Args: cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		runCLI(func(rt cliRuntime) {
 			browseractions.SetGeolocation(rt.client, rt.base, rt.token, cmd, args)

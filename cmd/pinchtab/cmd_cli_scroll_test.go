@@ -204,36 +204,3 @@ func TestDocumentedScrollDirectionsAreExactlyTheSupportedOnes(t *testing.T) {
 		}
 	}
 }
-
-// scroll -300 was an example in this help and in the agent-facing reference, and it never
-// parsed — cobra reads the leading minus as shorthand flags. Both sites are checked here
-// because a doc that teaches an unparseable command is how this reached a user.
-func TestNoDocumentedScrollExampleUsesABareNegativePositional(t *testing.T) {
-	docs := map[string]string{"scroll --help": scrollCmd.Long}
-
-	for _, path := range []string{
-		filepath.Join("..", "..", "skills", "pinchtab", "references", "commands.md"),
-		filepath.Join("..", "..", "docs", "reference", "scroll.md"),
-	} {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("cannot read %s, so this guard would not cover the doc site it names: %v", path, err)
-		}
-		docs[filepath.ToSlash(path)] = string(raw)
-	}
-
-	for site, text := range docs {
-		for _, line := range strings.Split(text, "\n") {
-			fields := strings.Fields(line)
-			for i, field := range fields {
-				if field != "scroll" || i+1 >= len(fields) {
-					continue
-				}
-				next := fields[i+1]
-				if len(next) > 1 && next[0] == '-' && next[1] >= '0' && next[1] <= '9' {
-					t.Errorf("%s teaches %q, which cobra reads as shorthand flags and refuses; a negative count is --dy <n>", site, strings.TrimSpace(line))
-				}
-			}
-		}
-	}
-}

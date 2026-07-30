@@ -123,10 +123,10 @@ var scrollCmd = &cobra.Command{
 	Long: `Scroll the page. Give either --dy/--dx or one positional argument.
 
   1. Pixels: --dy <n> vertically, --dx <n> horizontally (positive down/right).
-     A negative count needs the flag — cobra reads a leading minus on a
-     positional as a bundle of shorthand flags, so "scroll -300" cannot parse.
+     A negative count works either way; both forms take --tab in any position.
      pinchtab scroll --dy 800
      pinchtab scroll --dy -300
+     pinchtab scroll -300
 
   2. Direction keyword: up | down | left | right (defaults to 800px per step).
      pinchtab scroll down
@@ -152,15 +152,16 @@ Precedence: integer and direction keywords win over selector parsing so that
 }
 
 // scrollArgs refuses a second positional, which is what made a mistyped scroll
-// silently scroll the WRONG tab: the only spelling of a negative count used to be
+// silently scroll the WRONG tab: a negative count used to be spellable only as
 // `scroll -- -300`, everything after `--` is a positional, and MinimumNArgs(1)
 // accepted `--tab <id>` as args[1:] and dropped it — so the action ran on the
-// current tab and reported OK. It also refuses the empty and the doubly-specified
-// forms, since --dy/--dx and the positional are two spellings of one argument.
+// current tab and reported OK. A hand-written `--` still lands here, and still
+// refuses. It also refuses the empty and the doubly-specified forms, since
+// --dy/--dx and the positional are two spellings of one argument.
 func scrollArgs(cmd *cobra.Command, args []string) error {
 	byFlag := cmd.Flags().Changed("dy") || cmd.Flags().Changed("dx")
 	if len(args) > 1 {
-		return fmt.Errorf("accepts at most 1 positional argument, received %d (%s); a negative count is --dy <n>, and flags must not follow --", len(args), strings.Join(args, " "))
+		return fmt.Errorf("accepts at most 1 positional argument, received %d (%s); a negative count needs no escape (pinchtab scroll -300), and flags must not follow --", len(args), strings.Join(args, " "))
 	}
 	if len(args) == 0 && !byFlag {
 		return fmt.Errorf("needs a positional <pixels|direction|selector> or --dy/--dx")
