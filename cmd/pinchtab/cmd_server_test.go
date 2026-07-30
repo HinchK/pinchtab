@@ -365,7 +365,9 @@ func TestDefaultRunRecordsNoConfigLoadDiagnosticButKeepsWarnings(t *testing.T) {
 // internal/config must not grow its own precedence: it collects diagnostics and
 // emits them on request, and the level decision stays in resolveLogLevel.
 func TestConfigPackageHoldsNoLogLevelPrecedence(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "internal", "config", "config_load.go"))
+	configDir := filepath.Join("..", "..", "internal", "config")
+
+	raw, err := os.ReadFile(filepath.Join(configDir, "config_load.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,6 +375,33 @@ func TestConfigPackageHoldsNoLogLevelPrecedence(t *testing.T) {
 		if strings.Contains(string(raw), forbidden) {
 			t.Errorf("internal/config/config_load.go references %q — the level decision must stay in resolveLogLevel", forbidden)
 		}
+	}
+
+	// The criterion is about the package, not the loader: any file here could
+	// apply a level, and `config set server.logLevel` applying it on the spot is
+	// the edit that reads most reasonable. Applying is what is forbidden —
+	// safelog.ParseLevel is validation and stays allowed, which is why this looks
+	// for SetLevel alone rather than for the package.
+	paths, err := filepath.Glob(filepath.Join(configDir, "*.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanned := 0
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(path) // #nosec G304 -- files listed from the config package's own directory.
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned++
+		if strings.Contains(string(body), "SetLevel(") {
+			t.Errorf("internal/config/%s applies a log level; validating one with safelog.ParseLevel is fine, but resolveLogLevel is the only place that may decide and apply it", filepath.Base(path))
+		}
+	}
+	if scanned < 2 {
+		t.Fatalf("scanned %d files in internal/config; the census matched almost nothing and would pass vacuously", scanned)
 	}
 }
 
