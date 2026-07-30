@@ -194,6 +194,14 @@ func TestTextEnvelopeDisclosesTheFrameOnlyWhenScoped(t *testing.T) {
 const outerFixtureHTML = `<!doctype html><html><head><title>Outer</title></head><body>
 <h1>OuterHeading</h1><input id="oh" value="outerval"><button>OuterBtn</button>
 <iframe id="f" src="/inner.html" width="300" height="200"></iframe>
+<iframe id="g" src="/second.html" width="300" height="200"></iframe>
+</body></html>`
+
+// A SECOND child, so a read served from one frame can be told apart from a scope pointing at
+// the other. With one frame, a disclosure that names the stored scope and one that names the
+// frame the read used are the same string.
+const secondFixtureHTML = `<!doctype html><html><head><title>Second</title></head><body>
+<h1>SecondHeading</h1><p>Second frame paragraph text belonging to neither of the others.</p>
 </body></html>`
 
 const innerFixtureHTML = `<!doctype html><html><head><title>Inner</title></head><body>
@@ -206,6 +214,10 @@ func newFrameDisclosureFixture(t *testing.T) (*Handlers, string, string) {
 	chromePath := testbrowser.Path(t)
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/second.html", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(secondFixtureHTML))
+	})
 	mux.HandleFunc("/inner.html", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(innerFixtureHTML))
@@ -232,7 +244,7 @@ func newFrameDisclosureFixture(t *testing.T) (*Handlers, string, string) {
 		cancelAlloc()
 	})
 
-	if err := chromedp.Run(ctx, chromedp.Navigate(server.URL), chromedp.WaitVisible("#f", chromedp.ByID)); err != nil {
+	if err := chromedp.Run(ctx, chromedp.Navigate(server.URL), chromedp.WaitVisible("#f", chromedp.ByID), chromedp.WaitVisible("#g", chromedp.ByID)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -331,5 +343,136 @@ func TestAScopedReadIsDistinguishableFromAWholeDocumentRead(t *testing.T) {
 	}
 	if textEnvelope["title"] != "Outer" {
 		t.Errorf("the scoped text read re-pointed the tab's title: %v", textEnvelope["title"])
+	}
+}
+
+// A ?frameId= read carries no stored scope, and it is the path the design note claims covers
+// itself: frameDisclosureFor takes the frame the read ALREADY resolved rather than looking the
+// scope up again, so a one-shot read is disclosed like a scoped one. Nothing pinned that.
+// Re-deriving the disclosure from the stored scope — the natural simplification, since passing
+// the frame in looks redundant — leaves the rest of the package green and returns this card's
+// exact defect here: the child's content under the parent's url and title, disclosing nothing.
+//
+// The scope is set only to LEARN the frame id and is cleared again, so the read under test
+// runs against a tab whose stored scope is empty — asserted before the read, because that is
+// the whole premise.
+func TestAOneShotFrameReadDisclosesTheFrameOnAnUnscopedTab(t *testing.T) {
+	h, tabID, pageURL := newFrameDisclosureFixture(t)
+
+	frameID := scopeToInnerFrame(t, h, tabID)
+	resetFrameScope(t, h, tabID)
+	if scope, ok := h.currentFrameScope(tabID); ok {
+		t.Fatalf("the tab still holds a scope (%+v), so this read would be an ordinary scoped one and would prove nothing", scope)
+	}
+
+	whole := textEnvelope(t, h, "/text?tabId="+tabID)
+	if _, ok := whole["frame"]; ok {
+		t.Fatalf("the unscoped read published a frame key before any frameId was asked for: %v", whole["frame"])
+	}
+	if text, _ := whole["text"].(string); !strings.Contains(text, "OuterHeading") {
+		t.Fatalf("the unscoped read did not return the tab document: %q", text)
+	}
+
+	oneShot := textEnvelope(t, h, "/text?tabId="+tabID+"&frameId="+frameID)
+	if text, _ := oneShot["text"].(string); !strings.Contains(text, "Inner frame paragraph") {
+		t.Fatalf("?frameId= did not read the child document, so the disclosure below is not the thing under test: %q", text)
+	}
+
+	frame, ok := oneShot["frame"].(map[string]any)
+	if !ok {
+		t.Fatalf("a ?frameId= read returned the child's content with no disclosure — the parent's url and title with nothing to say the content is a fragment, which is this card's defect: %v", oneShot)
+	}
+	if got, _ := frame["frameId"].(string); got != frameID {
+		t.Errorf("frame.frameId = %q, want %q — the disclosure must name the frame the read was served from, not whatever the tab was last scoped to", got, frameID)
+	}
+	if frame["frameTitle"] != "Inner" {
+		t.Errorf("frame.frameTitle = %v, want the child document's title", frame["frameTitle"])
+	}
+	if url, _ := frame["frameUrl"].(string); !strings.HasSuffix(url, "/inner.html") {
+		t.Errorf("frame.frameUrl = %v, want the child document's url", frame["frameUrl"])
+	}
+	// The tab document keeps its own identity here too: a one-shot read must not re-point what
+	// url and title mean any more than a scoped one does.
+	if oneShot["title"] != "Outer" {
+		t.Errorf("a one-shot frame read re-pointed the tab's title: %v", oneShot["title"])
+	}
+	if url, _ := oneShot["url"].(string); !strings.HasPrefix(url, pageURL) {
+		t.Errorf("a one-shot frame read re-pointed the tab's url: %v", url)
+	}
+}
+
+// scopeToInnerFrame scopes the tab to the child frame and returns the frame id the server
+// assigned, which is the only way to learn an id a caller could pass as ?frameId=.
+func scopeToInnerFrame(t *testing.T, h *Handlers, tabID string) string {
+	t.Helper()
+	return scopeToFrame(t, h, tabID, "inner.html")
+}
+
+func scopeToFrame(t *testing.T, h *Handlers, tabID, target string) string {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/frame?tabId="+tabID, strings.NewReader(`{"target":"`+target+`"}`))
+	res := httptest.NewRecorder()
+	h.HandleFrame(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("frame scope: status %d body=%s", res.Code, res.Body.String())
+	}
+	scope, ok := h.currentFrameScope(tabID)
+	if !ok || scope.FrameID == "" {
+		t.Fatalf("scoping reported success but stored no frame id: %+v", scope)
+	}
+	return scope.FrameID
+}
+
+func resetFrameScope(t *testing.T, h *Handlers, tabID string) {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/frame?tabId="+tabID, strings.NewReader(`{"target":"main"}`))
+	res := httptest.NewRecorder()
+	h.HandleFrame(res, req)
+	if res.Code != http.StatusOK {
+		t.Fatalf("frame main: status %d body=%s", res.Code, res.Body.String())
+	}
+}
+
+func textEnvelope(t *testing.T, h *Handlers, url string) map[string]any {
+	t.Helper()
+	res := httptest.NewRecorder()
+	h.HandleText(res, httptest.NewRequest("GET", url, nil))
+	if res.Code != http.StatusOK {
+		t.Fatalf("GET %s: status %d body=%s", url, res.Code, res.Body.String())
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal(res.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode %s: %v", url, err)
+	}
+	return envelope
+}
+
+// The other half of the same claim, and the one a single-frame fixture cannot see: when the
+// tab IS scoped and a read names a different frame explicitly, the disclosure must describe
+// the frame the read was served from, not the stored scope. With one child frame those two
+// answers are the same string, so this needs the second.
+func TestAOneShotFrameReadDisclosesTheFrameItReadNotTheStoredScope(t *testing.T) {
+	h, tabID, _ := newFrameDisclosureFixture(t)
+
+	secondID := scopeToFrame(t, h, tabID, "second.html")
+	innerID := scopeToFrame(t, h, tabID, "inner.html")
+	if secondID == innerID {
+		t.Fatalf("both fixtures resolved to frame %q, so this test cannot tell the two apart", innerID)
+	}
+
+	oneShot := textEnvelope(t, h, "/text?tabId="+tabID+"&frameId="+secondID)
+	if text, _ := oneShot["text"].(string); !strings.Contains(text, "Second frame paragraph") {
+		t.Fatalf("?frameId= read the stored scope's frame rather than the one it named: %q", text)
+	}
+
+	frame, ok := oneShot["frame"].(map[string]any)
+	if !ok {
+		t.Fatalf("the read published no disclosure: %v", oneShot)
+	}
+	if got, _ := frame["frameId"].(string); got != secondID {
+		t.Errorf("frame.frameId = %q, want %q — the disclosure describes the stored scope rather than the frame the read used, which is the defect one level down", got, secondID)
+	}
+	if frame["frameTitle"] != "Second" {
+		t.Errorf("frame.frameTitle = %v, want the document the content actually came from", frame["frameTitle"])
 	}
 }

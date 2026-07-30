@@ -278,6 +278,10 @@ from:
 ```
 
 - The key is **absent** on a whole-document read, so nothing changes for an unscoped caller.
+- It is published for a **one-shot `?frameId=` read too**, on a tab with no stored scope: the
+  disclosure names the frame the read was actually served from, not whatever the tab happens
+  to be scoped to. A one-shot read returns a fragment for the same reason a scoped one does,
+  so it says so the same way.
 - `frameUrl` and `frameTitle` are read from the frame at request time and are what the
   returned content belongs to; a frame that navigated since the scope was set reports where
   it is now.
