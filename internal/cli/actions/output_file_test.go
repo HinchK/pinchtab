@@ -7,18 +7,29 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 )
 
-// Every auto-named CLI output builds its name from a second-resolution timestamp, so
-// two runs in one second used to land on one path and the first file was destroyed —
-// silently, while the command printed that path as if it held the new bytes. Driven
-// through the real commands rather than the helper, because the defect was as much in
-// what each site PRINTS as in what it writes.
-func TestTwoRunsInOneSecondKeepBothFilesAndPrintTheNameEachUsed(t *testing.T) {
+// Every auto-named CLI output builds its name from a second-resolution timestamp, so a
+// run whose name is already taken used to destroy the file holding it — silently, while
+// the command printed that path as if it held the new bytes. Driven through the real
+// commands rather than the helper, because the defect was as much in what each site
+// PRINTS as in what it writes.
+//
+// The collision is FORCED rather than hoped for. This test used to perform two runs back
+// to back and assume they landed in one second; when they straddled a boundary the names
+// differed, no collision occurred, and correct code reported "0 collision suffixes" — a
+// red that pointed at the collision rule while the clock was to blame. Pre-creating one
+// name would only move that race earlier, since the name would come from the test's own
+// clock. So every name the runs could reach inside a window of consecutive seconds is
+// taken first, and a run landing outside that window is reported as what it is.
+func TestARunWhoseAutoNameIsTakenSuffixesAndPrintsTheNameItUsed(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		prefix string
@@ -77,42 +88,49 @@ func TestTwoRunsInOneSecondKeepBothFilesAndPrintTheNameEachUsed(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := chdirTemp(t)
+			taken := takeEveryNameInWindow(t, dir, tc.prefix, tc.ext)
 
 			firstOut := tc.run(t)
 			secondOut := tc.run(t)
 
-			written := autoNamedFiles(t, dir, tc.prefix, tc.ext)
-			if len(written) != 2 {
-				t.Fatalf("two runs left %v; the second overwrote the first", written)
-			}
-			for _, name := range written {
-				if info, err := os.Stat(filepath.Join(dir, name)); err != nil || info.Size() == 0 {
-					t.Errorf("%s is missing or empty: %v", name, err)
+			// Diversion, not coexistence: the files that were already there must still hold
+			// their own bytes. Files existing proves nothing if one of them was rewritten,
+			// so this is asked first — it is the defect the collision rule exists to stop.
+			for name := range taken {
+				got, err := os.ReadFile(filepath.Join(dir, name)) // #nosec G304 -- path built by this test.
+				if err != nil {
+					t.Fatalf("reserved %s disappeared: %v", name, err)
+				}
+				if string(got) != reservedContents {
+					t.Errorf("reserved %s holds %q, want %q — a run wrote over a name it should have stepped around", name, got, reservedContents)
 				}
 			}
 
-			// Each run must print the path it actually used, so the two printed names are
-			// distinct and both are on disk. Printing the name each run BUILT would have
-			// them print one identical name — the file the second run did not write.
+			// Each run must print the path it actually used. Printing the name it BUILT
+			// would have both runs name a file neither of them holds — the taken one.
 			printed := []string{
 				printedName(t, firstOut, tc.prefix, tc.ext),
 				printedName(t, secondOut, tc.prefix, tc.ext),
 			}
 			if printed[0] == printed[1] {
-				t.Fatalf("both runs printed %s, but two different files were written (%v)", printed[0], written)
+				t.Fatalf("both runs printed %s, so one of them named a file it did not write", printed[0])
 			}
-			onDisk := map[string]bool{written[0]: true, written[1]: true}
-			var suffixed int
 			for i, name := range printed {
-				if !onDisk[name] {
-					t.Errorf("run %d printed %s, which is not one of the files written (%v)", i, name, written)
+				// The suffix is the evidence the collision branch ran, and the base it hangs
+				// off says which second the run used. A name from outside the reserved
+				// window means the runs took longer than the window — a clock result, not a
+				// collision-rule failure — so it is reported as that and nothing else.
+				base, suffixed := splitCollisionSuffix(t, name, tc.ext)
+				if !taken[base+tc.ext] {
+					t.Fatalf("run %d printed %s, whose second is outside the window this test reserved (%v): the runs left the window, so the collision branch never ran — this is a clock result, not a collision-rule failure",
+						i, name, sortedNames(taken))
 				}
-				if strings.HasSuffix(strings.TrimSuffix(name, tc.ext), "-1") {
-					suffixed++
+				if !suffixed {
+					t.Errorf("run %d printed %s with no collision suffix although that name was already taken; the run overwrote a file or invented a name", i, name)
 				}
-			}
-			if suffixed != 1 {
-				t.Errorf("printed names %v carry %d collision suffixes, want exactly one", printed, suffixed)
+				if info, err := os.Stat(filepath.Join(dir, name)); err != nil || info.Size() == 0 {
+					t.Errorf("run %d printed %s, which is missing or empty: %v", i, name, err)
+				}
 			}
 		})
 	}
@@ -348,5 +366,79 @@ func assertNonEmpty(t *testing.T, path string) {
 	}
 	if info.Size() == 0 {
 		t.Errorf("%s is empty", path)
+	}
+}
+
+// reservedContents is what the names this test takes hold before the runs, so a run that
+// overwrote one instead of stepping around it is visible in the file rather than only in
+// a count of how many files exist.
+const reservedContents = "bytes an earlier run left under this name"
+
+// autoNameWindowSeconds is how many consecutive seconds of candidate names are reserved.
+// One name is not enough: the run would have to land in the exact second the test chose,
+// which is the coin flip this test was rewritten to remove. A window makes the collision
+// certain for any run that starts within it, and leaving it is reported as a clock result.
+const autoNameWindowSeconds = 5
+
+// takeEveryNameInWindow creates the auto-name a run would build in each of the next few
+// seconds, so whichever second a run lands in, its name is already taken and it must
+// suffix. Returns the set of names it created.
+func takeEveryNameInWindow(t *testing.T, dir, prefix, ext string) map[string]bool {
+	t.Helper()
+	taken := map[string]bool{}
+	start := time.Now()
+	for i := 0; i < autoNameWindowSeconds; i++ {
+		name := prefix + start.Add(time.Duration(i)*time.Second).Format("20060102-150405") + ext
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(reservedContents), 0600); err != nil {
+			t.Fatal(err)
+		}
+		taken[name] = true
+	}
+	return taken
+}
+
+// autoName matches an auto-built output name: a prefix, the 20060102-150405 timestamp
+// every site formats, and the optional -N a collision appends. The timestamp carries its
+// own hyphen and its time half is all digits, so "the last hyphen-separated number" reads
+// every uncollided name as suffixed — the shape has to be matched, not scanned backwards.
+var autoName = regexp.MustCompile(`^(.*-\d{8}-\d{6})(?:-(\d+))?$`)
+
+// splitCollisionSuffix returns the name without its extension or -N, and whether a
+// collision suffix was there at all.
+func splitCollisionSuffix(t *testing.T, name, ext string) (base string, suffixed bool) {
+	t.Helper()
+	m := autoName.FindStringSubmatch(strings.TrimSuffix(name, ext))
+	if m == nil {
+		t.Fatalf("%s is not an auto-built name, so this test cannot say whether it collided", name)
+	}
+	return m[1], m[2] != ""
+}
+
+func sortedNames(set map[string]bool) []string {
+	names := make([]string, 0, len(set))
+	for name := range set {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// The other half of the rule, and the half the forced collision above cannot see: a name
+// that is free is used as built. Without this, a run that suffixed unconditionally would
+// satisfy every assertion above.
+func TestARunWhoseAutoNameIsFreeUsesItUnsuffixed(t *testing.T) {
+	dir := chdirTemp(t)
+
+	m := newMockServer()
+	defer m.close()
+	m.response = `{"status":"ok","image":{"format":"jpeg","base64":"aW1n"}}`
+	out := captureStdout(t, func() { Capture(m.server.Client(), m.base(), "", captureCmd()) })
+
+	name := printedName(t, out, "capture-", ".jpg")
+	if _, suffixed := splitCollisionSuffix(t, name, ".jpg"); suffixed {
+		t.Errorf("a run in an empty directory printed %s; a collision suffix on a free name is not a collision", name)
+	}
+	if written := autoNamedFiles(t, dir, "capture-", ".jpg"); len(written) != 1 || written[0] != name {
+		t.Errorf("the run printed %s but the directory holds %v", name, written)
 	}
 }
