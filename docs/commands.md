@@ -64,7 +64,11 @@ so a redirect, a login wall or an error page is visible without `--snap`.
 prints the tab ID first, and adds the landed URL only when stdout is a terminal.
 Under `--print-tab-id`, a pipe or a redirect, stdout carries the tab ID alone, so
 `TAB=$(pinchtab nav <url>)` captures a usable tab ID. A scripted navigation that
-needs to know where it landed should ask for `--snap`, `--text` or `--json`.
+needs to know where it landed should ask for `--json`, which prints the response
+body carrying `url`, or `--snap`, which puts the landed URL in the header line
+above the nodes. Not `--text`: the URL reaches it only inside the IDPI
+trust-boundary wrapper, so it disappears wherever `security.idpi.enabled` or
+`security.idpi.wrapContent` is off.
 
 ## Tabs
 
