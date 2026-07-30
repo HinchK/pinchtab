@@ -172,8 +172,14 @@ func TestAToolCallSeesAZeroSuccess200AsAnError(t *testing.T) {
 
 // The population the rule serves is DERIVED, not hand-listed: every non-test file in the
 // packages the funnel proxies that spells a "failed" JSON key carries a recorded decision.
-// A new endpoint counting its work lands in the funnel rule automatically; a new spelling
-// of failure lands here and forces a human decision instead of shipping silent.
+// A new endpoint counting its work lands in the funnel rule automatically, whatever package
+// it lives in; a new FILE spelling this same key lands here and forces a human decision.
+//
+// What neither catches, stated so it is not mistaken for covered: a genuinely different
+// failure vocabulary — "errorCount", "rejected" — is invisible to the funnel (which reads
+// the key "failed") and to this census (which greps for it), and a producer outside the two
+// prefixes below is outside this census entirely. Measured. Widening either is a decision,
+// not an oversight.
 func TestEveryFailedKeyProducerHasARecordedFunnelDecision(t *testing.T) {
 	decisions := map[string]string{
 		"internal/handlers/cookies.go":              "top-level numeric failed beside set/total: the counting shape, converted by the funnel rule",
