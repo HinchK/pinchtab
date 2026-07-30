@@ -66,10 +66,16 @@ func (h *Handlers) enforceTabNotPausedForHandoff(tabID string) error {
 	return fmt.Errorf("tab %s is paused for human handoff", tabID)
 }
 
-// enforceTabNotPausedForHandoffOrRespond is the single writer of the paused-tab
-// refusal: every endpoint that mutates what the human is looking at calls it, so
-// a client sees one status, code and remedy hint regardless of which one it hit.
-// Reports ok=false once the 409 has been written.
+// enforceTabNotPausedForHandoffOrRespond is the single writer of the RESPONSE-LEVEL
+// paused-tab refusal: an endpoint that answers with one status calls it, so a client
+// sees the same 409, code and remedy hint whichever it hit. Reports ok=false once the
+// 409 has been written.
+//
+// It is NOT every page-mutating endpoint. POST /actions and POST /macro answer 200 with
+// a result list, so a status written from inside their loop would describe the wrong
+// thing; they call the raw predicate above and carry the condition as a per-item result,
+// which today is a bare message with no code and no hint. Giving that shape its own
+// writer beside this one is PIN-179.
 func (h *Handlers) enforceTabNotPausedForHandoffOrRespond(w http.ResponseWriter, tabID string) bool {
 	err := h.enforceTabNotPausedForHandoff(tabID)
 	if err == nil {

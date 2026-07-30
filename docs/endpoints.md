@@ -114,7 +114,14 @@ Notes:
 - `POST /tabs/{id}/handoff` marks the tab as `paused_handoff` and records a reason
 - `GET /tabs/{id}/handoff` returns the current handoff state, or `active` when no handoff is set
 - `POST /tabs/{id}/resume` clears the handoff state and can carry resume metadata for the caller
-- a paused-handoff tab is a hard block on the action-execution routes (`/action`, `/actions`, `/macro`): they return `409 tab_paused_handoff` until `/resume` clears the state
+- a paused-handoff tab blocks the action-execution routes, but the two envelopes differ.
+  `POST /action` returns `409` with code `tab_paused_handoff` and a `details.hint` naming
+  `/resume`. `POST /actions` and `POST /macro` return **200** — they answer with a result
+  list — and refuse per item: the entry for each step against the paused tab has
+  `success: false` and a message naming the pause, with no code of its own yet. With
+  `stopOnError` false (the default) the remaining steps still run, so each step aimed at the
+  paused tab is refused the same way while steps naming another tab execute normally.
+  `/resume` clears the state for all of them.
 - treat the handoff record as coordination state, not as a security boundary — non-action endpoints (snapshots, screenshots, network logs, evals subject to their own gates) remain reachable
 - CLI wrappers exist: `pinchtab handoff`, `pinchtab resume`, `pinchtab handoff-status`, plus the `pinchtab tab handoff|resume|handoff-status` aliases
 
