@@ -147,7 +147,8 @@ All subsequent commands use that session's dedicated tab automatically — no `-
 
 State commands are sensitive and only belong in a user-approved diagnostics workflow:
 
-- `pinchtab state [--tab <id>]` or `GET /state` — full gated browser state for one tab: cookies, current-origin storage, metadata, and tab info. Never print or forward the result.
+- `pinchtab cookies get [--name <name>] [--tab <id>]` — read cookies for the tab's current URL. This is the command for cookies; `cookies set` writes one and `cookies clear` removes every cookie in the browser, all origins. Requires `security.allowCookies`.
+- `pinchtab state [--tab <id>]` or `GET /state` — the whole gated state SNAPSHOT for one tab: cookies, current-origin storage, metadata, and tab info together. Reach for it when you need the snapshot, not to read one cookie. Never print or forward the result.
 - `GET /tabs/{id}/state` — lightweight live tab/page runtime state for readiness, dialog blocking, and actionability checks.
 
 ### Observation

@@ -250,6 +250,59 @@ pinchtab network <requestId> --body
 
 ---
 
+## State Commands
+
+### `pinchtab cookies`
+Read, set and clear browser cookies for the tab you are driving. Reach for `cookies get` to read a cookie — not `state`, which returns the whole gated state snapshot.
+
+```bash
+pinchtab cookies get                            # cookies visible to the tab's current URL, with values
+pinchtab cookies get --name session             # one cookie
+pinchtab cookies get --url https://example.com  # read another origin
+pinchtab cookies set session abc123             # reuse a session without replaying a saved state
+pinchtab cookies set session ""                 # blank the value without deleting the cookie
+pinchtab cookies clear                          # every cookie in the browser, all origins
+```
+
+| Flag | Command | Description |
+|------|---------|-------------|
+| `--name <name>` | `get` | Only return the cookie with this name |
+| `--url <url>` | `get`, `set` | Target URL instead of the tab's current page |
+| `--domain <domain>` | `set` | Cookie domain |
+| `--path <path>` | `set` | Cookie path |
+| `--same-site <v>` | `set` | SameSite attribute: `Strict`, `Lax` or `None` |
+| `--secure` | `set` | Mark the cookie Secure |
+| `--http-only` | `set` | Mark the cookie HttpOnly |
+| `--tab <id>` | `get`, `set` | Target a specific tab |
+
+`cookies clear` affects **all origins** and cannot be scoped to one tab or one domain — there is no per-cookie removal verb, and `--tab` is deliberately not offered on it. Nothing in the CLI restores what it removes: re-set what you need with `cookies set`, or reload a saved state with `state load`.
+
+Requires `security.allowCookies: true`.
+
+> **Sensitive data:** Cookie values are credentials. Obtain user approval before reading or forwarding them, and never print them into a transcript that outlives the task.
+
+### `pinchtab storage`
+Read and write `localStorage` and `sessionStorage` for the active tab's origin.
+
+```bash
+pinchtab storage get                      # both stores
+pinchtab storage get --type local         # one store
+pinchtab storage get --key token          # a single item
+pinchtab storage set token abc123         # writes to localStorage by default
+pinchtab storage set token abc123 --type session
+pinchtab storage delete --key token       # remove one key
+pinchtab storage clear --all              # both stores in one call
+```
+
+| Flag | Command | Description |
+|------|---------|-------------|
+| `--type <local\|session>` | `get`, `set`, `delete`, `clear` | Which store. `get` defaults to both; the write verbs default to `local` |
+| `--key <key>` | `get`, `delete` | A single item |
+| `--all` | `clear` | Clear both stores in one call |
+| `--tab <id>` | all | Target a specific tab |
+
+---
+
 ## Audit Commands
 
 ### `pinchtab audit`
