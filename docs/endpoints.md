@@ -316,9 +316,14 @@ Capture query parameters:
   `none`; reserved for a future `document.readyState` gate.
 - `withBounds=true|false` — default `true`. When on, every snapshot node
   with a non-zero backend node id gets a `boundingBox` field and a
-  `visible` flag. Each bounded node costs one `DOM.getBoxModel` round trip
-  (~5ms); for the typical interactive-filter snapshot the budget is under
-  250ms. Pass `withBounds=false` to skip the per-node work.
+  `visible` flag. `boundingBox` is the element's **border box** — the
+  painted edge, the same rectangle `GET /box`, `screenshot?annotate=true`
+  and `getBoundingClientRect` report, so a box can be cross-checked against
+  any of them. It is not the content box: an element with a border or
+  padding would otherwise report a rectangle inset from the edge a viewer
+  identifies the control by. Each bounded node costs one `DOM.getBoxModel`
+  round trip (~5ms); for the typical interactive-filter snapshot the budget
+  is under 250ms. Pass `withBounds=false` to skip the per-node work.
 - `beyondViewport=true|false` — default `false`. When on, the image spans
   the full document instead of just the visible viewport. The response
   sets `image.coordinateSpace` to `"document"` and bounding boxes are
@@ -332,7 +337,10 @@ Capture query parameters:
 The response carries `image.coordinateSpace`, `image.devicePixelRatio`,
 and `image.viewport` ( `w`, `h`, `scrollX`, `scrollY` in CSS pixels at
 capture time) so clients can translate between image pixels and
-`boundingBox` values without guessing.
+`boundingBox` values without guessing. Two axes have to be pinned for that
+to hold: the coordinate ORIGIN, which `image.coordinateSpace` names
+(`viewport` or `document`), and the box-model EDGE, which is always the
+border box.
 
 The response carries an `epoch.domEpoch` token cached on the tab's ref-cache.
 Future client work can pass `expectedEpoch` to action endpoints to detect

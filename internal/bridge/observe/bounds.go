@@ -78,7 +78,7 @@ func AnnotateBounds(ctx context.Context, nodes []A11yNode, pageCoords bool, vp V
 		if nodes[i].NodeID == 0 {
 			continue
 		}
-		box, ok := getBoxAABB(ctx, nodes[i].NodeID)
+		box, ok := ElementBorderBox(ctx, nodes[i].NodeID)
 		if !ok {
 			continue
 		}
@@ -93,28 +93,21 @@ func AnnotateBounds(ctx context.Context, nodes []A11yNode, pageCoords bool, vp V
 	return nil
 }
 
-func getBoxAABB(ctx context.Context, backendNodeID int64) (BoundingBox, bool) {
-	return boxModelAABB(ctx, backendNodeID, boxQuadContent)
-}
-
 // ElementBorderBox is the border-box rectangle of a node in viewport-relative
 // CSS coordinates, the space getBoxModel reports and the space /box and
 // ScrollIntoViewAndGetBox hand to their callers unchanged. It is the
 // cross-frame-correct alternative to evaluating getBoundingClientRect in the
 // element's own context, which is relative to the document the element lives in
 // and therefore frame-relative for anything inside an iframe.
+//
+// Every bounds consumer goes through here. AnnotateBounds used to take
+// getBoxModel's CONTENT quad, which meant /capture reported a rectangle inset by
+// each element's border and padding while /box and the annotate path reported the
+// border box — the same field name, the same origin, a different box-model edge.
+// Overlays drawn from it sat inside the painted border. The content quad has no
+// consumer through this helper: the click sites read box.Content from their own
+// CDP calls in internal/bridge/input_human.go and cdpops/geometry.go.
 func ElementBorderBox(ctx context.Context, backendNodeID int64) (BoundingBox, bool) {
-	return boxModelAABB(ctx, backendNodeID, boxQuadBorder)
-}
-
-type boxQuad string
-
-const (
-	boxQuadContent boxQuad = "content"
-	boxQuadBorder  boxQuad = "border"
-)
-
-func boxModelAABB(ctx context.Context, backendNodeID int64, quad boxQuad) (BoundingBox, bool) {
 	var result json.RawMessage
 	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.getBoxModel", map[string]any{
@@ -126,17 +119,13 @@ func boxModelAABB(ctx context.Context, backendNodeID int64, quad boxQuad) (Bound
 	}
 	var box struct {
 		Model struct {
-			Content []float64 `json:"content"`
-			Border  []float64 `json:"border"`
+			Border []float64 `json:"border"`
 		} `json:"model"`
 	}
 	if err := json.Unmarshal(result, &box); err != nil {
 		return BoundingBox{}, false
 	}
-	q := box.Model.Content
-	if quad == boxQuadBorder {
-		q = box.Model.Border
-	}
+	q := box.Model.Border
 	if len(q) < 8 {
 		return BoundingBox{}, false
 	}

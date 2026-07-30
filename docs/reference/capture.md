@@ -87,8 +87,15 @@ an `expectedEpoch` query param to reject stale refs at use time.
 
 When `withBounds=true` (the default), each snapshot node with a non-zero
 backend node id gets a `boundingBox` and a `visible` flag, and a node that
-cannot be measured gets neither. The coordinate space depends on `selector`
-and `beyondViewport`:
+cannot be measured gets neither.
+
+`boundingBox` is the **border box** — the painted edge of the element, the
+same rectangle `pinchtab box`, `screenshot?annotate=true` and
+`getBoundingClientRect` report. Overlays and crop rectangles drawn from it
+cover the control a viewer sees, and a box from `/capture` can be compared
+directly with one from any of those surfaces.
+
+The coordinate space depends on `selector` and `beyondViewport`:
 
 - **`viewport`** (default): boxes are viewport-relative CSS pixels. The
   image is the visible viewport. `image.devicePixelRatio` tells you the
@@ -125,7 +132,7 @@ box query failed. Treat a missing `visible` as unknown and a present
 | `depth` | Snapshot tree depth limit |
 | `output` | `file` (default), `inline` (base64 in JSON), or `raw` (bytes only — drops the snapshot) |
 | `wait` | `stable` (default) waits for `Page.lifecycleEvent` quiescence (250ms silence / 750ms ceiling); `load` polls `document.readyState` until `complete` (2s ceiling); `none` skips the wait |
-| `withBounds` | `true` (default) — populate `boundingBox` + `visible` on every measurable snapshot node; `false` omits both keys everywhere |
+| `withBounds` | `true` (default) — populate `boundingBox` (the border box) + `visible` on every measurable snapshot node; `false` omits both keys everywhere |
 | `beyondViewport` | `true` — capture the full scrollable document; coordinate space becomes `document` |
 | `scale` | Rescale the output bitmap. Default `1`. `0.5` halves each axis (quarter the pixels) |
 | `requirePair` | `true` returns 409 if `pairing.navigated` would be true |

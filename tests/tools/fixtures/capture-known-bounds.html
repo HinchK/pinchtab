@@ -17,6 +17,27 @@
       border: none;
       font-size: 16px;
     }
+    /* #known sets no border, but a button still carries the UA stylesheet's
+       padding, so even here the content box {x: 106, y: 201, w: 228, h: 46} is
+       not the border box {x: 100, y: 200, w: 240, h: 48} — a 6px inset that is
+       easy to read as rounding. #bordered makes the difference unmissable:
+       with box-sizing:border-box (the UA default for form controls) its
+       declared 240x48 IS the border box, and its content box is inset by
+       border+padding to {x: 118, y: 418, w: 204, h: 12}. Both sets of numbers
+       are measured, not derived. */
+    #bordered {
+      position: absolute;
+      left: 100px;
+      top: 400px;
+      width: 240px;
+      height: 48px;
+      box-sizing: border-box;
+      border: 10px solid #1e3a8a;
+      padding: 8px;
+      background: #2563eb;
+      color: white;
+      font-size: 16px;
+    }
     #below-fold {
       position: absolute;
       left: 50px;
@@ -35,7 +56,18 @@
       ref's boundingBox should report
       <code>{x: 100, y: 200, w: 240, h: 48}</code> within 1 CSS pixel.
     </p>
+    <p>
+      boundingBox is the <strong>border box</strong> — the same edge
+      <code>/box</code>, <code>screenshot?annotate=true</code> and
+      <code>getBoundingClientRect</code> report. The button #bordered is the
+      element that makes a wrong edge unmissable: it is at (100, 400) with a
+      border-box size of (240, 48), so its boundingBox is
+      <code>{x: 100, y: 400, w: 240, h: 48}</code>, while its content box is
+      <code>{x: 118, y: 418, w: 204, h: 12}</code> — a different origin AND a
+      different size, so a padding-box reading cannot pass either.
+    </p>
     <button id="known">Known Position Button</button>
+    <button id="bordered">Bordered Padded Button</button>
     <button id="below-fold">Below Fold</button>
   </main>
 </body>

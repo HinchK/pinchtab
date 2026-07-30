@@ -140,10 +140,12 @@ func (f scrollFixture) annotate(t *testing.T, pageCoords bool) (BoundingBox, boo
 	return *nodes[0].BoundingBox, *nodes[0].Visible, vp
 }
 
-// getBoxModel reports the content box and getBoundingClientRect the border box,
-// so the two differ by the button's border and padding — single digits, nothing
-// like the scroll offset a wrong transform introduces.
-const boxModelSlack = 12.0
+// AnnotateBounds and getBoundingClientRect now report the same box-model edge —
+// the border box — so the only slack left is float rounding. The 12px this used
+// to allow was absorbing the content-box inset (the button's border plus
+// padding), which is the defect these bounds no longer have; anything larger
+// than a rounding error is a real disagreement.
+const boxModelSlack = 1.0
 
 func assertNear(t *testing.T, label string, got, want float64) {
 	t.Helper()
