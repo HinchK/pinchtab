@@ -62,7 +62,7 @@ All tool names are prefixed with `pinchtab_`.
 |------|-------------|
 | `pinchtab_click` | Click element by selector. Required: `selector` or legacy `ref`. Optional: `waitNav`, `mode` (`dom` or `dispatch` as a broad low-level escape hatch), `tabId`. `mode` and `humanize` are mutually exclusive. |
 | `pinchtab_type` | Type text keystroke-by-keystroke. Required: `selector` or legacy `ref`, plus `text`. Optional: `tabId`. |
-| `pinchtab_fill` | Fill input via JS dispatch. Required: `selector` or legacy `ref`, plus `value`. Optional: `tabId`. |
+| `pinchtab_fill` | Fill input via JS dispatch. Required: `selector` or legacy `ref`, plus `value` — send `value=""` to clear the field (omitting it is refused). Optional: `tabId`. |
 | `pinchtab_press` | Press a named key (`Enter`, `Tab`, `Escape`, etc.). Required: `key`. Optional: `tabId`. |
 | `pinchtab_hover` | Hover over element. Required: `selector` or legacy `ref`. Optional: `tabId`. |
 | `pinchtab_focus` | Focus an element. Required: `selector` or legacy `ref`. Optional: `tabId`. |

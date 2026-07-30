@@ -188,9 +188,13 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			if _, err := resolveSelector(!hasNodeID); err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
-			value := firstNonEmptyString(r, "value", "text")
-			if value == "" {
-				return mcp.NewToolResultError("required parameter 'value' is missing"), nil
+			// Presence, not emptiness: an empty value is how a caller clears a field,
+			// so refusing it made the one documented clear idiom inexpressible here
+			// while the raw API accepted it — and the old message claimed a parameter
+			// the caller had supplied was missing.
+			value, supplied := firstSuppliedString(r, "value", "text")
+			if !supplied {
+				return mcp.NewToolResultError("fill needs a 'value' argument; send \"\" to clear the field"), nil
 			}
 			// "text" is the field actionFill reads. Posting the same string under "value"
 			// reached a real ActionRequest field that fill ignores, so the write was empty

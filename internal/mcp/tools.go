@@ -200,7 +200,7 @@ func allTools() []mcp.Tool {
 			mcp.WithString("selector", mcp.Description("Unified selector: ref (e.g. 'e5'), CSS, XPath, text, or semantic. Non-ref selectors resolve in the current frame scope.")),
 			mcp.WithString("ref", mcp.Description("(deprecated) Element ref — use 'selector' instead")),
 			mcp.WithString("query", mcp.Description("Alias for semantic targeting when selector is omitted")),
-			mcp.WithString("value", mcp.Required(), mcp.Description("Value to fill")),
+			mcp.WithString("value", mcp.Required(), mcp.Description("Value to fill; send an empty string to clear the field")),
 			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 			mcp.WithBoolean("snap", mcp.Description("Return interactive compact snapshot after fill (saves a round-trip)")),

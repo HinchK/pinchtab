@@ -518,3 +518,57 @@ func TestHandleFillAcceptsTheTextSpellingToo(t *testing.T) {
 		t.Fatalf("forwarded text = %q, want FROM_TEXT; payload was %v", got, body)
 	}
 }
+
+// The pair is the assertion. Supplied-empty must clear and absent must still refuse —
+// either half alone is satisfiable by deleting the check, which would silently forward a
+// fill with no text at all. Driven through the tool surface, because the bridge action
+// was always able to express both and the MCP layer was the only one that could not.
+func TestFillClearsOnASuppliedEmptyValueAndStillRefusesAnAbsentOne(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	for _, key := range []string{"value", "text"} {
+		t.Run("supplied empty "+key+" clears", func(t *testing.T) {
+			r := callTool(t, "pinchtab_fill", map[string]any{"ref": "e0", key: ""}, srv)
+			if r.IsError {
+				t.Fatalf("a supplied empty %s was refused: %s", key, resultText(t, r))
+			}
+			body, _ := resultJSON(t, r)["body"].(map[string]any)
+			text, present := body["text"]
+			if !present {
+				t.Fatalf("payload carries no text key, so the bridge cannot tell a clear from a request whose text never arrived: %v", body)
+			}
+			if got, _ := text.(string); got != "" {
+				t.Errorf("forwarded text = %q, want the empty string that clears the field", got)
+			}
+		})
+	}
+
+	t.Run("absent value is refused", func(t *testing.T) {
+		r := callTool(t, "pinchtab_fill", map[string]any{"ref": "e0"}, srv)
+		if !r.IsError {
+			body, _ := resultJSON(t, r)["body"].(map[string]any)
+			t.Fatalf("a fill with no value at all was forwarded as %v; absent is not a clear", body)
+		}
+		message := resultText(t, r)
+		if strings.Contains(message, "is missing") && strings.Contains(message, "'value'") {
+			t.Errorf("refusal %q reads as a supplied parameter being missing; it must say what fill needs and how to clear", message)
+		}
+		if !strings.Contains(message, "clear") {
+			t.Errorf("refusal %q does not tell the caller how to clear a field, which is the case it is most likely to be confused with", message)
+		}
+	})
+}
+
+// Whitespace is content, not a clear: the raw API fills it verbatim, so the tool must not
+// trim a supplied value into the clear idiom.
+func TestFillForwardsASuppliedValueVerbatim(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	r := callTool(t, "pinchtab_fill", map[string]any{"ref": "e0", "value": "  spaced  "}, srv)
+	body, _ := resultJSON(t, r)["body"].(map[string]any)
+	if got, _ := body["text"].(string); got != "  spaced  " {
+		t.Errorf("forwarded text = %q, want the caller's string unmodified", got)
+	}
+}

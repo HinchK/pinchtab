@@ -64,6 +64,32 @@ func firstNonEmptyString(r mcp.CallToolRequest, keys ...string) string {
 	return ""
 }
 
+// firstSuppliedString answers "was this argument sent", for the one argument whose
+// empty string MEANS something: a fill clears the field. That is the same question
+// the bridge asks — ActionRequest.HasText is inferred from key presence over the same
+// text/value pair — and it is the question firstNonEmptyString cannot answer, since
+// collapsing empty and absent is its entire job.
+//
+// The value travels verbatim rather than trimmed, so MCP fill and POST /action fill
+// agree on every input and not merely on the clear case.
+//
+// Every other caller keeps the collapsing helper deliberately: typing nothing is
+// meaningless, and for select and the dialog arguments the BRIDGE itself collapses
+// empty with absent (actionSelect refuses an empty value; DialogText is a plain
+// string with no presence flag), so reading presence here would promise a
+// distinction the request cannot carry.
+func firstSuppliedString(r mcp.CallToolRequest, keys ...string) (string, bool) {
+	args := r.GetArguments()
+	for _, key := range keys {
+		if raw, ok := args[key]; ok {
+			if v, isString := raw.(string); isString {
+				return v, true
+			}
+		}
+	}
+	return "", false
+}
+
 func looksLikeStructuredSelector(v string) bool {
 	v = strings.TrimSpace(v)
 	if v == "" {
