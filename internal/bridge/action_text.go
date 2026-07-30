@@ -33,7 +33,7 @@ func (b *Bridge) actionType(ctx context.Context, req ActionRequest) (map[string]
 	if req.NodeID > 0 {
 		return textEntryResult("typed", req.Text), TypeByNodeID(ctx, req.NodeID, req.Text)
 	}
-	return nil, fmt.Errorf("need selector or ref")
+	return nil, NewInvalidActionRequestError("need selector or ref")
 }
 
 func (b *Bridge) actionFill(ctx context.Context, req ActionRequest) (map[string]any, error) {
@@ -60,7 +60,7 @@ func (b *Bridge) actionFill(ctx context.Context, req ActionRequest) (map[string]
 		}
 		return finishFill(ctx, result, req.Submit)
 	}
-	return nil, fmt.Errorf("need selector or ref")
+	return nil, NewInvalidActionRequestError("need selector or ref")
 }
 
 func finishFill(ctx context.Context, result map[string]any, submit bool) (map[string]any, error) {
@@ -153,7 +153,7 @@ func (b *Bridge) actionHumanizedType(ctx context.Context, req ActionRequest) (ma
 			return nil, err
 		}
 	} else {
-		return nil, fmt.Errorf("need selector, ref, or nodeId")
+		return nil, NewInvalidActionRequestError("need selector, ref, or nodeId")
 	}
 
 	actions := Type(req.Text, req.Fast)

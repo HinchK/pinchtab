@@ -329,7 +329,7 @@ func (b *Bridge) actionClick(ctx context.Context, req ActionRequest) (result map
 		} else if req.HasXY {
 			err = clickByCoordinateAction(clickCtx, req.X, req.Y, req.Modifiers)
 		} else {
-			resultCh <- clickResult{err: fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")}
+			resultCh <- clickResult{err: NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")}
 			return
 		}
 		resultCh <- clickResult{err: err}
@@ -418,7 +418,7 @@ func (b *Bridge) actionDoubleClick(ctx context.Context, req ActionRequest) (resu
 		}
 		err = DoubleClickByCoordinate(ctx, req.X, req.Y)
 	} else {
-		return nil, fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")
+		return nil, NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")
 	}
 	if err != nil {
 		return nil, err
@@ -443,7 +443,7 @@ func (b *Bridge) actionHover(ctx context.Context, req ActionRequest) (map[string
 	if req.HasXY {
 		return map[string]any{"hovered": true}, HoverByCoordinate(ctx, req.X, req.Y)
 	}
-	return nil, fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")
+	return nil, NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")
 }
 
 func (b *Bridge) actionHumanizedHover(ctx context.Context, req ActionRequest) (map[string]any, error) {
@@ -460,7 +460,7 @@ func (b *Bridge) actionHumanizedHover(ctx context.Context, req ActionRequest) (m
 	case req.HasXY:
 		err = hoverCoordinateAction(ctx, req.X, req.Y)
 	default:
-		return nil, fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")
+		return nil, NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")
 	}
 	if err != nil {
 		return nil, err
@@ -494,7 +494,7 @@ func pointerTargetRequiredError(req ActionRequest, allowCurrent bool) error {
 	if allowCurrent && strings.TrimSpace(req.TabID) != "" {
 		return fmt.Errorf("no pointer position known for tab %s; move pointer first or provide selector, ref, nodeId, or x/y coordinates", req.TabID)
 	}
-	return fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")
+	return NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")
 }
 
 func (b *Bridge) pointerCoordinatesFromRequest(ctx context.Context, req ActionRequest, allowCurrent bool) (float64, float64, error) {
@@ -719,7 +719,7 @@ func dragPointFor(ctx context.Context, end dragEnd) (float64, float64, error) {
 	case end.hasPoint:
 		return end.x, end.y, nil
 	}
-	return 0, 0, fmt.Errorf("need selector, ref, nodeId, or coordinates")
+	return 0, 0, NewInvalidActionRequestError("need selector, ref, nodeId, or coordinates")
 }
 
 func (r ActionRequest) hasDragDestination() bool {
@@ -746,7 +746,7 @@ func (b *Bridge) actionHumanizedClick(ctx context.Context, req ActionRequest) (r
 			auto.prepareNode(ctx, int64(node.BackendNodeID))
 		}
 	default:
-		return nil, fmt.Errorf("need selector, ref, or nodeId")
+		return nil, NewInvalidActionRequestError("need selector, ref, or nodeId")
 	}
 
 	// If the caller expects this click to open a native JS dialog, arm a
@@ -813,5 +813,5 @@ func (b *Bridge) actionScrollIntoView(ctx context.Context, req ActionRequest) (m
 		}
 		return ScrollIntoViewAndGetBox(ctx, nid)
 	}
-	return nil, fmt.Errorf("need selector or ref")
+	return nil, NewInvalidActionRequestError("need selector or ref")
 }

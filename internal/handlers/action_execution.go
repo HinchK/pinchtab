@@ -21,6 +21,30 @@ const (
 
 var readTopmostSubmitModal = bridge.TopmostModalNodeIDInFrame
 
+// takeASnapshotFirst is the one spelling of the only advice that re-resolves an absent
+// target. Every refusal that carries it composes it from here, so the four copies the
+// endpoint used to format cannot drift apart again.
+const takeASnapshotFirst = "take a /snapshot first"
+
+// ErrTargetNotFound is the one owner of "this target cannot be resolved" — a stale ref
+// recovery could not heal, a ref that never existed, a drag destination that is gone. Every
+// producer wraps it and the endpoint answers one 404 with the remedy, so the arm keys on the
+// sentinel rather than on the wording. Retrying is futile by construction: the target is
+// absent, not busy.
+var ErrTargetNotFound = errors.New("not found")
+
+// targetNotFound names WHAT is missing ("ref e2", "drag destination e7"). The recovery
+// matcher's threshold and score stay out of it — they describe the matcher's internals,
+// not anything the caller can act on, and ride in the recovery record the endpoint puts
+// in details.
+func targetNotFound(subject string) error {
+	return fmt.Errorf("%s %w - %s", subject, ErrTargetNotFound, takeASnapshotFirst)
+}
+
+func refNotFound(ref string) error {
+	return targetNotFound("ref " + ref)
+}
+
 type submitStateSnapshot struct {
 	URL        string `json:"url"`
 	DialogOpen bool   `json:"dialogOpen"`
@@ -157,7 +181,7 @@ func (h *Handlers) cacheActionIntent(tabID string, req bridge.ActionRequest) {
 // Submit-detection is a PROXY for non-idempotency, not a solution to it. A delete link is
 // as dangerous and the DOM cannot say so; a policy for non-idempotent clicks at large is a
 // separate decision and this refusal does not claim to cover the class.
-var ErrStaleSubmitTarget = errors.New("ref is stale and its target submits a form; take a /snapshot first and click the fresh ref")
+var ErrStaleSubmitTarget = fmt.Errorf("ref is stale and its target submits a form; %s and click the fresh ref", takeASnapshotFirst)
 
 // submitControlJS reports whether the node is the control that submits a form. A var so a
 // test can stub it: the guard's own effect is only visible against a real page, and the
@@ -253,7 +277,7 @@ func (h *Handlers) executeActionResilient(ctx context.Context, req *bridge.Actio
 			if errors.Is(recErr, bridge.ErrUnexpectedNavigation) {
 				return nil, "", &rr, recErr
 			}
-			return nil, "", &rr, fmt.Errorf("ref %s not found and recovery failed: %w", req.Ref, recErr)
+			return nil, "", &rr, refNotFound(req.Ref)
 		}
 		return recRes, "", &rr, nil
 	}
@@ -369,7 +393,7 @@ func (h *Handlers) refreshActionSecondaryTargets(ctx context.Context, tabID stri
 			}
 		}
 	}
-	return fmt.Errorf("drag destination %s not found - take a /snapshot first", toSelector)
+	return targetNotFound("drag destination " + toSelector)
 }
 
 // uniqueNodeForDescriptor returns the one node matching the descriptor's role and

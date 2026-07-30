@@ -90,7 +90,7 @@ func (b *Bridge) actionSelect(ctx context.Context, req ActionRequest) (map[strin
 		}
 		return map[string]any{"selected": val}, SelectByNodeID(ctx, int64(node.BackendNodeID), val)
 	}
-	return nil, fmt.Errorf("need selector or ref")
+	return nil, NewInvalidActionRequestError("need selector or ref")
 }
 
 func (b *Bridge) actionCheck(ctx context.Context, req ActionRequest) (map[string]any, error) {
@@ -112,7 +112,7 @@ func checkUncheck(ctx context.Context, req ActionRequest, wantChecked bool) (map
 	} else if req.Selector != "" {
 		resolveJS = req.Selector
 	} else {
-		return nil, fmt.Errorf("need selector, ref, or nodeId")
+		return nil, NewInvalidActionRequestError("need selector, ref, or nodeId")
 	}
 
 	var objectID string

@@ -23,6 +23,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/routes"
 	"github.com/pinchtab/pinchtab/internal/selector"
 	"github.com/pinchtab/pinchtab/internal/session"
+	"github.com/pinchtab/semantic/recovery"
 )
 
 func resolveOwner(r *http.Request, fallback string) string {
@@ -100,6 +101,32 @@ func staleSubmitTargetDetails() map[string]any {
 	// reason the card exists: nothing was clicked.
 	details["dispatched"] = false
 	return details
+}
+
+// writeTargetNotFound is the one response for a target that cannot be resolved, whichever
+// path exhausted it. 404 rather than 500 because the request named something that is not
+// there; retryable is absent because an absent target stays absent. The recovery record
+// carries the matcher's score and threshold when there is one — diagnosis belongs in
+// details, never in the sentence a caller reads as the reason.
+func writeTargetNotFound(w http.ResponseWriter, err error, rr *recovery.RecoveryResult) {
+	details := map[string]any{"dispatched": false}
+	if rr != nil {
+		details["recovery"] = rr
+	}
+	httpx.ErrorCode(w, http.StatusNotFound, "ref_not_found", err.Error(), false, details)
+}
+
+// actionFailureIsRetryable answers the only question the flag promises: could repeating the
+// IDENTICAL request plausibly succeed. It used to be !submitClick, which says whether the
+// caller declared a submit and nothing about the failure, so every unresolvable ref and
+// every unsatisfiable body was advertised as worth retrying. A permanently unsatisfiable
+// failure never is, and a dispatch that may already have landed must not be repeated
+// whatever the error was.
+func actionFailureIsRetryable(err error, dispatchMayHaveLanded bool) bool {
+	if err == nil || dispatchMayHaveLanded {
+		return false
+	}
+	return !errors.Is(err, ErrTargetNotFound) && !errors.Is(err, bridge.ErrInvalidActionRequest)
 }
 
 const navigationChangedHint = "The action navigated the page, which the guard reports unless the request declares it: set waitNav true to wait for the navigation, or submit true when the click submits a form. From the CLI those are --wait-nav and --submit."
@@ -547,7 +574,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	if destinationResolution.refMissing {
 		h.refreshRefCache(tCtx, resolvedTabID)
 		if err := h.refreshActionSecondaryTargets(tCtx, resolvedTabID, &req); err != nil {
-			httpx.Error(w, 404, err)
+			writeTargetNotFound(w, err, nil)
 			return
 		}
 	} else if req.ToSelector != "" && req.ToNodeID != 0 && h.Recovery != nil {
@@ -558,7 +585,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	refMissing := selectorResolution.refMissing
 	submitClick := bridge.IsSubmitClick(req.Kind, req)
 	if submitClick && refMissing {
-		httpx.ErrorCode(w, http.StatusNotFound, "submit_target_not_found", fmt.Sprintf("ref %s not found - take a /snapshot first", req.Ref), false, staleSubmitTargetDetails())
+		httpx.ErrorCode(w, http.StatusNotFound, "submit_target_not_found", refNotFound(req.Ref).Error(), false, staleSubmitTargetDetails())
 		return
 	}
 	if submitClick && req.NodeID <= 0 {
@@ -572,8 +599,8 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		h.cacheActionIntent(resolvedTabID, req)
 	}
 
-	if refMissing && (req.Ref == "" || h.Recovery == nil) {
-		httpx.Error(w, 404, fmt.Errorf("ref %s not found - take a /snapshot first", req.Ref))
+	if refMissing && h.Recovery == nil {
+		writeTargetNotFound(w, refNotFound(req.Ref), nil)
 		return
 	}
 
@@ -631,7 +658,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(actionErr, ErrStaleSubmitTarget) {
 			httpx.ErrorCode(w, http.StatusNotFound, "submit_target_not_found",
-				fmt.Sprintf("ref %s not found - take a /snapshot first", req.Ref), false, staleSubmitTargetDetails())
+				refNotFound(req.Ref).Error(), false, staleSubmitTargetDetails())
 			return
 		}
 		if errors.Is(actionErr, bridge.ErrUnexpectedNavigation) {
@@ -654,15 +681,19 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			writeDialogBlocked(w, resolvedTabID, dialog, message)
 			return
 		}
-		retryable := !submitClick
+		if errors.Is(actionErr, ErrTargetNotFound) {
+			writeTargetNotFound(w, actionErr, recoveryResult)
+			return
+		}
+		dispatchMayHaveLanded := submitClick
 		var details map[string]any
-		if submitClick {
+		if dispatchMayHaveLanded {
 			details = map[string]any{
 				"dispatch":   "unconfirmed",
 				"doNotRetry": true,
 			}
 		}
-		h.errorCodeWithCrashContext(w, 500, "action_failed", fmt.Sprintf("action %s: %v", req.Kind, actionErr), retryable, details)
+		h.errorCodeWithCrashContext(w, 500, "action_failed", fmt.Sprintf("action %s: %v", req.Kind, actionErr), actionFailureIsRetryable(actionErr, dispatchMayHaveLanded), details)
 		return
 	}
 
@@ -852,7 +883,7 @@ func (h *Handlers) runMultiStepActionTail(
 		cancel()
 		*results = append(*results, actionResult{
 			Index: index, Success: false,
-			Error: fmt.Sprintf("ref %s not found - take a /snapshot first", step.Ref),
+			Error: refNotFound(step.Ref).Error(),
 		})
 		return ctx, resolvedTabID, stopOnError
 	}
