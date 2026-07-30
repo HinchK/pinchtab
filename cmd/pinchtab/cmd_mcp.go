@@ -13,6 +13,9 @@ var mcpCmd = &cobra.Command{
 	Use:   "mcp",
 	Short: "Start the MCP stdio server",
 	Long:  "Start the Model Context Protocol stdio server and proxy browser actions to a running PinchTab instance.",
+	// No subcommands to mistype, so the group guard cannot reach this one: an unrecognised
+	// token here would otherwise start the server and ignore it.
+	Args: cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		cfg := loadConfig()
 		runMCP(cfg)

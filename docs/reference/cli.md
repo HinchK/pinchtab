@@ -87,6 +87,17 @@ pinchtab network              # GET  200  https://...
 
 **For scripts**: Always use `--json` when piping or parsing programmatically. Human-readable output may change between versions. JSON is the stable contract.
 
+## Exit Codes
+
+A mistyped verb is an error everywhere: an unrecognised command or subcommand exits `1` and
+names the valid subcommands, at the top level and inside every group. `pinchtab cache clera`
+does not share an exit code with `pinchtab cache clear`, so `set -e` and `&&` chains stop on
+a typo instead of continuing as though the state had been reset.
+
+Two commands take an argument rather than a subcommand and are unaffected: `pinchtab tab
+<id>` focuses a tab, and `pinchtab network <filter>` filters the network log. An unknown
+value there is data the server rejects, not a typo the CLI can catch.
+
 ## Core Commands
 
 | Command | Purpose |

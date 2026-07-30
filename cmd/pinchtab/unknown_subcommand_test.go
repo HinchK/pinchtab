@@ -1,0 +1,208 @@
+package main
+
+import (
+	"bytes"
+	"io"
+	"os"
+	"strings"
+	"testing"
+
+	"github.com/spf13/cobra"
+)
+
+// TestMain installs the guard the way Execute does, so every test in this package drives the
+// command tree production actually ships rather than the pre-guard one.
+func TestMain(m *testing.M) {
+	installUnknownSubcommandGuard(rootCmd)
+	os.Exit(m.Run())
+}
+
+// operandNotAVerb records the parents whose first argument is DATA, not a subcommand, with
+// what that data is. They opt out by declaring their own Args — this table is the reason,
+// and it fails both ways: a parent that stops taking an operand must leave, and a parent
+// that starts accepting an unknown verb must be added deliberately.
+var operandNotAVerb = map[string]string{
+	"pinchtab tab":     "the argument is a tab ID to focus, so an unknown token is a 404 from the server rather than a typo'd verb",
+	"pinchtab network": "the argument is a URL filter for the network log",
+}
+
+// A typo'd verb must not read as success: these are state-changing commands that live in
+// setup and teardown scripts, so exit 0 means `set -e` does not trip and the state the
+// script believed it reset was never reset. The census walks the command TREE rather than a
+// list of group names, because a hand-written list is how eleven groups came to be missing
+// this in the first place.
+func TestEveryCommandGroupRejectsAnUnknownSubcommand(t *testing.T) {
+	groups := commandGroups(rootCmd)
+	if len(groups) < 15 {
+		t.Fatalf("found only %d command groups, so this census is not walking the command tree", len(groups))
+	}
+
+	for _, group := range groups {
+		path := group.CommandPath()
+		// A nil validator is cobra's default, which accepts anything below the root — the very
+		// state this guard exists to leave behind, so it must read as acceptance, not a panic.
+		var err error
+		if group.Args != nil {
+			err = group.Args(group, []string{"zzz-not-a-subcommand"})
+		}
+
+		if reason, exempt := operandNotAVerb[path]; exempt {
+			if err != nil {
+				t.Errorf("%s rejected its operand; it takes one because %s", path, reason)
+			}
+			continue
+		}
+
+		if err == nil {
+			t.Errorf("%s accepts an unknown subcommand, so a typo there exits 0 and a script reads it as success", path)
+			continue
+		}
+		if got := commandExitCode(err); got != unknownSubcommandExitCode {
+			t.Errorf("%s unknown-subcommand exit code = %d, want %d everywhere so callers can branch on it", path, got, unknownSubcommandExitCode)
+		}
+		if !strings.Contains(err.Error(), "zzz-not-a-subcommand") {
+			t.Errorf("%s refusal = %q, want it to name the token that was not understood", path, err)
+		}
+		for _, name := range subcommandNames(group) {
+			if !strings.Contains(err.Error(), name) {
+				t.Errorf("%s refusal = %q, want it to name the valid subcommand %q", path, err, name)
+			}
+		}
+		// The argument check is only reached on a runnable command: cobra answers "print the
+		// help" for an unrunnable one before validating anything, which is why setting Args
+		// alone left the groups with no action of their own at exit 0.
+		if !group.Runnable() {
+			t.Errorf("%s is not runnable, so cobra never reaches its argument check", path)
+		}
+	}
+
+	for path := range operandNotAVerb {
+		if findGroup(groups, path) == nil {
+			t.Errorf("%s is recorded as taking an operand but is no longer a group; drop the entry", path)
+		}
+	}
+}
+
+// The guard must not shadow the verbs it protects: every registered subcommand still has to
+// resolve to itself rather than to its parent's refusal.
+func TestEveryValidSubcommandStillResolves(t *testing.T) {
+	checked := 0
+	for _, group := range commandGroups(rootCmd) {
+		for _, sub := range group.Commands() {
+			if !sub.IsAvailableCommand() {
+				continue
+			}
+			path := append(commandPathArgs(group), sub.Name())
+			found, _, err := rootCmd.Find(path)
+			if err != nil {
+				t.Errorf("Find(%v) error = %v", path, err)
+				continue
+			}
+			if found != sub {
+				t.Errorf("Find(%v) resolved to %s, want the subcommand itself", path, found.CommandPath())
+			}
+			checked++
+		}
+	}
+	if checked < 40 {
+		t.Fatalf("only checked %d subcommands, so this absence assertion is not covering the tree", checked)
+	}
+}
+
+// Zero arguments is not a typo: a group invoked bare still prints its help and exits 0, the
+// behaviour a human relies on to discover the verbs.
+func TestABareGroupStillPrintsItsHelpAndSucceeds(t *testing.T) {
+	out, err := runRootArgs(t, "cache")
+	if err != nil {
+		t.Fatalf("`pinchtab cache` error = %v, want the group help and exit 0", err)
+	}
+	if !strings.Contains(out, "clear") || !strings.Contains(out, "status") {
+		t.Errorf("`pinchtab cache` output = %q, want the group help listing its subcommands", out)
+	}
+}
+
+// One exit code for the whole CLI, measured at all three places that produce it: cobra's
+// top-level error, a group refusal, and daemon's hand-rolled dispatch, which used to answer
+// 2 and is the one this card changed.
+func TestUnknownSubcommandExitsWithOneCodeEverywhere(t *testing.T) {
+	if _, err := runRootArgs(t, "zzz-not-a-command"); err == nil {
+		t.Fatal("a top-level unknown command must be an error")
+	} else if got := commandExitCode(err); got != unknownSubcommandExitCode {
+		t.Errorf("top-level unknown command exit code = %d, want %d", got, unknownSubcommandExitCode)
+	}
+
+	if _, err := runRootArgs(t, "cache", "clera"); err == nil {
+		t.Fatal("a group's unknown subcommand must be an error")
+	} else if got := commandExitCode(err); got != unknownSubcommandExitCode {
+		t.Errorf("group unknown subcommand exit code = %d, want %d", got, unknownSubcommandExitCode)
+	}
+
+	if got := dispatchDaemonCommand("zzz-not-a-subcommand", false); got != unknownSubcommandExitCode {
+		t.Errorf("daemon unknown subcommand exit code = %d, want %d", got, unknownSubcommandExitCode)
+	}
+}
+
+// The guard lives at Execute because the command tree is only complete there. A test that
+// installs it itself proves the walk works, not that the binary runs it.
+func TestExecuteInstallsTheGuard(t *testing.T) {
+	src, err := os.ReadFile("root.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	install := strings.Index(body, "installUnknownSubcommandGuard(rootCmd)")
+	execute := strings.Index(body, "rootCmd.Execute()")
+	if install < 0 {
+		t.Fatal("Execute no longer installs the unknown-subcommand guard, so every group is back to exit 0")
+	}
+	if execute < install {
+		t.Error("the guard is installed after rootCmd.Execute, which is too late to matter")
+	}
+}
+
+func commandGroups(root *cobra.Command) []*cobra.Command {
+	var groups []*cobra.Command
+	var walk func(cmd *cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		if cmd.HasSubCommands() && cmd.HasParent() {
+			groups = append(groups, cmd)
+		}
+		for _, sub := range cmd.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
+	return groups
+}
+
+func findGroup(groups []*cobra.Command, path string) *cobra.Command {
+	for _, group := range groups {
+		if group.CommandPath() == path {
+			return group
+		}
+	}
+	return nil
+}
+
+// commandPathArgs is the argv that reaches a command, which is its command path without the
+// binary name — Find wants the arguments, not the display string.
+func commandPathArgs(cmd *cobra.Command) []string {
+	return strings.Fields(cmd.CommandPath())[1:]
+}
+
+func runRootArgs(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+
+	var out bytes.Buffer
+	t.Cleanup(func() {
+		rootCmd.SetArgs(nil)
+		rootCmd.SetOut(nil)
+		rootCmd.SetErr(nil)
+	})
+	rootCmd.SetArgs(args)
+	rootCmd.SetOut(&out)
+	rootCmd.SetErr(io.Discard)
+
+	err := rootCmd.Execute()
+	return out.String(), err
+}

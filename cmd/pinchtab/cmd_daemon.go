@@ -84,7 +84,7 @@ func dispatchDaemonCommand(subcommand string, jsonOut bool) int {
 func printDaemonUsage(subcommand string) int {
 	fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("unknown daemon command: %s", subcommand)))
 	fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.MutedStyle, "Usage: pinchtab daemon <status|install|start|restart|stop|uninstall>"))
-	return 2
+	return unknownSubcommandExitCode
 }
 
 func isDaemonStatusSubcommand(subcommand string) bool {

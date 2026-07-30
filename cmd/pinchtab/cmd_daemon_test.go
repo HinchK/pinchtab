@@ -188,8 +188,8 @@ func TestDaemonUsageListsStatusForm(t *testing.T) {
 		code = dispatchDaemonCommand("bogus", false)
 	})
 
-	if code != 2 {
-		t.Fatalf("exit code = %d, want 2", code)
+	if code != unknownSubcommandExitCode {
+		t.Fatalf("exit code = %d, want the one unknown-subcommand code %d used across the CLI", code, unknownSubcommandExitCode)
 	}
 	if !strings.Contains(output, "pinchtab daemon <status|install|start|restart|stop|uninstall>") {
 		t.Fatalf("expected usage line listing status, got %q", output)
