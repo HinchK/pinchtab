@@ -73,6 +73,18 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 	orch := orchestrator.NewOrchestrator(profilesDir)
 	orch.ApplyRuntimeConfig(cfg)
 	orch.SetProfileManager(profMgr)
+	profMgr.SetInstanceLookup(func(profileID string) (string, bool) {
+		for _, inst := range orch.List() {
+			if inst.ProfileID != profileID {
+				continue
+			}
+			switch inst.Status {
+			case "starting", "running", "stopping":
+				return inst.ID, true
+			}
+		}
+		return "", false
+	})
 	dash.SetInstanceLister(orch)
 	dash.SetMonitoringSource(orch)
 	dash.SetServerMetricsProvider(func() dashboard.MonitoringServerMetrics {

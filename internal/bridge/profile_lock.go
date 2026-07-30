@@ -324,6 +324,14 @@ func quarantineCorruptedProfile(profileDir string, keep int) (string, error) {
 	return quarantinePath, nil
 }
 
+// ProfileOwnedByRunningPinchtab reports whether a live pinchtab process holds
+// profileDir via its pinchtab.pid lock. It is the per-directory truth the
+// profiles destructive-route guard falls back to on surfaces that have no
+// orchestrator instance mapping.
+func ProfileOwnedByRunningPinchtab(profileDir string) (bool, int) {
+	return isProfileOwnedByRunningPinchtab(profileDir)
+}
+
 func isProfileOwnedByRunningPinchtab(profileDir string) (bool, int) {
 	pidFile := filepath.Join(profileDir, "pinchtab.pid")
 	data, err := os.ReadFile(pidFile)

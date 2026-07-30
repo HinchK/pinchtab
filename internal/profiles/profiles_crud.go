@@ -140,6 +140,9 @@ func (pm *ProfileManager) Reset(name string) error {
 	if err != nil {
 		return err
 	}
+	if holder, held := pm.profileHolder(profileID(name), dir); held {
+		return tagged(ErrProfileInUse, fmt.Sprintf("profile %q is in use by %s; stop it before resetting", name, holder))
+	}
 
 	resetProfileDir(dir)
 	slog.Info("profile reset", "name", name)
@@ -179,17 +182,40 @@ func resetProfileDir(dir string) {
 }
 
 func (pm *ProfileManager) Delete(name string) error {
+	_, err := pm.remove(name, false)
+	return err
+}
+
+// ForceDelete skips the in-use refusal. profiles is a leaf and cannot stop
+// instances, so a held profile is removed anyway and the holder is returned
+// for the response to report as orphaned — a browser left running on a
+// deleted directory must never be silent.
+func (pm *ProfileManager) ForceDelete(name string) (orphanedInstance string, err error) {
+	return pm.remove(name, true)
+}
+
+func (pm *ProfileManager) remove(name string, force bool) (string, error) {
 	if err := ValidateProfileName(name); err != nil {
-		return err
+		return "", err
 	}
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	dir, err := pm.findProfileDirByName(name)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return os.RemoveAll(dir)
+	holder, held := pm.profileHolder(profileID(name), dir)
+	if held && !force {
+		return "", tagged(ErrProfileInUse, fmt.Sprintf("profile %q is in use by %s; delete with force=true to remove it anyway", name, holder))
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return "", err
+	}
+	if held {
+		return holder, nil
+	}
+	return "", nil
 }
 
 func (pm *ProfileManager) UpdateMeta(name string, meta map[string]string) error {

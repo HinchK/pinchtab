@@ -62,7 +62,7 @@ func profileMutationStatus(err error) int {
 		return http.StatusOK
 	case errors.Is(err, ErrInvalidProfileName):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrProfileExists), errors.Is(err, ErrProfileDirExists):
+	case errors.Is(err, ErrProfileExists), errors.Is(err, ErrProfileDirExists), errors.Is(err, ErrProfileInUse):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
@@ -230,8 +230,23 @@ func (pm *ProfileManager) handleDeleteByID(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	if r.URL.Query().Get("force") == "true" {
+		orphaned, err := pm.ForceDelete(name)
+		if err != nil {
+			httpx.Error(w, profileMutationStatus(err), err)
+			return
+		}
+		authn.AuditLog(r, "profile.deleted", "profileId", id, "profileName", name, "force", "true", "orphanedInstance", orphaned)
+		resp := map[string]any{"status": "deleted", "id": id, "name": name}
+		if orphaned != "" {
+			resp["orphanedInstance"] = orphaned
+		}
+		httpx.JSON(w, 200, resp)
+		return
+	}
+
 	if err := pm.Delete(name); err != nil {
-		httpx.Error(w, 500, err)
+		httpx.Error(w, profileMutationStatus(err), err)
 		return
 	}
 
@@ -312,7 +327,7 @@ func (pm *ProfileManager) handleResetByIDOrName(w http.ResponseWriter, r *http.R
 	}
 
 	if err := pm.Reset(name); err != nil {
-		httpx.Error(w, 500, err)
+		httpx.Error(w, profileMutationStatus(err), err)
 		return
 	}
 	authn.AuditLog(r, "profile.reset", "profileId", id, "profileName", name)

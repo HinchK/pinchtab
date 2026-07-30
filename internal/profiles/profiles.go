@@ -1,6 +1,7 @@
 package profiles
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -15,9 +16,11 @@ import (
 )
 
 type ProfileManager struct {
-	baseDir  string
-	activity activity.Recorder
-	mu       sync.RWMutex
+	baseDir        string
+	activity       activity.Recorder
+	instanceLookup func(profileID string) (instanceID string, running bool)
+	lockOwner      func(dir string) (owned bool, pid int)
+	mu             sync.RWMutex
 }
 
 type ProfileMeta struct {
@@ -45,7 +48,8 @@ type ProfileDetailedInfo struct {
 func NewProfileManager(baseDir string) *ProfileManager {
 	_ = os.MkdirAll(baseDir, 0755)
 	return &ProfileManager{
-		baseDir: baseDir,
+		baseDir:   baseDir,
+		lockOwner: bridge.ProfileOwnedByRunningPinchtab,
 	}
 }
 
@@ -53,6 +57,37 @@ func (pm *ProfileManager) SetActivityRecorder(rec activity.Recorder) {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 	pm.activity = rec
+}
+
+// ErrProfileInUse indicates a destructive operation was refused because a
+// running instance holds the profile.
+var ErrProfileInUse = errors.New("profile in use")
+
+// SetInstanceLookup installs the orchestrator's profile→instance mapping at
+// composition time. Without it (a mux serving no orchestrator), profileHolder
+// falls back to the pinchtab.pid lock so the guard refuses on both surfaces.
+func (pm *ProfileManager) SetInstanceLookup(lookup func(profileID string) (instanceID string, running bool)) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	pm.instanceLookup = lookup
+}
+
+// profileHolder is the single owner of the in-use rule: the Delete and Reset
+// guards and the published running flag must agree, so all of them consult
+// this and nothing else. Callers hold pm.mu.
+func (pm *ProfileManager) profileHolder(id, dir string) (holder string, held bool) {
+	if pm.instanceLookup != nil {
+		if instanceID, running := pm.instanceLookup(id); running {
+			return instanceID, true
+		}
+		return "", false
+	}
+	if pm.lockOwner != nil {
+		if owned, pid := pm.lockOwner(dir); owned {
+			return fmt.Sprintf("pinchtab process %d", pid), true
+		}
+	}
+	return "", false
 }
 
 func (pm *ProfileManager) findProfileDirByName(name string) (string, error) {
@@ -127,11 +162,14 @@ func (pm *ProfileManager) List() ([]bridge.ProfileInfo, error) {
 			pathExists = false
 		}
 
+		_, held := pm.profileHolder(info.ID, filepath.Join(pm.baseDir, entry.Name()))
+
 		profiles = append(profiles, bridge.ProfileInfo{
 			ID:                info.ID,
 			Name:              info.Name,
 			Path:              info.Path,
 			PathExists:        pathExists,
+			Running:           held,
 			Created:           info.CreatedAt,
 			Temporary:         strings.HasPrefix(info.Name, "instance-"),
 			Quarantined:       bridge.IsQuarantinedProfileDir(entry.Name()),

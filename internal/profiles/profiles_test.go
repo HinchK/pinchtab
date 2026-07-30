@@ -1347,3 +1347,223 @@ func TestHandleListMarksQuarantinedEntries(t *testing.T) {
 		}
 	}
 }
+
+func newHeldProfile(t *testing.T, pm *ProfileManager, name string) (id, cookies string) {
+	t.Helper()
+	if err := pm.Create(name); err != nil {
+		t.Fatal(err)
+	}
+	cookies = filepath.Join(pm.baseDir, profileID(name), "Default", "Cookies")
+	if err := os.WriteFile(cookies, []byte("session-data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return profileID(name), cookies
+}
+
+func requireCookiesIntact(t *testing.T, cookies string) {
+	t.Helper()
+	data, err := os.ReadFile(cookies)
+	if err != nil {
+		t.Fatalf("cookies file gone after a refused operation: %v", err)
+	}
+	if string(data) != "session-data" {
+		t.Fatalf("cookies content changed after a refused operation: %q", data)
+	}
+}
+
+// instanceLookupFrom derives the holder mapping the same way server.go composes
+// it from orch.List(), so running-ness in these tests and the guard share one
+// source instead of a per-test fixture.
+func instanceLookupFrom(instances []bridge.Instance) func(string) (string, bool) {
+	return func(profileID string) (string, bool) {
+		for _, inst := range instances {
+			if inst.ProfileID != profileID {
+				continue
+			}
+			switch inst.Status {
+			case "starting", "running", "stopping":
+				return inst.ID, true
+			}
+		}
+		return "", false
+	}
+}
+
+func TestDeleteRefusesAProfileAnInstanceHolds(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, cookies := newHeldProfile(t, pm, "held")
+	pm.SetInstanceLookup(instanceLookupFrom([]bridge.Instance{
+		{ID: "inst_holder01", ProfileID: id, Status: "running"},
+	}))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("DELETE", "/profiles/"+id, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 409 {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "inst_holder01") {
+		t.Fatalf("409 body does not name the holding instance: %s", w.Body.String())
+	}
+	requireCookiesIntact(t, cookies)
+}
+
+func TestResetRefusesAProfileAnInstanceHolds(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, cookies := newHeldProfile(t, pm, "held")
+	pm.SetInstanceLookup(instanceLookupFrom([]bridge.Instance{
+		{ID: "inst_holder02", ProfileID: id, Status: "running"},
+	}))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("POST", "/profiles/"+id+"/reset", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 409 {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "inst_holder02") {
+		t.Fatalf("409 body does not name the holding instance: %s", w.Body.String())
+	}
+	requireCookiesIntact(t, cookies)
+}
+
+// The force contract is delete-and-report-orphaned: profiles cannot stop
+// instances, so the holder is named in the response instead of being left
+// running on a removed directory silently.
+func TestForceDeleteRemovesAHeldProfileAndReportsTheOrphanedInstance(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, _ := newHeldProfile(t, pm, "held")
+	pm.SetInstanceLookup(instanceLookupFrom([]bridge.Instance{
+		{ID: "inst_holder03", ProfileID: id, Status: "running"},
+	}))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("DELETE", "/profiles/"+id+"?force=true", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["orphanedInstance"] != "inst_holder03" {
+		t.Fatalf("force delete did not report the orphaned instance: %v", resp)
+	}
+	if _, err := os.Stat(filepath.Join(pm.baseDir, id)); !os.IsNotExist(err) {
+		t.Fatalf("profile directory still present after force delete: %v", err)
+	}
+}
+
+func TestDeleteAndResetOfIdleProfilesAreUnchanged(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	idleID, idleCookies := newHeldProfile(t, pm, "idle")
+	heldID, _ := newHeldProfile(t, pm, "held")
+	pm.SetInstanceLookup(instanceLookupFrom([]bridge.Instance{
+		{ID: "inst_holder04", ProfileID: heldID, Status: "running"},
+	}))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/profiles/"+idleID+"/reset", nil))
+	if w.Code != 200 {
+		t.Fatalf("idle reset: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(idleCookies); !os.IsNotExist(err) {
+		t.Fatalf("idle reset left the cookies file in place: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/profiles/"+idleID, nil))
+	if w.Code != 200 {
+		t.Fatalf("idle delete: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(pm.baseDir, idleID)); !os.IsNotExist(err) {
+		t.Fatalf("idle delete left the directory in place: %v", err)
+	}
+}
+
+func TestListRunningComesFromTheSameSourceAsTheGuard(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	heldID, _ := newHeldProfile(t, pm, "held")
+	if err := pm.Create("idle"); err != nil {
+		t.Fatal(err)
+	}
+	instances := []bridge.Instance{{ID: "inst_holder05", ProfileID: heldID, Status: "running"}}
+	pm.SetInstanceLookup(instanceLookupFrom(instances))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("GET", "/profiles", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	var listed []profileResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("expected 2 profiles, got %d", len(listed))
+	}
+	for _, p := range listed {
+		want := false
+		for _, inst := range instances {
+			if inst.ProfileID == p.ID && inst.Status == "running" {
+				want = true
+			}
+		}
+		if p.Running != want {
+			t.Errorf("profile %q running = %v, want %v (from the instance mapping)", p.Name, p.Running, want)
+		}
+	}
+}
+
+// The bridge surface has no orchestrator, so the guard's fallback is the
+// pinchtab.pid lock in the profile directory; this mux is built with no
+// instance lookup at all and must still refuse.
+func TestDestructiveRoutesRefuseWithoutAnOrchestrator(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, cookies := newHeldProfile(t, pm, "held")
+	pm.lockOwner = func(string) (bool, int) { return true, 4242 }
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest("DELETE", "/profiles/"+id, nil),
+		httptest.NewRequest("POST", "/profiles/"+id+"/reset", nil),
+	} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != 409 {
+			t.Fatalf("%s %s: expected 409, got %d: %s", req.Method, req.URL.Path, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "4242") {
+			t.Fatalf("%s %s: 409 body does not name the holder: %s", req.Method, req.URL.Path, w.Body.String())
+		}
+	}
+	requireCookiesIntact(t, cookies)
+}
+
+func TestDefaultLockOwnerTreatsAPidFreeDirectoryAsIdle(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, _ := newHeldProfile(t, pm, "no-pid-file")
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("DELETE", "/profiles/"+id, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200 for a directory with no pinchtab.pid, got %d: %s", w.Code, w.Body.String())
+	}
+}
