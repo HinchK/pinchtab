@@ -88,6 +88,8 @@ var blankIsTheAnswer = map[string]string{
 	"browser.cloak.fontsDir":                  "cloak override, unset",
 	"browser.cloak.storageQuotaMB":            "cloak override, unset",
 	"browser.cloak.disableDefaultStealthArgs": "cloak override, unset",
+	"browser.remoteDebuggingPort":             "unset means a debugging port is chosen when the browser launches, so there is no configured value to report",
+	"security.stateEncryptionKey":             "no state encryption key configured, and the CLI masks this leaf when there is one",
 	"browser.proxy.server":                    "no proxy configured",
 	"browser.proxy.bypassList":                "no proxy configured",
 	"browser.proxy.username":                  "no proxy configured",
@@ -123,6 +125,8 @@ var blankIsTheAnswer = map[string]string{
 // hardcoded value in the print path.
 var defaultLivesAtItsConsumer = map[string]string{
 	"server.cookieSecure": "there is no single value: the cookie layer decides per request from that request's scheme, so any printed answer would be wrong for half the requests",
+
+	"server.networkBufferSize": "the per-tab buffer default is DefaultNetworkBufferSize in the network buffer itself, applied when the configured size is zero; the config layer never settles it, so reporting a number here would be this package's own guess",
 }
 
 // TestEveryAddressableConfigKeyAnswersOrIsAccountedFor is the standing census behind

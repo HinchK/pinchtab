@@ -207,6 +207,7 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 			StealthLevel:           fc.InstanceDefaults.StealthLevel,
 			TabEvictionPolicy:      fc.InstanceDefaults.TabEvictionPolicy,
 			TabPolicy:              fc.InstanceDefaults.TabPolicy,
+			DialogAutoAccept:       fc.InstanceDefaults.DialogAutoAccept,
 		},
 		Security: securityConfigJSON{
 			AllowEvaluate:          fc.Security.AllowEvaluate,
@@ -423,6 +424,7 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 	autoSolverLLMFallback := cfg.AutoSolver.LLMFallback
 
 	quarantineKeep := cfg.ProfileQuarantineKeep
+	dialogAutoAccept := cfg.DialogAutoAccept
 
 	mode := "headless"
 	if !cfg.Headless {
@@ -493,6 +495,7 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 			StealthLevel:           cfg.StealthLevel,
 			TabEvictionPolicy:      cfg.TabEvictionPolicy,
 			TabPolicy:              tabPolicyDefaultsFromRuntime(cfg),
+			DialogAutoAccept:       &dialogAutoAccept,
 		},
 		Security: SecurityConfig{
 			AllowEvaluate:          &allowEvaluate,

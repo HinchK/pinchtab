@@ -32,6 +32,12 @@ func getServerField(s *ServerConfig, field string) (string, error) {
 		return s.StateDir, nil
 	case "logLevel":
 		return s.LogLevel, nil
+	case "networkBufferSize":
+		return formatIntPtr(s.NetworkBufferSize), nil
+	case "retainNetworkBodies":
+		return formatBoolPtr(s.RetainNetworkBodies), nil
+	case "retainNetworkBodyMaxBytes":
+		return formatIntPtr(s.RetainNetworkBodyMaxBytes), nil
 	case "trustProxyHeaders":
 		return formatBoolPtr(s.TrustProxyHeaders), nil
 	case "cookieSecure":
@@ -60,6 +66,10 @@ func getBrowserField(b *BrowserConfig, field string) (string, error) {
 		return b.BrowserBinary, nil
 	case "extraFlags":
 		return b.BrowserExtraFlags, nil
+	case "remoteDebuggingPort":
+		return formatIntPtr(b.BrowserDebugPort), nil
+	case "extensionPaths":
+		return strings.Join(b.ExtensionPaths, ","), nil
 	case "defaultTarget":
 		return b.DefaultTarget, nil
 	case "fallbackOrder":
@@ -268,6 +278,8 @@ func getInstanceDefaultsField(c *InstanceDefaultsConfig, field string) (string, 
 		return c.StealthLevel, nil
 	case "tabEvictionPolicy":
 		return c.TabEvictionPolicy, nil
+	case "dialogAutoAccept":
+		return formatBoolPtr(c.DialogAutoAccept), nil
 	default:
 		return "", fmt.Errorf("unknown field instanceDefaults.%s", field)
 	}
@@ -284,6 +296,8 @@ func getTabPolicyField(tp *TabPolicyDefaults, field string) (string, error) {
 		return tp.Lifecycle, nil
 	case "closeDelaySec":
 		return formatIntPtr(tp.CloseDelaySec), nil
+	case "restore":
+		return formatBoolPtr(tp.Restore), nil
 	default:
 		return "", fmt.Errorf("unknown field instanceDefaults.tabPolicy.%s", field)
 	}
@@ -312,6 +326,8 @@ func getSecurityField(s *SecurityConfig, field string) (string, error) {
 		return formatBoolPtr(s.AllowCookies), nil
 	case "allowStateExport":
 		return formatBoolPtr(s.AllowStateExport), nil
+	case "stateEncryptionKey":
+		return formatStringPtr(s.StateEncryptionKey), nil
 	case "allowNetworkIntercept":
 		return formatBoolPtr(s.AllowNetworkIntercept), nil
 	case "allowFileScheme":
@@ -424,6 +440,10 @@ func getIDPIField(i *IDPIConfig, field string) (string, error) {
 		return strconv.FormatBool(i.WrapContent), nil
 	case "customPatterns":
 		return strings.Join(i.CustomPatterns, ","), nil
+	case "scanTimeoutSec":
+		return strconv.Itoa(i.ScanTimeoutSec), nil
+	case "shieldThreshold":
+		return strconv.Itoa(i.ShieldThreshold), nil
 	default:
 		return "", fmt.Errorf("unknown field security.idpi.%s", field)
 	}
@@ -452,6 +472,13 @@ func formatBoolPtr(b *bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func formatStringPtr(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 func formatIntPtr(n *int) string {
@@ -609,6 +636,20 @@ func resolvedConfigValue(path string) (string, error) {
 func addSettledDefaults(resolved *FileConfig, cfg *RuntimeConfig) {
 	if strings.TrimSpace(resolved.Server.LogLevel) == "" {
 		resolved.Server.LogLevel = safelog.LevelName(safelog.DefaultLevel)
+	}
+	// The writer omits a false tab-restore (a vanilla tab policy is left out of a file the
+	// operator did not ask for) and omits the state encryption key entirely, so a generated
+	// child instance config never carries a secret. Both are settled values a reader has to
+	// see, taken off the RuntimeConfig rather than restated here.
+	if resolved.InstanceDefaults.TabPolicy == nil {
+		resolved.InstanceDefaults.TabPolicy = &TabPolicyDefaults{}
+	}
+	if resolved.InstanceDefaults.TabPolicy.Restore == nil {
+		resolved.InstanceDefaults.TabPolicy.Restore = boolPtrValue(cfg.TabRestore)
+	}
+	if resolved.Security.StateEncryptionKey == nil && cfg.StateEncryptionKey != "" {
+		key := cfg.StateEncryptionKey
+		resolved.Security.StateEncryptionKey = &key
 	}
 	resolved.Scheduler = SchedulerFileConfig{
 		Enabled:           boolPtrValue(cfg.Scheduler.Enabled),

@@ -35,6 +35,24 @@ func setServerField(s *ServerConfig, field, value string) error {
 			return fmt.Errorf("server.logLevel: %w", err)
 		}
 		s.LogLevel = strings.ToLower(strings.TrimSpace(value))
+	case "networkBufferSize":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("server.networkBufferSize must be a number: %w", err)
+		}
+		s.NetworkBufferSize = &n
+	case "retainNetworkBodies":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("server.retainNetworkBodies must be true or false: %w", err)
+		}
+		s.RetainNetworkBodies = &b
+	case "retainNetworkBodyMaxBytes":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("server.retainNetworkBodyMaxBytes must be a number: %w", err)
+		}
+		s.RetainNetworkBodyMaxBytes = &n
 	case "trustProxyHeaders":
 		b, err := parseBool(value)
 		if err != nil {
@@ -78,6 +96,14 @@ func setBrowserField(b *BrowserConfig, field, value string) error {
 		b.BrowserBinary = value
 	case "extraFlags":
 		b.BrowserExtraFlags = value
+	case "remoteDebuggingPort":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("browser.remoteDebuggingPort must be a number: %w", err)
+		}
+		b.BrowserDebugPort = &n
+	case "extensionPaths":
+		b.ExtensionPaths = parseCSVList(value)
 	case "defaultTarget":
 		b.DefaultTarget = value
 	case "fallbackOrder":
@@ -397,6 +423,12 @@ func setInstanceDefaultsField(c *InstanceDefaultsConfig, field, value string) er
 		c.StealthLevel = value
 	case "tabEvictionPolicy":
 		c.TabEvictionPolicy = value
+	case "dialogAutoAccept":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("instanceDefaults.dialogAutoAccept: %w", err)
+		}
+		c.DialogAutoAccept = &b
 	default:
 		return fmt.Errorf("unknown field instanceDefaults.%s", field)
 	}
@@ -415,10 +447,33 @@ func setTabPolicyField(tp *TabPolicyDefaults, field, value string) error {
 			return fmt.Errorf("instanceDefaults.tabPolicy.closeDelaySec must be a number: %w", err)
 		}
 		tp.CloseDelaySec = &n
+	case "restore":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("instanceDefaults.tabPolicy.restore: %w", err)
+		}
+		tp.Restore = &b
 	default:
 		return fmt.Errorf("unknown field instanceDefaults.tabPolicy.%s", field)
 	}
 	return nil
+}
+
+// securityBoolFields is the set the shared boolean parse below is allowed to serve. It is
+// checked before the parse so an unknown field is refused as unknown.
+var securityBoolFields = map[string]bool{
+	"allowEvaluate":         true,
+	"allowClipboard":        true,
+	"allowMacro":            true,
+	"allowScreencast":       true,
+	"allowDownload":         true,
+	"allowCookies":          true,
+	"allowStateExport":      true,
+	"allowUpload":           true,
+	"allowNetworkIntercept": true,
+	"allowFileScheme":       true,
+	"enableActionGuards":    true,
+	"trustLoopbackProxy":    true,
 }
 
 func setSecurityField(s *SecurityConfig, field, value string) error {
@@ -491,8 +546,19 @@ func setSecurityField(s *SecurityConfig, field, value string) error {
 		}
 		s.MaxRedirects = &n
 		return nil
+	case "stateEncryptionKey":
+		key := value
+		s.StateEncryptionKey = &key
+		return nil
 	}
 
+	// Everything left in this section is a boolean, so the parse can be shared — but only
+	// after the field is known. Parsing first made an unrecognised security field report a
+	// boolean complaint about its value, which hid the unknown-field refusal behind a
+	// message about the wrong thing.
+	if !securityBoolFields[field] {
+		return fmt.Errorf("unknown field security.%s", field)
+	}
 	b, err := parseBool(value)
 	if err != nil {
 		return fmt.Errorf("security.%s: %w", field, err)
@@ -673,6 +739,21 @@ func setIDPIField(s *SecurityConfig, field, value string) error {
 		i.WrapContent = b
 	case "customPatterns":
 		i.CustomPatterns = parseCSVList(value)
+	case "scanTimeoutSec":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("security.idpi.scanTimeoutSec must be a number: %w", err)
+		}
+		i.ScanTimeoutSec = n
+	case "shieldThreshold":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("security.idpi.shieldThreshold must be a number: %w", err)
+		}
+		if n < 0 || n > 100 {
+			return fmt.Errorf("security.idpi.shieldThreshold must be between 0 and 100")
+		}
+		i.ShieldThreshold = n
 	default:
 		return fmt.Errorf("unknown field security.idpi.%s", field)
 	}

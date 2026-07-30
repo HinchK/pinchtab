@@ -1,7 +1,9 @@
 package config
 
 import (
+	"encoding/json"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -150,4 +152,295 @@ func declaredFileConfigSections(t *testing.T) []string {
 		names = append(names, strings.Split(tag, ",")[0])
 	}
 	return names
+}
+
+// unreachableConfigLeaves records the leaf paths a section declares that config set/get
+// deliberately do NOT address, with the reason each is excluded. The walk below fails both
+// ways: a leaf missing from the resolvers and from this table is a gap, and an entry here
+// that now resolves is stale and must be deleted. Padding the table to silence the walk is
+// therefore visible in review as a reason someone had to write.
+var unreachableConfigLeaves = map[string]string{
+	"server.engine": "removed setting, parsed only so an old config gets a validation error; making it settable would offer an operator a value nothing honours",
+
+	"instanceDefaults.headless": "superseded by instanceDefaults.mode, which is the spelling the file writer renders; setting both is a validation error, and a settable headless would be dropped by MarshalJSON and read as accepted-then-discarded",
+
+	"sessions.agent.enabled":        "owned by the agent-session editor card, which also has to teach MarshalJSON the agent block — the editor half alone would report success and write nothing",
+	"sessions.agent.mode":           "owned by the agent-session editor card (see sessions.agent.enabled)",
+	"sessions.agent.idleTimeoutSec": "owned by the agent-session editor card (see sessions.agent.enabled)",
+	"sessions.agent.maxLifetimeSec": "owned by the agent-session editor card (see sessions.agent.enabled)",
+}
+
+// unreachableConfigSubtrees are whole blocks excluded by one reason, so the table does not
+// have to list every leaf of a retired structure.
+var unreachableConfigSubtrees = map[string]string{
+	"browsers.config.": "retired block, never applied anywhere and superseded by browser.targets; parsed only so validation can reject it with guidance and so existing files round-trip",
+}
+
+// The section walk one level down. The section vocabulary is derived from FileConfig and
+// pinned above; the per-field vocabulary was still hand-written switches tied to nothing,
+// so a field added to a section struct was honoured by the loader, documented by the
+// schema, and silently unaddressable from the CLI. This walks the section structs' json
+// tags instead: a leaf that resolves through neither resolver has to be either wired up or
+// written down.
+func TestEveryDeclaredSectionLeafIsReachableFromBothResolvers(t *testing.T) {
+	leaves := declaredSectionLeaves(t)
+	if len(leaves) < 100 {
+		t.Fatalf("walked %d leaves across the section structs; this walk would be vacuous", len(leaves))
+	}
+
+	exempted := map[string]bool{}
+	for _, leaf := range leaves {
+		reason, key := exemptionFor(leaf.path)
+
+		// The probe carries a value of the type the section struct declares, so a refusal
+		// can only be about the PATH. Probing every leaf with one string made a setter that
+		// parses before it dispatches answer "invalid boolean" for a string field, which
+		// reads as a value complaint and hid a leaf no value could ever set.
+		// One config per leaf, written before it is read: a map-keyed block (browser
+		// targets) only has the key an operator just created, so reading a fresh config
+		// would report "not found" for every one of its leaves.
+		fc := newProbeConfig()
+		setErr := SetConfigValue(fc, leaf.path, leaf.probe)
+		_, getErr := GetConfigValue(fc, leaf.path)
+
+		if reason == "" {
+			if policy, refused := refusedByPolicy[leaf.path]; refused {
+				if setErr == nil && getErr == nil {
+					t.Errorf("%s is recorded as refused by policy (%q) but both resolvers now accept it; delete the entry", leaf.path, policy)
+				}
+				exempted[leaf.path] = true
+				continue
+			}
+			if setErr != nil {
+				t.Errorf("config set %s = %q was refused (%v): the leaf is declared on the section struct and honoured by the loader, so wire it into the setter, or record it in unreachableConfigLeaves / refusedByPolicy with a reason", leaf.path, leaf.probe, setErr)
+			}
+			if getErr != nil {
+				t.Errorf("config get %s was refused (%v): wire it into the getter, or record it with a reason", leaf.path, getErr)
+			}
+			continue
+		}
+
+		exempted[key] = true
+		if !isUnknownFieldRefusal(setErr) && !isUnknownFieldRefusal(getErr) {
+			t.Errorf("%s resolves through both resolvers but is still recorded as unreachable (%q); delete the entry — a stale exemption hides the next gap", leaf.path, reason)
+		}
+	}
+
+	// The exemption table cannot outlive what it excuses: an entry naming a path the walk
+	// no longer produces would excuse nothing and read as coverage.
+	for path := range unreachableConfigLeaves {
+		if !exempted[path] {
+			t.Errorf("unreachableConfigLeaves records %q, which is not a leaf any section struct declares", path)
+		}
+	}
+	for path := range refusedByPolicy {
+		if !exempted[path] {
+			t.Errorf("refusedByPolicy records %q, which is not a leaf any section struct declares", path)
+		}
+	}
+	for prefix := range unreachableConfigSubtrees {
+		if !exempted[prefix] {
+			t.Errorf("unreachableConfigSubtrees records %q, which matches no leaf any section struct declares", prefix)
+		}
+	}
+}
+
+// stateEncryptionKey is a secret and this card made it readable, so the reachability is
+// pinned here while the masking stays pinned where the rule lives: isSensitiveConfigPath in
+// cmd/pinchtab already lists this exact path, and restating its suffix rule here would be a
+// second copy free to drift. What this package owns is the leaf answering at all.
+//
+// Masking is a DISPLAY property of `pinchtab config get`, not a property of the field: any
+// later surface that publishes config values — an HTTP endpoint, a dashboard view — inherits
+// none of it and has to mask on its own.
+func TestTheStateEncryptionKeyLeafIsReadableSoItsMaskingMatters(t *testing.T) {
+	const path = "security.stateEncryptionKey"
+
+	fc := newProbeConfig()
+	if err := SetConfigValue(fc, path, "sekret"); err != nil {
+		t.Fatalf("set %s: %v", path, err)
+	}
+	value, err := GetConfigValue(fc, path)
+	if err != nil {
+		t.Fatalf("get %s: %v", path, err)
+	}
+	if value != "sekret" {
+		t.Fatalf("get %s = %q, want the value just set", path, value)
+	}
+}
+
+func newProbeConfig() *FileConfig {
+	return &FileConfig{}
+}
+
+// isUnknownFieldRefusal separates "this resolver does not know the path" from every other
+// refusal. A typed rejection (a bad value, a removed setting) means the leaf RESOLVED,
+// which is what this walk is about.
+func isUnknownFieldRefusal(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "unknown field")
+}
+
+func exemptionFor(path string) (reason, key string) {
+	if reason, ok := unreachableConfigLeaves[path]; ok {
+		return reason, path
+	}
+	for prefix, reason := range unreachableConfigSubtrees {
+		if strings.HasPrefix(path, prefix) {
+			return reason, prefix
+		}
+	}
+	return "", ""
+}
+
+// declaredSectionLeaves walks each section in configSections through the struct FileConfig
+// declares for it, so the paths come from the type rather than from a list somebody
+// maintains. Map-valued blocks are walked through a synthetic key: their leaves are what
+// the resolvers address, and the key itself is the operator's choice.
+// refusedByPolicy are leaves both resolvers KNOW and deliberately refuse, which is a
+// different answer from not knowing them: the operator is told what to use instead.
+var refusedByPolicy = map[string]string{
+	"browser.provider": "removed in favour of browsers.default; both resolvers answer with that redirection rather than an unknown-field refusal",
+
+	"observability.activity.stateDir": "derived from server.stateDir so two instances cannot share an activity log directory; the setter refuses it by naming the key to set instead, and the getter still reads it",
+}
+
+type sectionLeaf struct {
+	path  string
+	probe string
+}
+
+func declaredSectionLeaves(t *testing.T) []sectionLeaf {
+	t.Helper()
+
+	fields := map[string]reflect.Type{}
+	typ := reflect.TypeOf(FileConfig{})
+	for i := 0; i < typ.NumField(); i++ {
+		name := strings.Split(typ.Field(i).Tag.Get("json"), ",")[0]
+		fields[name] = typ.Field(i).Type
+	}
+
+	var leaves []sectionLeaf
+	for _, section := range configSections {
+		sectionType, ok := fields[section.name]
+		if !ok {
+			t.Fatalf("configSections lists %q, which FileConfig does not declare", section.name)
+		}
+		appendLeafPaths(t, section.name, sectionType, &leaves)
+	}
+	sort.Slice(leaves, func(i, j int) bool { return leaves[i].path < leaves[j].path })
+	return leaves
+}
+
+// probeValueFor renders a value of the leaf's declared type. Values are chosen to survive
+// the validation the setters apply (a hostname for a domain list, a percentage for a
+// threshold), because a probe rejected on its content would report a gap that is not one.
+func probeValueFor(t *testing.T, path string, typ reflect.Type) string {
+	t.Helper()
+	for typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+	switch typ.Kind() {
+	case reflect.Bool:
+		return "true"
+	case reflect.Int, reflect.Int64:
+		return "7"
+	case reflect.Float64:
+		return "7"
+	case reflect.Slice:
+		return "example.com"
+	case reflect.String:
+		return probeStringFor(path)
+	default:
+		t.Fatalf("%s has unsupported leaf kind %s; teach the walk how to probe it", path, typ.Kind())
+		return ""
+	}
+}
+
+// probeStringFor supplies the few string leaves whose setter validates the value against a
+// vocabulary. Everything else takes a plain marker.
+func probeStringFor(path string) string {
+	switch path {
+	case "server.logLevel":
+		return "info"
+	case "browsers.default":
+		return "chrome"
+	case "instanceDefaults.mode":
+		return "headless"
+	case "browser.targets.probe.provider":
+		return "chrome"
+	}
+	return "probe"
+}
+
+func appendLeafPaths(t *testing.T, prefix string, typ reflect.Type, leaves *[]sectionLeaf) {
+	t.Helper()
+	for typ.Kind() == reflect.Ptr {
+		typ = typ.Elem()
+	}
+	switch typ.Kind() {
+	case reflect.Struct:
+		for i := 0; i < typ.NumField(); i++ {
+			tag := typ.Field(i).Tag.Get("json")
+			if tag == "" || tag == "-" {
+				t.Errorf("%s.%s has no json tag, so it cannot be addressed by path", prefix, typ.Field(i).Name)
+				continue
+			}
+			appendLeafPaths(t, prefix+"."+strings.Split(tag, ",")[0], typ.Field(i).Type, leaves)
+		}
+	case reflect.Map:
+		appendLeafPaths(t, prefix+".probe", typ.Elem(), leaves)
+	default:
+		*leaves = append(*leaves, sectionLeaf{path: prefix, probe: probeValueFor(t, prefix, typ)})
+	}
+}
+
+// The other half of reachable: a value config set accepts has to survive the file writer.
+// FileConfig renders through a hand-built JSON twin, so a leaf wired into the editor but
+// missing from that twin reports success and writes nothing — accept-and-discard, which is
+// worse than the unknown-field refusal it replaced. This drives every settable leaf through
+// the same marshal/unmarshal the save path uses.
+func TestEverySettableSectionLeafSurvivesTheFileWriter(t *testing.T) {
+	leaves := declaredSectionLeaves(t)
+	checked := 0
+
+	for _, leaf := range leaves {
+		if reason, _ := exemptionFor(leaf.path); reason != "" {
+			continue
+		}
+		if _, refused := refusedByPolicy[leaf.path]; refused {
+			continue
+		}
+
+		fc := newProbeConfig()
+		if err := SetConfigValue(fc, leaf.path, leaf.probe); err != nil {
+			continue // the reachability walk above owns this failure
+		}
+		want, err := GetConfigValue(fc, leaf.path)
+		if err != nil {
+			continue
+		}
+
+		encoded, err := json.Marshal(fc)
+		if err != nil {
+			t.Fatalf("marshal after setting %s: %v", leaf.path, err)
+		}
+		var reloaded FileConfig
+		if err := json.Unmarshal(encoded, &reloaded); err != nil {
+			t.Fatalf("reload after setting %s: %v", leaf.path, err)
+		}
+
+		got, err := GetConfigValue(&reloaded, leaf.path)
+		if err != nil {
+			t.Errorf("%s reads back as an error after a save/load round trip: %v", leaf.path, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("config set %s = %q is accepted and then discarded: the value reads %q after the file writer round trip. Add the field to the JSON twin in config_file_json.go and to MarshalJSON, or the CLI reports success and writes nothing", leaf.path, want, got)
+		}
+		checked++
+	}
+
+	if checked < 100 {
+		t.Fatalf("only %d settable leaves survived to the round-trip assertion; this guard would be vacuous", checked)
+	}
 }

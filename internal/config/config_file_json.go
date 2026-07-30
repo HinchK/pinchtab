@@ -72,6 +72,7 @@ type instanceDefaultsConfigJSON struct {
 	StealthLevel           string             `json:"stealthLevel"`
 	TabEvictionPolicy      string             `json:"tabEvictionPolicy"`
 	TabPolicy              *TabPolicyDefaults `json:"tabPolicy,omitempty"`
+	DialogAutoAccept       *bool              `json:"dialogAutoAccept,omitempty"`
 }
 
 type profilesConfigJSON struct {
