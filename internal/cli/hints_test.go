@@ -35,19 +35,51 @@ func TestNoSessionHintHoldsWhetherOrNotSessionsAreEnabled(t *testing.T) {
 		}
 	}
 
-	// Order carries the meaning. The clause that applies to a working server comes
-	// first, and the config change is reachable only through a conditional — that is
-	// what stops it reading as an instruction to everyone.
-	command := strings.Index(hint, SessionCreateCommand)
-	fallback := strings.Index(hint, "sessions.agent.enabled = true")
-	if command < 0 || fallback < 0 || command > fallback {
-		t.Errorf("the create command must come before the enable-and-restart clause, so the applicable half is read first: %q", hint)
+	// Order carries the meaning, and it is the CONDITION clauses that carry it: the
+	// half that applies to a working server is read first, and the config change is
+	// reachable only through the fallback. This used to measure the position of the
+	// command literal instead, which said "clause order" but forbade any layout that
+	// moved the command elsewhere — including the copy-safe one below.
+	applicable := strings.Index(hint, "If agent sessions are enabled")
+	fallback := strings.Index(hint, "otherwise")
+	if applicable < 0 {
+		t.Errorf("the create half is not conditional, so it reads as available on every server: %q", hint)
 	}
-	if !strings.Contains(hint, "If agent sessions are enabled") {
-		t.Errorf("the create command is not conditional, so it reads as available on every server: %q", hint)
-	}
-	if !strings.Contains(hint, "otherwise") {
+	if fallback < 0 {
 		t.Errorf("the enable-and-restart clause is not conditional, so it reads as an instruction to users who need nothing: %q", hint)
+	}
+	if applicable >= 0 && fallback >= 0 && applicable > fallback {
+		t.Errorf("the enable-and-restart fallback is read before the half that applies to a working server: %q", hint)
+	}
+}
+
+// The hint is the ONLY place the create command is published — it appears in no
+// doc and no skill — so its readers lift it from this line, and an agent lifts it
+// to end of line. Anything after it is therefore appended to what gets run.
+//
+// Ending the hint with the command is the form that holds, not merely "no shell
+// separator after it": this command carries a $(...) substitution and an
+// assignment, so a trailing clause corrupts it however it is punctuated. A ";"
+// runs the prose as a command ("otherwise: command not found"); a space makes the
+// following words extra export operands; even a full stop is absorbed into the
+// assigned value silently. The separator check is kept as its own assertion
+// because it names the sharpest failure.
+func TestNoSessionHintEndsWithTheCommandSoItCanBeLifted(t *testing.T) {
+	command := strings.Index(NoSessionHint, SessionCreateCommand)
+	if command < 0 {
+		t.Fatalf("hint no longer carries the create command: %q", NoSessionHint)
+	}
+	trailing := NoSessionHint[command+len(SessionCreateCommand):]
+
+	for _, separator := range []string{";", "&&", "||", "|", "&"} {
+		if strings.HasPrefix(trailing, separator) {
+			t.Errorf("the create command is followed by %q, so lifting the line to end-of-line runs the prose after it as a command: %q",
+				separator, NoSessionHint)
+		}
+	}
+	if trailing != "" {
+		t.Errorf("the create command is not last (followed by %q); it carries $(...) and an assignment, so anything after it lands inside what gets run: %q",
+			trailing, NoSessionHint)
 	}
 }
 

@@ -37,23 +37,19 @@ func WriteCommandHints(out io.Writer, heading string, hints []CommandHint, width
 const SessionCreateCommand = "export PINCHTAB_SESSION=$(pinchtab session create --agent-id <id>)"
 
 // NoSessionHint is the single wording for "this caller has no agent session".
+// The CLI cannot tell whether the server has sessions enabled, so this must be
+// true in BOTH states: the applicable half leads, the prerequisite survives as a
+// conditional fallback, and the command ends the line so lifting it to
+// end-of-line yields exactly the command — it is the only place that command is
+// published, and its readers are agents.
 //
-// It must hold in BOTH server states, which is why the enable-and-restart clause is
-// conditional and comes last. It used to lead with "agent sessions must be enabled",
-// which kept a reader on default config from dead-ending in the command's own
-// "agent sessions are not enabled on this server" — but told every correctly
-// configured user to change config that was already right and restart a server that
-// needed no restart. This is the most-printed string in the product, so it says the
-// applicable half first and keeps the prerequisite as the fallback: a reader on
-// either server still reaches a working outcome by following it top to bottom.
-//
-// A THIRD state is still wrong here and this wording does not fix it: on a bridge
-// there are no agent sessions at all, so the otherwise-clause cannot help. Fixing
-// that needs the capability in the health payload (nothing there reports whether
-// agent sessions are enabled today) so the caller can pick a branch; do not read
-// this constant as true on a bridge.
-const NoSessionHint = "this tab is shared — no agent session is set. If agent sessions are enabled on this server, create one with: " +
-	SessionCreateCommand + "; otherwise set sessions.agent.enabled = true in config.json and restart first."
+// A THIRD state stays wrong and this does not fix it: a bridge has no agent
+// sessions at all, so the otherwise-clause cannot help there. The honest enabler
+// is exposing the capability in the health payload, which reports nothing about
+// it today.
+const NoSessionHint = "this tab is shared — no agent session is set. If agent sessions are enabled on this server, create one now; " +
+	"otherwise set sessions.agent.enabled = true in config.json and restart first. Either way the command is: " +
+	SessionCreateCommand
 
 // NextStepsRunningHints is the "Next steps" group shown when the server is up;
 // shared by the root banner and `pinchtab health` so the two stay in lockstep.
