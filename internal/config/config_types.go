@@ -188,6 +188,7 @@ type SchedulerConfig struct {
 	MaxPerAgentFlight int    `json:"maxPerAgentInflight,omitempty"`
 	ResultTTLSec      int    `json:"resultTTLSec,omitempty"`
 	WorkerCount       int    `json:"workerCount,omitempty"`
+	MaxBatchSize      int    `json:"maxBatchSize,omitempty"`
 }
 
 // AutoSolverConfig holds autosolver runtime settings.
@@ -495,6 +496,7 @@ type SchedulerFileConfig struct {
 	MaxPerAgentFlight *int   `json:"maxPerAgentInflight,omitempty"`
 	ResultTTLSec      *int   `json:"resultTTLSec,omitempty"`
 	WorkerCount       *int   `json:"workerCount,omitempty"`
+	MaxBatchSize      *int   `json:"maxBatchSize,omitempty"`
 }
 
 type ObservabilityFileConfig struct {

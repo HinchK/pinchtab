@@ -157,6 +157,7 @@ type schedulerFileConfigJSON struct {
 	MaxPerAgentFlight *int   `json:"maxPerAgentInflight"`
 	ResultTTLSec      *int   `json:"resultTTLSec"`
 	WorkerCount       *int   `json:"workerCount"`
+	MaxBatchSize      *int   `json:"maxBatchSize"`
 }
 
 type observabilityFileConfigJSON struct {

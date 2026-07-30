@@ -506,6 +506,8 @@ func getSchedulerField(s *SchedulerFileConfig, field string) (string, error) {
 		return formatIntPtr(s.ResultTTLSec), nil
 	case "workerCount":
 		return formatIntPtr(s.WorkerCount), nil
+	case "maxBatchSize":
+		return formatIntPtr(s.MaxBatchSize), nil
 	default:
 		return "", fmt.Errorf("unknown field scheduler.%s", field)
 	}
@@ -660,6 +662,7 @@ func addSettledDefaults(resolved *FileConfig, cfg *RuntimeConfig) {
 		MaxPerAgentFlight: intPtrIfPositive(cfg.Scheduler.MaxPerAgentFlight),
 		ResultTTLSec:      intPtrIfPositive(cfg.Scheduler.ResultTTLSec),
 		WorkerCount:       intPtrIfPositive(cfg.Scheduler.WorkerCount),
+		MaxBatchSize:      intPtrIfPositive(cfg.Scheduler.MaxBatchSize),
 	}
 	if resolved.InstanceDefaults.TabPolicy == nil {
 		resolved.InstanceDefaults.TabPolicy = &TabPolicyDefaults{}

@@ -806,6 +806,9 @@ func applySchedulerConfig(cfg *RuntimeConfig, s SchedulerFileConfig) {
 	if s.WorkerCount != nil {
 		cfg.Scheduler.WorkerCount = *s.WorkerCount
 	}
+	if s.MaxBatchSize != nil {
+		cfg.Scheduler.MaxBatchSize = *s.MaxBatchSize
+	}
 }
 
 func applyAutoSolverConfig(cfg *RuntimeConfig, a AutoSolverFileConfig) {

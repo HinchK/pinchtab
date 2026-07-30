@@ -14,6 +14,7 @@ func DefaultSchedulerConfig() SchedulerConfig {
 		MaxPerAgentFlight: 10,
 		ResultTTLSec:      300,
 		WorkerCount:       4,
+		MaxBatchSize:      50,
 	}
 }
 
@@ -36,6 +37,7 @@ func finalizeSchedulerConfig(cfg *RuntimeConfig) {
 		{&s.MaxPerAgentFlight, defaults.MaxPerAgentFlight},
 		{&s.ResultTTLSec, defaults.ResultTTLSec},
 		{&s.WorkerCount, defaults.WorkerCount},
+		{&s.MaxBatchSize, defaults.MaxBatchSize},
 	} {
 		if *knob.value <= 0 {
 			*knob.value = knob.fallback

@@ -312,7 +312,8 @@ Current nested file-config shape:
     "maxInflight": 20,
     "maxPerAgentInflight": 10,
     "resultTTLSec": 300,
-    "workerCount": 4
+    "workerCount": 4,
+    "maxBatchSize": 50
   },
   "observability": {
     "activity": {
@@ -547,9 +548,10 @@ Rationale: humanized input is useful for compatibility with pages that react poo
 - `profiles`
 - `multiInstance`
 - `timeouts`
+- `scheduler`
 - `observability`
 
-They do not expose every field in those sections, and they do not support `scheduler.*`.
+They do not expose every field in those sections.
 
 Use `pinchtab config patch` or edit `config.json` directly for fields such as:
 
@@ -560,7 +562,6 @@ Use `pinchtab config patch` or edit `config.json` directly for fields such as:
 - `security.allowClipboard`
 - `security.idpi.scanTimeoutSec`
 - `security.idpi.shieldThreshold`
-- `scheduler.*`
 - `observability.activity.events.*`
 
 ## Common Examples

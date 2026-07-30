@@ -22,6 +22,7 @@ func TestSchedulerKeysAnswerTheDeclaredDefaults(t *testing.T) {
 		"scheduler.maxPerAgentInflight": strconv.Itoa(defaults.MaxPerAgentFlight),
 		"scheduler.resultTTLSec":        strconv.Itoa(defaults.ResultTTLSec),
 		"scheduler.workerCount":         strconv.Itoa(defaults.WorkerCount),
+		"scheduler.maxBatchSize":        strconv.Itoa(defaults.MaxBatchSize),
 	} {
 		if got := effectiveValue(t, path); got != want {
 			t.Errorf("%s = %q, want %q", path, got, want)
@@ -30,12 +31,13 @@ func TestSchedulerKeysAnswerTheDeclaredDefaults(t *testing.T) {
 }
 
 func TestSchedulerKeysKeepWhatTheFileSets(t *testing.T) {
-	writeConfigForGet(t, `{"scheduler":{"maxInflight":7,"strategy":"strict-fifo","workerCount":9}}`)
+	writeConfigForGet(t, `{"scheduler":{"maxInflight":7,"strategy":"strict-fifo","workerCount":9,"maxBatchSize":5}}`)
 
 	for path, want := range map[string]string{
-		"scheduler.maxInflight": "7",
-		"scheduler.strategy":    "strict-fifo",
-		"scheduler.workerCount": "9",
+		"scheduler.maxInflight":  "7",
+		"scheduler.strategy":     "strict-fifo",
+		"scheduler.workerCount":  "9",
+		"scheduler.maxBatchSize": "5",
 	} {
 		if got := effectiveValue(t, path); got != want {
 			t.Errorf("%s = %q, want the configured %q", path, got, want)
@@ -46,7 +48,7 @@ func TestSchedulerKeysKeepWhatTheFileSets(t *testing.T) {
 // A configured zero has always meant "use the default" for these knobs — never
 // unlimited. The reader must say so too, or it reports a queue size nothing enforces.
 func TestSchedulerZeroMeansTheDefaultEverywhere(t *testing.T) {
-	writeConfigForGet(t, `{"scheduler":{"maxQueueSize":0,"maxPerAgent":0,"maxInflight":0,"maxPerAgentInflight":0,"resultTTLSec":0,"workerCount":0}}`)
+	writeConfigForGet(t, `{"scheduler":{"maxQueueSize":0,"maxPerAgent":0,"maxInflight":0,"maxPerAgentInflight":0,"resultTTLSec":0,"workerCount":0,"maxBatchSize":0}}`)
 
 	defaults := DefaultSchedulerConfig()
 	cfg, _, err := LoadConfig()

@@ -27,7 +27,7 @@ func TestDefaultConfigTakesTheOperatorKnobsFromTheConfigPackage(t *testing.T) {
 	want := ConfigFromRuntime(config.DefaultSchedulerConfig())
 	got := DefaultConfig()
 
-	got.MaxBatchSize, got.WatcherInterval = want.MaxBatchSize, want.WatcherInterval
+	got.WatcherInterval = want.WatcherInterval
 	if got != want {
 		t.Errorf("DefaultConfig() operator knobs = %+v, want %+v from config.DefaultSchedulerConfig()", got, want)
 	}
@@ -50,6 +50,7 @@ var schedulerKnobFields = []string{
 	"ResultTTL",
 	"ResultTTLSec",
 	"WorkerCount",
+	"MaxBatchSize",
 }
 
 var knobLiteralAssignment = regexp.MustCompile(`\b(` + strings.Join(schedulerKnobFields, "|") + `)\s*[:=]\s*("|\d|-\d)`)
@@ -110,5 +111,24 @@ func TestSchedulerDefaultsAreSpelledInOnePlace(t *testing.T) {
 		if seen[field] == 0 {
 			t.Errorf("found no literal assignment of %s anywhere; the owner has been renamed or the pattern no longer matches, which makes this census vacuous", field)
 		}
+	}
+}
+
+// Exposing the knob must not move the value it produces, and the value must arrive
+// through the one conversion site rather than a second path. 50 is spelled out here
+// rather than read from the config package: comparing two derived sides holds whatever
+// both are changed to, and "the default is unchanged" is the claim being pinned.
+func TestBatchSizeIsUnchangedAndComesThroughTheConversionSite(t *testing.T) {
+	if got := DefaultConfig().MaxBatchSize; got != 50 {
+		t.Errorf("default maxBatchSize = %d, want the 50 this package produced before the knob was exposed", got)
+	}
+
+	runtime := config.DefaultSchedulerConfig()
+	runtime.MaxBatchSize = 5
+	if got := ConfigFromRuntime(runtime).MaxBatchSize; got != 5 {
+		t.Errorf("a configured maxBatchSize of 5 converted to %d; the conversion drops it, so config set writes a value nothing enforces", got)
+	}
+	if got := New(ConfigFromRuntime(runtime), nil).cfg.MaxBatchSize; got != 5 {
+		t.Errorf("the running scheduler enforces %d, want the configured 5", got)
 	}
 }

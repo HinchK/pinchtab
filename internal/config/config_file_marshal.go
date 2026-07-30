@@ -281,6 +281,7 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 			MaxPerAgentFlight: fc.Scheduler.MaxPerAgentFlight,
 			ResultTTLSec:      fc.Scheduler.ResultTTLSec,
 			WorkerCount:       fc.Scheduler.WorkerCount,
+			MaxBatchSize:      fc.Scheduler.MaxBatchSize,
 		},
 		Observability: observabilityFileConfigJSON{
 			Activity: activityConfigJSON{

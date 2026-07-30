@@ -782,6 +782,8 @@ func setSchedulerField(s *SchedulerFileConfig, field, value string) error {
 		return setIntPtrField(&s.ResultTTLSec, "scheduler.resultTTLSec", value)
 	case "workerCount":
 		return setIntPtrField(&s.WorkerCount, "scheduler.workerCount", value)
+	case "maxBatchSize":
+		return setIntPtrField(&s.MaxBatchSize, "scheduler.maxBatchSize", value)
 	default:
 		return fmt.Errorf("unknown field scheduler.%s", field)
 	}

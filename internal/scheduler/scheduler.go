@@ -32,10 +32,9 @@ type Config struct {
 
 // DefaultConfig returns safe defaults. The knobs an operator can set live in
 // internal/config, which owns their defaults and reports them through `config get`;
-// only the two this package does not expose as config keys are written here.
+// only the one this package does not expose as a config key is written here.
 func DefaultConfig() Config {
 	out := ConfigFromRuntime(config.DefaultSchedulerConfig())
-	out.MaxBatchSize = 50
 	out.WatcherInterval = 30 * time.Second
 	return out
 }
@@ -53,6 +52,7 @@ func ConfigFromRuntime(s config.SchedulerConfig) Config {
 		MaxPerAgentFlight: s.MaxPerAgentFlight,
 		ResultTTL:         time.Duration(s.ResultTTLSec) * time.Second,
 		WorkerCount:       s.WorkerCount,
+		MaxBatchSize:      s.MaxBatchSize,
 	}
 }
 

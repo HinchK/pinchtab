@@ -777,6 +777,9 @@
         },
         "workerCount": {
           "$ref": "#/definitions/nonNegativeNullableInteger"
+        },
+        "maxBatchSize": {
+          "$ref": "#/definitions/nonNegativeNullableInteger"
         }
       }
     },
