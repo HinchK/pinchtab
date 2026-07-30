@@ -126,6 +126,13 @@ func (h *Handlers) HandleRecordStop(w http.ResponseWriter, r *http.Request) {
 	owner := authenticatedOwner(r)
 	result, err := h.recorder.stop(owner, outputPath)
 	if err != nil {
+		// The path is RESERVED before stop, because stop needs it. Reserving now
+		// creates a real file, so a refused stop — no active recording, a foreign
+		// owner — has to give the name back or every rejected request leaves a
+		// 0-byte recording behind.
+		if outputPath != "" {
+			_ = os.Remove(outputPath)
+		}
 		httpx.ErrorCode(w, 400, "recording_error", err.Error(), false, nil)
 		return
 	}

@@ -283,3 +283,30 @@ func TestSnapshotFileBranchRoutesTheGeneratedNameThroughTheUniqueHelper(t *testi
 		t.Error("the plain write is no longer inside the caller-supplied-path branch")
 	}
 }
+
+// A reserved name must be given back when the stop it was reserved for is refused.
+// Reserving creates a real file, so without this every rejected /record/stop leaves a
+// 0-byte recording behind — which is how this showed up: a test with an empty StateDir
+// started writing into the package directory.
+func TestARefusedRecordStopLeavesNoReservedFile(t *testing.T) {
+	stateDir := t.TempDir()
+	h := New(&mockBridge{}, &config.RuntimeConfig{StateDir: stateDir}, nil, nil, nil)
+
+	req := httptest.NewRequest("POST", "/record/stop", nil)
+	w := httptest.NewRecorder()
+	h.HandleRecordStop(w, req)
+
+	if w.Code != 400 {
+		t.Fatalf("precondition: stopping with no active recording must be a 400, got %d", w.Code)
+	}
+	entries, err := os.ReadDir(filepath.Join(stateDir, "recordings"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		t.Errorf("a refused stop left %s behind", e.Name())
+	}
+}
