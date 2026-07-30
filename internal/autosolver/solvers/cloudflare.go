@@ -110,11 +110,12 @@ const (
 	cfClickJitterPx = 8
 )
 
-var cfRand = rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404 -- input humanisation, not cryptography.
-
 // cfClickJitter returns a signed offset within half the jitter window either way.
+// Solve runs inside HTTP handler goroutines and the auto-trigger's own goroutine, so
+// two solves can jitter at once: the draw comes from the top-level source, which is
+// safe for concurrent use, never a package-level *rand.Rand, which is not.
 func cfClickJitter() float64 {
-	return (cfRand.Float64() - 0.5) * cfClickJitterPx
+	return (rand.Float64() - 0.5) * cfClickJitterPx // #nosec G404 -- input humanisation, not cryptography.
 }
 
 func isCFChallenge(title string) bool {
