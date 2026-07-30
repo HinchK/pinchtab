@@ -145,6 +145,11 @@ func shellSegments(command string) []string {
 		case c == '\'' || c == '"':
 			quote = c
 			current.WriteByte(c)
+		case c == '&' && ((i > 0 && command[i-1] == '>') || (i+1 < len(command) && command[i+1] == '>')):
+			// An & adjacent to a > on either side is part of a redirect (2>&1,
+			// >&, &>, &>>), not a command separator — cutting there lands
+			// between the binary and its flags, and neither half fires the ban.
+			current.WriteByte(c)
 		case c == ';' || c == '|' || c == '&':
 			if (c == '|' || c == '&') && i+1 < len(command) && command[i+1] == c {
 				i++
@@ -354,6 +359,12 @@ func TestTheGotestsumGuardReadsCommandsNotLines(t *testing.T) {
 		{"a real invocation after an echoed mention", true, 1, `echo "running tests"; gotestsum --format=pkgname --hide-summary=output -- ./...`},
 		{"a real invocation after &&", true, 1, `echo running && gotestsum --format=pkgname --hide-summary=output`},
 		{"a real invocation piped into tee", true, 1, `gotestsum --format=pkgname --hide-summary=output -- ./... | tee unit.log`},
+		{"a 2>&1 redirect between the binary and the flag", true, 1, `gotestsum --format=pkgname 2>&1 --hide-summary=output ./...`},
+		{"an &> redirect between the binary and the flag", true, 1, `gotestsum --format=pkgname &>log --hide-summary=output ./...`},
+		{"an &>> redirect between the binary and the flag", true, 1, `gotestsum --format=pkgname &>>log --hide-summary=output ./...`},
+		{"a trailing 2>&1 piped into tee", true, 1, `gotestsum --format=pkgname --hide-summary=output -- ./... 2>&1 | tee unit.log`},
+		{"a trailing file redirect with 2>&1", true, 1, `gotestsum --format=pkgname --hide-summary=output -- ./... >>unit.log 2>&1`},
+		{"a command substitution in an argument", true, 1, `gotestsum --format=pkgname --hide-summary=output --jsonfile "$(mktemp -t unit)" -- ./...`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, offences := scanGotestsumCommands(tc.body)
@@ -370,6 +381,18 @@ func TestTheGotestsumGuardReadsCommandsNotLines(t *testing.T) {
 				t.Fatalf("offences = %v, want none", offences)
 			}
 		})
+	}
+}
+
+// The redirect correction must not stop splitting where splitting is right: a genuine
+// background & — not adjacent to a > — still separates two commands.
+func TestABackgroundAmpersandStillSeparates(t *testing.T) {
+	segments := shellSegments(`gotestsum --format=pkgname & echo done`)
+	if len(segments) != 2 {
+		t.Fatalf("segments = %q, want 2 — a bare background & must keep separating", segments)
+	}
+	if segments[0] != "gotestsum --format=pkgname" || segments[1] != "echo done" {
+		t.Fatalf("segments = %q, want the cut exactly at the background &", segments)
 	}
 }
 
