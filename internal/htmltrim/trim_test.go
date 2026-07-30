@@ -154,6 +154,25 @@ func TestTrimHTMLStillStripsWholeValueDataURIs(t *testing.T) {
 	}
 }
 
+// The data-URI pattern strips a URI, not the letters "data:" wherever they fall. Widening
+// it to match anywhere inside a value also let it match inside a word — "Metadata:" in page
+// text became "Meta", eating the interactive markup this helper exists to carry. A real URI
+// is preceded by a quote, paren, comma, '=' or whitespace, so those are what license the
+// strip. Reverting the delimiter guard corrupts every one of these.
+func TestTrimHTMLLeavesDataColonInsideAWordAlone(t *testing.T) {
+	for _, tc := range []struct{ name, html, want string }{
+		{"prose label", `<p>Metadata: 2024</p>`, `<p>Metadata: 2024</p>`},
+		{"word with a mime tail", `<td>metadata:image/png here</td>`, `<td>metadata:image/png here</td>`},
+		{"data- attribute is unaffected", `<div data-src="keep">x</div>`, `<div data-src="keep">x</div>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TrimHTML(tc.html); got != tc.want {
+				t.Errorf("TrimHTML(%q) = %q, want it unchanged — 'data:' inside a word is not a URI", tc.html, got)
+			}
+		})
+	}
+}
+
 // SVG is foreign content and nests legally, so a nested <svg> reaches this helper through
 // DOM serialisation. The non-greedy regex stopped at the FIRST </svg>, leaving the outer
 // element's path data and a stray closing tag in the prompt.

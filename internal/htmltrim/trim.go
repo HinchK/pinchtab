@@ -21,7 +21,7 @@ func TrimHTML(html string) string {
 	html = reStyle.ReplaceAllString(html, "")
 	html = reComment.ReplaceAllString(html, "")
 	html = stripSVG(html)
-	html = reDataURI.ReplaceAllString(html, "")
+	html = reDataURI.ReplaceAllString(html, "$1")
 	html = reWhitespace.ReplaceAllString(html, " ")
 	html = reNewlines.ReplaceAllString(html, "\n")
 
@@ -50,7 +50,12 @@ var (
 	// attribute, the quote or paren of a CSS url(), and whitespace for a srcset
 	// candidate. A comma is NOT a terminator — it separates a data URI's own metadata
 	// from its payload, so excluding it would leave every base64 blob behind.
-	reDataURI    = regexp.MustCompile(`(?i)data:[^"'()<>\s]*`)
+	//
+	// A URI only begins where one of those delimiters (or the start) precedes it,
+	// captured in group 1 and re-emitted on replace. Without that, "data:" matched
+	// inside a word — "Metadata:" became "Meta" — stripping the page text this helper
+	// exists to keep. A "data-" attribute is safe either way: it has a hyphen, not a colon.
+	reDataURI    = regexp.MustCompile(`(?i)(\A|["'(,=\s])data:[^"'()<>\s]*`)
 	reWhitespace = regexp.MustCompile(`[ \t]+`)
 	reNewlines   = regexp.MustCompile(`\n{3,}`)
 )
