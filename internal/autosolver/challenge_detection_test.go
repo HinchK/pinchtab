@@ -18,6 +18,37 @@ var cloudflareTriggerTitles = []string{
 	"Checking your browser before accessing",
 }
 
+// The struct-literal spelling above is not the only way to produce the field. A
+// block revived after the canonical call can set it by assignment instead, and
+// that shape is invisible twice over: unreachable, so no behavioural test sees
+// it, and colon-free, so a literal search does not either. Assignment is checked
+// only under the Intent-owning tree — internal/solver's Result has its own
+// ChallengeType field, and internal/bridge legitimately assigns THAT one.
+func assignsIntentChallengeType(path, src string) bool {
+	if !strings.Contains(path, "internal/autosolver/") {
+		return false
+	}
+	for _, line := range strings.Split(src, "\n") {
+		rest, found := cutAfter(line, "ChallengeType")
+		if !found {
+			continue
+		}
+		rest = strings.TrimLeft(rest, " \t")
+		if strings.HasPrefix(rest, "=") && !strings.HasPrefix(rest, "==") {
+			return true
+		}
+	}
+	return false
+}
+
+func cutAfter(line, token string) (string, bool) {
+	at := strings.Index(line, token)
+	if at < 0 {
+		return "", false
+	}
+	return line[at+len(token):], true
+}
+
 func TestChallengeTypeHasOneProducer(t *testing.T) {
 	root := filepath.Join("..", "..")
 	var producers []string
@@ -39,7 +70,8 @@ func TestChallengeTypeHasOneProducer(t *testing.T) {
 		if readErr != nil {
 			return readErr
 		}
-		if strings.Contains(string(body), "ChallengeType:") {
+		src := string(body)
+		if strings.Contains(src, "ChallengeType:") || assignsIntentChallengeType(filepath.ToSlash(path), src) {
 			producers = append(producers, filepath.ToSlash(filepath.Clean(path)))
 		}
 		return nil
