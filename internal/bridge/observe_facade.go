@@ -120,8 +120,8 @@ func matchStatusRange(status int, pattern string) bool {
 	return bridgeobserve.MatchStatusRange(status, pattern)
 }
 
-func GetResponseBodyDirect(ctx context.Context, requestID string) (string, bool, error) {
-	return bridgeobserve.GetResponseBodyDirect(ctx, requestID)
+func GetResponseBody(ctx context.Context, requestID string) (string, bool, error) {
+	return bridgeobserve.GetResponseBody(ctx, requestID)
 }
 
 func (b *Bridge) GetMemoryMetrics(tabID string) (*MemoryMetrics, error) {

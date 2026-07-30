@@ -335,7 +335,7 @@ func (h *Handlers) HandleNetworkByID(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case bodyMode == networkBodyModeLiveOnly:
-			body, base64Encoded, err := bridge.GetResponseBodyDirect(tabCtx, requestID)
+			body, base64Encoded, err := bridge.GetResponseBody(tabCtx, requestID)
 			if err != nil {
 				result["bodyError"] = err.Error()
 			} else {
@@ -348,7 +348,7 @@ func (h *Handlers) HandleNetworkByID(w http.ResponseWriter, r *http.Request) {
 		case entry.BodyPending || entry.BodyError != "":
 			populateRetainedBodyResult(result, entry)
 		default:
-			body, base64Encoded, err := bridge.GetResponseBodyDirect(tabCtx, requestID)
+			body, base64Encoded, err := bridge.GetResponseBody(tabCtx, requestID)
 			if err != nil {
 				result["bodyError"] = err.Error()
 			} else {

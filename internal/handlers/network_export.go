@@ -193,7 +193,7 @@ func resolveExportBody(ctx context.Context, nm *bridge.NetworkMonitor, entry bri
 	if entry.BodyRetained {
 		return clampExportBody(entry.ResponseBody, entry.Base64Encoded)
 	}
-	body, b64, _ := nm.GetResponseBody(ctx, entry.RequestID)
+	body, b64, _ := bridge.GetResponseBody(ctx, entry.RequestID)
 	return clampExportBody(body, b64)
 }
 

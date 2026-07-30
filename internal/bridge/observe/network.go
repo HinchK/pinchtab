@@ -9,7 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/config"
@@ -280,7 +279,7 @@ func (nm *NetworkMonitor) bodyRetentionEnabled() bool {
 
 // fetchResponseBody reads the body from the browser. Indirected so retention
 // policy can be exercised without a live CDP target.
-var fetchResponseBody = GetResponseBodyDirect
+var fetchResponseBody = GetResponseBody
 
 func skipRetainedBody(buf *NetworkBuffer, requestID, reason string) {
 	buf.Update(requestID, func(entry *NetworkEntry) {
@@ -394,13 +393,28 @@ func (nm *NetworkMonitor) IsTabIdle(tabID string) (bool, bool) {
 	return count == 0, true
 }
 
-func (nm *NetworkMonitor) GetResponseBody(tabCtx context.Context, requestID string) (string, bool, error) {
+// GetResponseBody is the only response-body fetcher. It reads Network.getResponseBody
+// as raw JSON so the body and the base64Encoded flag describing it come from the same
+// call and travel together.
+//
+// It deliberately does NOT use cdproto's typed constructor plus Do: that helper
+// base64-decodes the payload inside the dependency and returns []byte, so by the time
+// it returns the flag is gone and the string holds raw bytes. A second fetcher built
+// that way reported base64Encoded=false for every response, which meant a binary body
+// was retained as a string of U+FFFD once JSON-encoded — and made clampRetainedBody's
+// drop-and-mark branch unreachable in production, since nothing ever set the flag it
+// tests.
+func GetResponseBody(ctx context.Context, requestID string) (string, bool, error) {
 	var body string
 	var base64Encoded bool
 
-	err := chromedp.Run(tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		executor := chromedp.FromContext(ctx).Target
+		if executor == nil {
+			return fmt.Errorf("no CDP executor available")
+		}
 		var result json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "Network.getResponseBody", map[string]any{
+		if err := executor.Execute(ctx, "Network.getResponseBody", map[string]any{
 			"requestId": requestID,
 		}, &result); err != nil {
 			return err
@@ -414,28 +428,6 @@ func (nm *NetworkMonitor) GetResponseBody(tabCtx context.Context, requestID stri
 		}
 		body = resp.Body
 		base64Encoded = resp.Base64Encoded
-		return nil
-	}))
-
-	return body, base64Encoded, err
-}
-
-func GetResponseBodyDirect(ctx context.Context, requestID string) (string, bool, error) {
-	var body string
-	var base64Encoded bool
-
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		executor := chromedp.FromContext(ctx).Target
-		if executor == nil {
-			return fmt.Errorf("no CDP executor available")
-		}
-		params := network.GetResponseBody(network.RequestID(requestID))
-		resp, err := params.Do(cdp.WithExecutor(ctx, executor))
-		if err != nil {
-			return err
-		}
-		body = string(resp)
-		base64Encoded = false
 		return nil
 	}))
 
