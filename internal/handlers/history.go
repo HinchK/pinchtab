@@ -38,6 +38,9 @@ func (h *Handlers) handleHistoryNav(w http.ResponseWriter, r *http.Request,
 		WriteTabContextError(w, err, 404)
 		return
 	}
+	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedID) {
+		return
+	}
 	if err := navigate(ctx, resolvedID, dismissBanners); err != nil {
 		httpx.Error(w, 500, err)
 		return

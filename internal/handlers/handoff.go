@@ -48,6 +48,37 @@ func (h *Handlers) handoffErrorDetails(tabID string) map[string]any {
 	return details
 }
 
+func (h *Handlers) enforceTabNotPausedForHandoff(tabID string) error {
+	if tabID == "" {
+		return nil
+	}
+	ctrl, ok := h.handoffController()
+	if !ok {
+		return nil
+	}
+	state, exists := ctrl.TabHandoffState(tabID)
+	if !exists || state.Status != "paused_handoff" {
+		return nil
+	}
+	if state.Reason != "" {
+		return fmt.Errorf("tab %s is paused for human handoff (%s)", tabID, state.Reason)
+	}
+	return fmt.Errorf("tab %s is paused for human handoff", tabID)
+}
+
+// enforceTabNotPausedForHandoffOrRespond is the single writer of the paused-tab
+// refusal: every endpoint that mutates what the human is looking at calls it, so
+// a client sees one status, code and remedy hint regardless of which one it hit.
+// Reports ok=false once the 409 has been written.
+func (h *Handlers) enforceTabNotPausedForHandoffOrRespond(w http.ResponseWriter, tabID string) bool {
+	err := h.enforceTabNotPausedForHandoff(tabID)
+	if err == nil {
+		return true
+	}
+	httpx.ErrorCode(w, http.StatusConflict, "tab_paused_handoff", err.Error(), false, h.handoffErrorDetails(tabID))
+	return false
+}
+
 // pauseTabForHandoff marks a tab as paused for human handoff and broadcasts
 // a dashboard event. source identifies what triggered the handoff
 // (e.g. "autosolver", "manual"). Returns the applied reason.

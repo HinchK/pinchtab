@@ -83,6 +83,9 @@ func (h *Handlers) HandleSolve(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
 		return
 	}
+	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedTabID) {
+		return
+	}
 
 	action := "solve"
 	if req.Solver != "" {

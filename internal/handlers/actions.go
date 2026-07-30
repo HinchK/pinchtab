@@ -47,24 +47,6 @@ func (h *Handlers) enforceTabLease(tabID, owner string) error {
 	return nil
 }
 
-func (h *Handlers) enforceTabNotPausedForHandoff(tabID string) error {
-	if tabID == "" {
-		return nil
-	}
-	ctrl, ok := h.handoffController()
-	if !ok {
-		return nil
-	}
-	state, exists := ctrl.TabHandoffState(tabID)
-	if !exists || state.Status != "paused_handoff" {
-		return nil
-	}
-	if state.Reason != "" {
-		return fmt.Errorf("tab %s is paused for human handoff (%s)", tabID, state.Reason)
-	}
-	return fmt.Errorf("tab %s is paused for human handoff", tabID)
-}
-
 // rejectMixedBrowsers returns the first action's browser as the request browser,
 // rejecting (with a 400) any later action that names a different browser, since a
 // batch/macro executes on a single browser. noun/field tune the error wording
@@ -324,8 +306,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
 			return
 		}
-		if err := h.enforceTabNotPausedForHandoff(resolvedTabID); err != nil {
-			httpx.ErrorCode(w, 409, "tab_paused_handoff", err.Error(), false, h.handoffErrorDetails(resolvedTabID))
+		if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedTabID) {
 			return
 		}
 		defer h.armAutoCloseIfEnabled(resolvedTabID)

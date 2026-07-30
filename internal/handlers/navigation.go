@@ -433,6 +433,9 @@ func (h *Handlers) executeNavigate(w http.ResponseWriter, r *http.Request, req n
 		WriteTabContextError(w, err, 404)
 		return
 	}
+	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedTabID) {
+		return
+	}
 	// Navigate signals fresh work on this tab — drop any pending auto-close
 	// timer; the next read/action will re-arm.
 	h.cancelAutoCloseIfEnabled(resolvedTabID)

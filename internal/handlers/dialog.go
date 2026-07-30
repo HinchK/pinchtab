@@ -39,6 +39,10 @@ func (h *Handlers) HandleDialog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedID) {
+		return
+	}
+
 	accept := req.Action == "accept"
 	h.handleDialogAction(w, r, ctx, resolvedID, accept, req.Text)
 }
