@@ -19,7 +19,7 @@ import (
 // zero dependency on chromedp.
 type Cloudflare struct{}
 
-func (s *Cloudflare) Name() string  { return "cloudflare" }
+func (s *Cloudflare) Name() string  { return autosolver.CloudflareSolverName }
 func (s *Cloudflare) Priority() int { return 10 }
 
 // CanHandle checks for Cloudflare challenge indicators in the page title.

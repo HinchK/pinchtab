@@ -4,8 +4,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/pinchtab/pinchtab/internal/autosolver"
 )
 
 // CurrentConfigVersion is bumped when config schema changes require migration or wizard re-run.
@@ -155,15 +153,9 @@ func DefaultFileConfig() FileConfig {
 	dashboardSessionElevationWindowSec := 15 * 60
 	dashboardSessionPersistElevationAcrossRestart := false
 	dashboardSessionRequireElevation := false
-	autoSolverEnabled := false
-	autoSolverAutoTrigger := true
-	autoSolverTriggerOnNavigate := true
-	autoSolverTriggerOnAction := true
-	autoSolverMaxAttempts := 8
-	autoSolverSolverTimeoutSec := 30
-	autoSolverRetryBaseDelayMs := 500
-	autoSolverRetryMaxDelayMs := 10000
-	autoSolverLLMFallback := false
+	// Locals only so the shared defaults can be pointer-wrapped; the values come
+	// from defaultAutoSolverConfig, not from a second transcription of them.
+	autoSolver := defaultAutoSolverConfig()
 	return FileConfig{
 		Schema:        CurrentConfigSchemaURL(),
 		ConfigVersion: CurrentConfigVersion,
@@ -270,16 +262,16 @@ func DefaultFileConfig() FileConfig {
 			},
 		},
 		AutoSolver: AutoSolverFileConfig{
-			Enabled:           &autoSolverEnabled,
-			AutoTrigger:       &autoSolverAutoTrigger,
-			TriggerOnNavigate: &autoSolverTriggerOnNavigate,
-			TriggerOnAction:   &autoSolverTriggerOnAction,
-			MaxAttempts:       &autoSolverMaxAttempts,
-			SolverTimeoutSec:  &autoSolverSolverTimeoutSec,
-			RetryBaseDelayMs:  &autoSolverRetryBaseDelayMs,
-			RetryMaxDelayMs:   &autoSolverRetryMaxDelayMs,
-			Solvers:           autosolver.DefaultConfig().Solvers,
-			LLMFallback:       &autoSolverLLMFallback,
+			Enabled:           &autoSolver.Enabled,
+			AutoTrigger:       &autoSolver.AutoTrigger,
+			TriggerOnNavigate: &autoSolver.TriggerOnNavigate,
+			TriggerOnAction:   &autoSolver.TriggerOnAction,
+			MaxAttempts:       &autoSolver.MaxAttempts,
+			SolverTimeoutSec:  &autoSolver.SolverTimeoutSec,
+			RetryBaseDelayMs:  &autoSolver.RetryBaseDelayMs,
+			RetryMaxDelayMs:   &autoSolver.RetryMaxDelayMs,
+			Solvers:           autoSolver.Solvers,
+			LLMFallback:       &autoSolver.LLMFallback,
 		},
 	}
 }

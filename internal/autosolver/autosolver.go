@@ -124,7 +124,7 @@ func (as *AutoSolver) Solve(ctx context.Context, page Page, executor ActionExecu
 			solved, entry = as.tryLLM(ctx, page, executor, result.History)
 			appendAttempt(result, entry)
 			if solved {
-				return as.finalizeSuccess(result, page, "llm", start), nil
+				return as.finalizeSuccess(result, page, llmFallbackSolverLabel, start), nil
 			}
 		}
 	}
@@ -745,9 +745,17 @@ func resolveSelectorCenter(ctx context.Context, executor ActionExecutor, selecto
 	return coords.X, coords.Y, nil
 }
 
+// llmFallbackSolverLabel names the LLM fallback stage in an AttemptEntry and in the
+// success result. It is deliberately NOT one of the solver-name constants beside
+// SemanticSolverName: those are config-selectable — catalog collects them, so config
+// validation accepts them in autoSolver.solvers — while this is only an attempt-entry
+// label. Moving it into that group would invite adding it to the catalog, at which
+// point autoSolver.solvers: ["llm"] would validate and then match no solver at all.
+const llmFallbackSolverLabel = "llm"
+
 func (as *AutoSolver) tryLLM(ctx context.Context, page Page, executor ActionExecutor, history []AttemptEntry) (bool, *AttemptEntry) {
 	llmStart := time.Now()
-	entry := &AttemptEntry{Solver: "llm"}
+	entry := &AttemptEntry{Solver: llmFallbackSolverLabel}
 
 	html, err := page.HTML()
 	if err != nil {

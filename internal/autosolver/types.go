@@ -8,6 +8,13 @@ import "time"
 // among the names autoSolver.solvers accepts.
 const SemanticSolverName = "semantic"
 
+// CloudflareSolverName is the registry name solvers.Cloudflare answers to. It
+// lives beside SemanticSolverName because both are CONFIG-SELECTABLE: catalog
+// collects them, so both are legal values of autoSolver.solvers. The LLM
+// fallback's "llm" label is deliberately not in this group — see
+// llmFallbackSolverLabel.
+const CloudflareSolverName = "cloudflare"
+
 // IntentType classifies the detected page state.
 type IntentType string
 
@@ -160,13 +167,17 @@ type Config struct {
 	Credentials    Credentials   `json:"-"`              // Never serialised: redacted secrets
 }
 
-// DefaultConfig returns a Config with sensible defaults.
+// DefaultConfig returns a Config with sensible defaults. Enabled is false to match
+// the config default: normalizedAutoSolverConfig overwrites Enabled unconditionally,
+// so the only path where this value is observable is its h.Config == nil early
+// return, and a core default of true would silently enable solving on the one
+// configuration-free path while every configured path leaves it off.
 func DefaultConfig() Config {
 	return Config{
-		Enabled:        true,
+		Enabled:        false,
 		MaxAttempts:    8,
 		SolverTimeout:  30 * time.Second,
-		Solvers:        []string{"cloudflare", SemanticSolverName},
+		Solvers:        []string{CloudflareSolverName, SemanticSolverName},
 		LLMFallback:    false,
 		RetryBaseDelay: 500 * time.Millisecond,
 		RetryMaxDelay:  10 * time.Second,

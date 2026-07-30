@@ -161,6 +161,29 @@ func EmitLoadDiagnostics(diags []LoadDiagnostic) {
 // LoadConfig builds the RuntimeConfig (env > file > defaults) with no logging and
 // no os.Exit. It returns the config, ordered diagnostics for the caller to log,
 // and a fatal error (e.g. missing port) for the caller to act on.
+// defaultAutoSolverConfig is the single owner of the autoSolver section's defaults.
+// LoadConfig assigns it directly and DefaultFileConfig pointer-wraps its fields —
+// the plain/pointer split stays, because pointer-wrapping is how "absent from file"
+// remains distinguishable from "explicitly false", but the VALUES are written once.
+// Everything the core also owns is read from autosolver.DefaultConfig() with the unit
+// conversion in this one place; only the three trigger flags, which the core has no
+// counterpart for, are literals here.
+func defaultAutoSolverConfig() AutoSolverConfig {
+	core := autosolver.DefaultConfig()
+	return AutoSolverConfig{
+		Enabled:           core.Enabled,
+		AutoTrigger:       true,
+		TriggerOnNavigate: true,
+		TriggerOnAction:   true,
+		MaxAttempts:       core.MaxAttempts,
+		SolverTimeoutSec:  int(core.SolverTimeout / time.Second),
+		RetryBaseDelayMs:  int(core.RetryBaseDelay / time.Millisecond),
+		RetryMaxDelayMs:   int(core.RetryMaxDelay / time.Millisecond),
+		Solvers:           core.Solvers,
+		LLMFallback:       core.LLMFallback,
+	}
+}
+
 func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 	cfg := &RuntimeConfig{
 		Bind:              "127.0.0.1",
@@ -271,18 +294,7 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 			},
 		},
 
-		AutoSolver: AutoSolverConfig{
-			Enabled:           false,
-			AutoTrigger:       true,
-			TriggerOnNavigate: true,
-			TriggerOnAction:   true,
-			MaxAttempts:       8,
-			SolverTimeoutSec:  30,
-			RetryBaseDelayMs:  500,
-			RetryMaxDelayMs:   10000,
-			Solvers:           autosolver.DefaultConfig().Solvers,
-			LLMFallback:       false,
-		},
+		AutoSolver: defaultAutoSolverConfig(),
 	}
 	finalizeProfileConfig(cfg)
 
