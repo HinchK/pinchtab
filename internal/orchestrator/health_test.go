@@ -11,9 +11,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
 
 type exitingMockCmd struct {
@@ -640,5 +642,64 @@ func TestMonitor_ChildExitAfterRunningTransitionsToStopped(t *testing.T) {
 	o.mu.RUnlock()
 	if status != "stopped" {
 		t.Fatalf("status after child exit = %q, want stopped", status)
+	}
+}
+
+// compactBody cuts arbitrary remote bytes into an operator-facing error message. It used
+// to slice at a raw byte offset, so any non-ASCII body landed mid-rune and the message
+// carried U+FFFD where the server's own words should be. The fixture puts a multi-byte
+// rune ACROSS the old cut offset on purpose: an ASCII body cannot tell the two
+// implementations apart, which is how this survived a census.
+func TestCompactBodyCutsOnARuneBoundary(t *testing.T) {
+	// An all-euro body puts a rune boundary only every three bytes, so a naive cut lands
+	// mid-rune unless the budget happens to be a multiple of three. Both cut points are
+	// checked, because the marked form cuts at budget-minus-marker, not at the budget.
+	const runeWidth = len("€")
+	for _, cut := range []int{maxCompactBodyBytes, maxCompactBodyBytes - len(sanitize.TruncationSuffix)} {
+		if cut%runeWidth == 0 {
+			t.Fatalf("budget %d puts cut %d on a rune boundary, so this fixture cannot tell a naive cut from a rune-safe one; widen the fixture rune",
+				maxCompactBodyBytes, cut)
+		}
+	}
+	body := strings.Repeat("€", maxCompactBodyBytes)
+
+	got := compactBody([]byte(body))
+
+	if !utf8.ValidString(got) {
+		t.Errorf("compactBody returned invalid UTF-8: %q", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Errorf("compactBody returned U+FFFD, so the cut split a rune: %q", got)
+	}
+	if !strings.HasSuffix(got, sanitize.TruncationSuffix) {
+		t.Errorf("compactBody returned %q without the truncation marker; an operator cannot tell a cut body from a short one", got)
+	}
+	// A rune-safe cut honours the budget as a CEILING, so bound both sides: over means
+	// the marker is not counted inside the budget, far under means the cut fires early.
+	if len(got) > maxCompactBodyBytes {
+		t.Errorf("compactBody returned %d bytes, over the %d budget", len(got), maxCompactBodyBytes)
+	}
+	if len(got) < maxCompactBodyBytes-utf8.UTFMax {
+		t.Errorf("compactBody returned only %d bytes for a %d budget; the cut fires too early", len(got), maxCompactBodyBytes)
+	}
+}
+
+func TestCompactBodyLeavesShortAndEmptyBodiesAlone(t *testing.T) {
+	short := "instance refused: profile is locked"
+	if got := compactBody([]byte(short)); got != short {
+		t.Errorf("compactBody(%q) = %q, want it unchanged", short, got)
+	}
+	if got := compactBody([]byte("  " + short + "\n")); got != short {
+		t.Errorf("compactBody did not trim surrounding space: %q", got)
+	}
+	// Exactly at the budget is not truncation, so no marker.
+	atCap := strings.Repeat("c", maxCompactBodyBytes)
+	if got := compactBody([]byte(atCap)); got != atCap {
+		t.Errorf("a body exactly at the budget was altered: %d bytes in, %d out", len(atCap), len(got))
+	}
+	for _, empty := range []string{"", "   ", "\n\t "} {
+		if got := compactBody([]byte(empty)); got != "<empty>" {
+			t.Errorf("compactBody(%q) = %q, want <empty>", empty, got)
+		}
 	}
 }

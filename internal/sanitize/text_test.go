@@ -130,3 +130,43 @@ func TestPrefixUTF8BytesCutsOnRuneBoundaryWithoutMarker(t *testing.T) {
 		})
 	}
 }
+
+// The helper's own small-budget branch returns TruncationSuffix[:maxBytes] — a raw byte
+// slice of a constant, which is the very rule this package exists to enforce. It is safe
+// only while TruncationSuffix is ASCII: spell it as the single-rune "…" and a budget of
+// 1 or 2 emits a broken rune from inside the helper every caller trusts. Swept across
+// every budget rather than at hand-picked ones, because the defect lives at exactly the
+// budgets nobody writes a case for.
+func TestTruncateUTF8BytesNeverEmitsABrokenRuneAtAnyBudget(t *testing.T) {
+	inputs := []string{
+		"",
+		"ascii only",
+		"héllo wörld",
+		"日本語のテキストです",
+		"🙂🙃🙂 emoji run",
+		strings.Repeat("é", 40),
+	}
+
+	var checked int
+	for _, in := range inputs {
+		for maxBytes := -2; maxBytes <= len(in)+4; maxBytes++ {
+			got := TruncateUTF8Bytes(in, maxBytes)
+			checked++
+			if !utf8.ValidString(got) {
+				t.Errorf("TruncateUTF8Bytes(%q, %d) = %q, which is not valid UTF-8", in, maxBytes, got)
+			}
+			if maxBytes > 0 && len(got) > maxBytes {
+				t.Errorf("TruncateUTF8Bytes(%q, %d) returned %d bytes, over budget", in, maxBytes, len(got))
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no budgets exercised; this sweep would pass vacuously")
+	}
+
+	// The floor for the branch above: it is only reachable while the suffix is short
+	// enough for a budget to fall inside it.
+	if len(TruncationSuffix) == 0 {
+		t.Error("TruncationSuffix is empty, so the small-budget branch this sweep guards is unreachable")
+	}
+}
