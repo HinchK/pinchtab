@@ -70,24 +70,43 @@ func serveInspect(t *testing.T, h *Handlers, index int, selectorValue string) *h
 // A selector that matched nothing is the caller's problem, so it must read as 404 on
 // every read surface — asserted through the HANDLER, because the mapper being right is
 // what the previous test proved while five callers never reached it.
+//
+// Both empty-match shapes are driven: a bare selector nothing matches, and a positional
+// wrapper over one. They are separate branches of the refusal — the wrapper case counts
+// the base's matches before it can tell an empty set from a wrong index — so dropping the
+// sentinel from either is invisible to a test that drives only the other.
+//
+// /count answers differently, and correctly: asked how many match a bare selector it says
+// zero, which is a number, not a refusal. Asked for a WRAPPED element it is resolving one
+// element again, so the miss is a miss. (A wrapper over a css selector nothing matches
+// still counts 0 rather than refusing — a pre-existing inconsistency in count's
+// single-node path, not one this change introduces.)
 func TestASemanticSelectorThatMatchesNothingIs404OnEveryInspectEndpoint(t *testing.T) {
 	for index, endpoint := range inspectEndpoints {
-		t.Run(endpoint.name, func(t *testing.T) {
-			w := serveInspect(t, semanticInspectHandlers(t, true), index, "role:slider Volume")
+		for _, tc := range []struct {
+			selector   string
+			countIsNum bool
+		}{
+			{selector: "role:slider Volume", countIsNum: true},
+			{selector: "nth:0:role:slider Volume"},
+		} {
+			t.Run(endpoint.name+" "+tc.selector, func(t *testing.T) {
+				w := serveInspect(t, semanticInspectHandlers(t, true), index, tc.selector)
 
-			if endpoint.countsMatches {
-				if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"count":0`) {
-					t.Fatalf("status = %d body %s, want 200 with a count of 0 — zero is the answer to how many matched", w.Code, w.Body.String())
+				if endpoint.countsMatches && tc.countIsNum {
+					if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"count":0`) {
+						t.Fatalf("status = %d body %s, want 200 with a count of 0 — zero is the answer to how many matched", w.Code, w.Body.String())
+					}
+					return
 				}
-				return
-			}
-			if w.Code != http.StatusNotFound {
-				t.Fatalf("status = %d, want 404; a 5xx tells an agent to retry a page that is fine (body %s)", w.Code, w.Body.String())
-			}
-			if !strings.Contains(w.Body.String(), "no matching element found") {
-				t.Errorf("body %s does not say the selector matched nothing", w.Body.String())
-			}
-		})
+				if w.Code != http.StatusNotFound {
+					t.Fatalf("status = %d, want 404; a 5xx tells an agent to retry a page that is fine (body %s)", w.Code, w.Body.String())
+				}
+				if !strings.Contains(w.Body.String(), "no matching element found") {
+					t.Errorf("body %s does not say the selector matched nothing", w.Body.String())
+				}
+			})
+		}
 	}
 }
 
