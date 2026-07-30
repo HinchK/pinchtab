@@ -17,6 +17,8 @@ interface Props {
   onStop?: () => void;
   onSave?: (name: string, useWhen: string) => void;
   onDelete?: () => void;
+  deleteError?: string | null;
+  deleteNotice?: string | null;
 }
 
 type TabId = "profile" | "live" | "tabs" | "logs";
@@ -28,6 +30,8 @@ export default function ProfileDetailsPanel({
   onStop,
   onSave,
   onDelete,
+  deleteError,
+  deleteNotice,
 }: Props) {
   const [activeTab, setActiveTab] = useState<TabId>("profile");
   const [tabs, setTabs] = useState<InstanceTab[]>([]);
@@ -114,6 +118,8 @@ export default function ProfileDetailsPanel({
               onStop={onStop || (() => {})}
               onSave={handleSave}
               onDelete={onDelete || (() => {})}
+              deleteError={deleteError}
+              deleteNotice={deleteNotice}
               isSaveDisabled={!formValues.name.trim() || !hasChanges}
             />
           }

@@ -93,6 +93,8 @@ export default function ProfilesPage() {
     loadProfiles,
     handleStop,
     handleDelete,
+    deleteError,
+    deleteNotice,
     handleSave,
   } = useProfilesController();
   const [showCreate, setShowCreate] = useState(false);
@@ -190,6 +192,8 @@ export default function ProfilesPage() {
                   }
                   onSave={handleSave}
                   onDelete={handleDelete}
+                  deleteError={deleteError}
+                  deleteNotice={deleteNotice}
                 />
               </div>
             </div>

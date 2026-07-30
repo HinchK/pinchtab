@@ -35,6 +35,8 @@ export function useProfilesController() {
   const [selectedProfileKey, setSelectedProfileKey] = useState<string | null>(
     null,
   );
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
 
   const locationState = location.state as ProfilesLocationState | null;
   const routeSelectedProfileKey = locationState?.selectedProfileKey ?? null;
@@ -140,14 +142,23 @@ export function useProfilesController() {
     }
   };
 
+  // The outcome lives HERE, not in the toolbar: deletion moves the selection to
+  // a surviving profile, which remounts the toolbar and would take any
+  // component-local notice or error with it. A refusal the user cannot see —
+  // the backend answers 409 for an in-use profile — is barely better than the
+  // silent success it replaced, so console.error alone is not handling.
   const handleDelete = async () => {
     if (!selectedProfile?.id) return;
+    setDeleteError(null);
+    setDeleteNotice(null);
+    const name = selectedProfile.name;
     try {
       await api.deleteProfile(selectedProfile.id);
-      setSelectedProfileKey(null);
+      setDeleteNotice(`Profile "${name}" deleted`);
+      setTimeout(() => setDeleteNotice(null), 4000);
       loadProfiles();
     } catch (e) {
-      console.error("Failed to delete profile", e);
+      setDeleteError(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -177,6 +188,8 @@ export function useProfilesController() {
     loadProfiles,
     handleStop,
     handleDelete,
+    deleteError,
+    deleteNotice,
     handleSave,
   };
 }

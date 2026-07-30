@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router-dom";
 import ProfilesPage from "./ProfilesPage";
+import * as api from "../services/api";
 import { useAppStore } from "../stores/useAppStore";
 import type { Instance, Profile } from "../generated/types";
 
@@ -308,5 +309,110 @@ describe("ProfilesPage classification groups", () => {
     ]) {
       expect(within(sidebar).queryByText(label)).toBeNull();
     }
+  });
+});
+
+// One unconfirmed click used to destroy a profile directory with no undo, and a failed
+// delete died in console.error — so a 409 refusal from the in-use guard reached the user
+// as nothing at all. These tests pin the confirmation, both failure paths, the visible
+// success, and the running-profile withholding.
+describe("ProfilesPage delete safety", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAppStore.setState({
+      profiles,
+      profilesLoading: false,
+      instances,
+    });
+  });
+
+  async function openDeleteConfirmation() {
+    renderProfilesPage();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Profile: beta/i }),
+      ).toBeInTheDocument();
+    });
+    await clickSidebarProfile("alpha");
+    const detailPanel = getDetailPanel()!;
+    await userEvent.click(
+      within(detailPanel).getByRole("button", { name: "Delete" }),
+    );
+    expect(screen.getByText(/Delete profile "alpha"\?/)).toBeInTheDocument();
+  }
+
+  it("dismissing the confirmation issues no request", async () => {
+    await openDeleteConfirmation();
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(api.deleteProfile).not.toHaveBeenCalled();
+    expect(screen.queryByText(/Delete profile "alpha"\?/)).toBeNull();
+  });
+
+  it("confirming deletes and visibly confirms the success", async () => {
+    vi.mocked(api.deleteProfile).mockResolvedValue(undefined);
+    vi.mocked(api.fetchProfiles).mockResolvedValue([profiles[1]]);
+    await openDeleteConfirmation();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete profile" }),
+    );
+
+    expect(api.deleteProfile).toHaveBeenCalledWith("prof_alpha");
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        'Profile "alpha" deleted',
+      );
+    });
+  });
+
+  it("renders the server's 409 refusal instead of swallowing it", async () => {
+    vi.mocked(api.deleteProfile).mockRejectedValue(
+      new Error('profile "alpha" is in use by inst_x; delete with force=true'),
+    );
+    await openDeleteConfirmation();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete profile" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/in use by inst_x/);
+    });
+    expect(
+      screen.getByRole("button", { name: /Profile: alpha/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders a 500 failure through the same path", async () => {
+    vi.mocked(api.deleteProfile).mockRejectedValue(
+      new Error("HTTP 500: something broke"),
+    );
+    await openDeleteConfirmation();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete profile" }),
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/something broke/);
+    });
+  });
+
+  it("does not offer Delete for a profile reporting running", async () => {
+    renderProfilesPage();
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: /Profile: beta/i }),
+      ).toBeInTheDocument();
+    });
+
+    const detailPanel = getDetailPanel()!;
+    expect(
+      within(detailPanel).queryByRole("button", { name: "Delete" }),
+    ).toBeNull();
+    // The withholding fails safe: alpha reports running false and keeps the
+    // confirmed delete path, asserted by the dismissal test above.
   });
 });
