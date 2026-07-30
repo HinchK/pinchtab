@@ -20,7 +20,11 @@ Notes:
 
 - in bridge mode, `/health` reports bridge health and tab count
 - in full server mode, `/health` reports dashboard health, auth state, and instance count
-- `/metrics` proxies to the bridge instance (per-instance runtime metrics)
+- `/metrics` reports the counters of the process answering it: in full server mode the front
+  door's own request counters (auth rejections and unrouted paths included), in bridge mode
+  the bridge's. Every response names its `layer`, and the layers are never summed — read one
+  instance's counters at `/instances/{id}/metrics`. See
+  [reference/metrics.md](reference/metrics.md) for the layer table.
 - `/api/metrics` in full server mode is a server-level metrics snapshot (aggregated)
 
 ## Dashboard Auth And Config
@@ -709,6 +713,7 @@ GET  /instances
 GET  /instances/{id}
 GET  /instances/tabs
 GET  /instances/metrics
+GET  /instances/{id}/metrics
 POST /instances/start
 POST /instances/launch
 POST /instances/attach
