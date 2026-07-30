@@ -442,6 +442,14 @@ them take effect — and PinchTab reports the incomplete block on each config re
 or write until a server is set. Clearing `browser.proxy.server` turns the proxy
 off and leaves the other values on disk for the next server.
 
+`browser.proxy.username` and `password` are the exception, and it is not about
+the server: each requires the other, so `config set` aborts on either one alone
+whichever order you try. Send the pair in one write instead:
+
+```bash
+pinchtab config patch '{"browser":{"proxy":{"username":"bob","password":"s3cret"}}}'
+```
+
 `browser.proxy.geo` is a CloakBrowser fingerprint-alignment hint. When a proxy
 server and geo block are configured for a CloakBrowser target, PinchTab maps the
 geo values into native CloakBrowser fingerprint flags unless the target already
