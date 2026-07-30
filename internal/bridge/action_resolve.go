@@ -85,6 +85,12 @@ func IsolatedNodeObjectID(ctx context.Context, backendNodeID int64) (string, err
 	return cdptk.IsolatedNodeObjectID(ctx, backendNodeID)
 }
 
+// IsolatedNodeObjectIDs resolves several nodes against one isolated context, for an
+// operation whose handles are compared in a single call.
+func IsolatedNodeObjectIDs(ctx context.Context, backendNodeIDs ...int64) ([]string, error) {
+	return cdptk.IsolatedNodeObjectIDs(ctx, backendNodeIDs...)
+}
+
 func frameDocumentObjectID(ctx context.Context, frameID string) (string, error) {
 	execID, err := isolatedExecutionContextID(ctx, frameID)
 	if err != nil {
@@ -367,14 +373,11 @@ func BackendNodeWithinScope(ctx context.Context, scopeBackendNodeID, targetBacke
 		return false, nil
 	}
 
-	scopeObjectID, err := IsolatedNodeObjectID(ctx, scopeBackendNodeID)
+	objectIDs, err := IsolatedNodeObjectIDs(ctx, scopeBackendNodeID, targetBackendNodeID)
 	if err != nil {
-		return false, fmt.Errorf("resolve scope node: %w", err)
+		return false, fmt.Errorf("resolve scope and target nodes: %w", err)
 	}
-	targetObjectID, err := IsolatedNodeObjectID(ctx, targetBackendNodeID)
-	if err != nil {
-		return false, fmt.Errorf("resolve target node: %w", err)
-	}
+	scopeObjectID, targetObjectID := objectIDs[0], objectIDs[1]
 
 	var contains bool
 	err = chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {

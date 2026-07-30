@@ -30,11 +30,40 @@ const isolatedWorldName = "pinchtab-node-scope"
 // context gets an error rather than a main-world handle, so the boundary fails
 // closed.
 func IsolatedNodeObjectID(ctx context.Context, backendNodeID int64) (string, error) {
-	execID, err := topFrameIsolatedContextID(ctx)
+	objectIDs, err := IsolatedNodeObjectIDs(ctx, backendNodeID)
 	if err != nil {
 		return "", err
 	}
+	return objectIDs[0], nil
+}
 
+// IsolatedNodeObjectIDs resolves several backend node ids against ONE isolated
+// context, so an operation comparing two nodes pays for the frame tree read and
+// the world creation once instead of once per node. Handles it returns are
+// therefore usable in the same Runtime.callFunctionOn, which a per-node resolve
+// only guaranteed by accident.
+func IsolatedNodeObjectIDs(ctx context.Context, backendNodeIDs ...int64) ([]string, error) {
+	if len(backendNodeIDs) == 0 {
+		return nil, fmt.Errorf("no backend node ids to resolve")
+	}
+
+	execID, err := topFrameIsolatedContextID(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	objectIDs := make([]string, 0, len(backendNodeIDs))
+	for _, backendNodeID := range backendNodeIDs {
+		objectID, err := resolveNodeInContext(ctx, backendNodeID, execID)
+		if err != nil {
+			return nil, err
+		}
+		objectIDs = append(objectIDs, objectID)
+	}
+	return objectIDs, nil
+}
+
+func resolveNodeInContext(ctx context.Context, backendNodeID, execID int64) (string, error) {
 	var raw json.RawMessage
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
