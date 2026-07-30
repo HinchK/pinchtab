@@ -576,3 +576,111 @@ func TestPersonaBrandVersionsAreMajorInBrandsAndFullInTheVersionList(t *testing.
 		}
 	}
 }
+
+// The architecture a persona advertises must agree with the architecture its own UA
+// claims. hostArchitecture-style host reads are gated exactly like
+// hostPlatformVersion's: only a persona describing this host may consult it. The
+// pure form takes the host facts as arguments, so both an ARM host and an x86 host
+// are asserted on every runner rather than only the one the suite happens to run on.
+func TestArchitectureIsDerivedFromThePersonaNotTheHost(t *testing.T) {
+	version := ReducedBrowserVersion("144.0.0.0")
+	hosts := []struct {
+		os   string
+		arch string
+	}{
+		{"darwin", "arm64"},
+		{"darwin", "amd64"},
+		{"linux", "arm64"},
+		{"linux", "amd64"},
+		{"windows", "amd64"},
+	}
+
+	for _, platform := range []struct {
+		name           string
+		uaDataPlatform string
+		want           map[string]string
+	}{
+		{
+			name:           PlatformWindows,
+			uaDataPlatform: "Windows",
+			want:           map[string]string{"darwin/arm64": "x86", "darwin/amd64": "x86", "linux/arm64": "x86", "linux/amd64": "x86", "windows/amd64": "x86"},
+		},
+		{
+			name:           PlatformLinux,
+			uaDataPlatform: "Linux",
+			want:           map[string]string{"darwin/arm64": "x86", "darwin/amd64": "x86", "linux/arm64": "x86", "linux/amd64": "x86", "windows/amd64": "x86"},
+		},
+		{
+			name:           PlatformMacOS,
+			uaDataPlatform: "macOS",
+			want:           map[string]string{"darwin/arm64": "arm", "darwin/amd64": "x86", "linux/arm64": "x86", "linux/amd64": "x86", "windows/amd64": "x86"},
+		},
+	} {
+		ua := ChromeUserAgent(platform.name, version)
+		for _, host := range hosts {
+			key := host.os + "/" + host.arch
+			got := architectureForHost(ua, platform.uaDataPlatform, host.os, host.arch)
+			if want := platform.want[key]; got != want {
+				t.Errorf("architecture for the %s persona on a %s host = %q, want %q.\n"+
+					"Its UA is %q — a persona may only read the host architecture when it describes that host, "+
+					"the same gate hostPlatformVersion applies to the OS version.", platform.name, key, got, want, ua)
+			}
+			if edge := architectureForHost(EdgeUserAgent(ua, version), platform.uaDataPlatform, host.os, host.arch); edge != got {
+				t.Errorf("the Edge decoration of the %s persona reports %q where Chrome reports %q on a %s host", platform.name, edge, got, key)
+			}
+		}
+	}
+}
+
+// The ARM branch has no live input: no shipped matrix UA carries an ARM token, so it
+// is exercised with a synthetic UA. It is unreachable, not dead — a future ARM matrix
+// entry is the supported way to offer an ARM persona, and it travels through here.
+func TestAnArmUserAgentStillReportsArmOnAnyHost(t *testing.T) {
+	version := ReducedBrowserVersion("144.0.0.0")
+	for _, platform := range FingerprintPlatforms() {
+		ua := ChromeUserAgent(platform, version)
+		for _, token := range []string{"arm64", "aarch64", "ARM"} {
+			if strings.Contains(ua, token) {
+				t.Fatalf("the shipped %s UA %q now carries %q, so the synthetic UAs below no longer stand in for a real one — assert the matrix entry directly", platform, ua, token)
+			}
+		}
+	}
+
+	for _, ua := range []string{
+		"Mozilla/5.0 (Windows NT 10.0; Win64; arm64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+		"Mozilla/5.0 (Linux; ARM) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36",
+	} {
+		for _, hostArch := range []string{"amd64", "arm64"} {
+			if got := architectureForHost(ua, "Windows", "linux", hostArch); got != "arm" {
+				t.Errorf("architecture for %q on a linux/%s host = %q, want arm — a UA that names ARM claims ARM whatever the host is", ua, hostArch, got)
+			}
+		}
+	}
+}
+
+// The struct field is not what a detector reads: getHighEntropyValues answers from the
+// userAgentMetadata handed to CDP, so the assertion follows the value onto the wire.
+// This runs against the real host, which is what makes it the case that would have
+// caught the original defect on an Apple Silicon machine.
+func TestRotatedPersonaMetadataArchitectureAgreesWithItsUserAgent(t *testing.T) {
+	version := "144.0.0.0"
+	hostIsAppleSilicon := goruntime.GOOS == "darwin" && goruntime.GOARCH == "arm64"
+
+	for _, platform := range FingerprintPlatforms() {
+		ua := ChromeUserAgent(platform, ReducedBrowserVersion(version))
+		override := BuildUserAgentOverride(ua, version)
+		if override == nil || override.UserAgentMetadata == nil {
+			t.Fatalf("%s persona carries no UA-CH metadata, so no architecture reaches the browser", platform)
+		}
+
+		want := "x86"
+		if platform == PlatformMacOS && hostIsAppleSilicon {
+			want = "arm"
+		}
+		if got := override.UserAgentMetadata.Architecture; got != want {
+			t.Errorf("getHighEntropyValues would report architecture %q for the %s persona on this %s/%s host, want %q.\n"+
+				"Its UA is %q.", got, platform, goruntime.GOOS, goruntime.GOARCH, want, ua)
+		}
+	}
+}

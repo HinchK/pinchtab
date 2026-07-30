@@ -261,13 +261,7 @@ func BuildPersona(userAgent, chromeVersion string) BrowserPersona {
 	}
 	platformVersion := PlatformVersionFor(uaDataPlatform)
 
-	architecture := "x86"
-	switch {
-	case strings.Contains(ua, "arm64"), strings.Contains(ua, "aarch64"), strings.Contains(ua, "ARM"):
-		architecture = "arm"
-	case goruntime.GOARCH == "arm64":
-		architecture = "arm"
-	}
+	architecture := architectureFor(ua, uaDataPlatform)
 
 	brands := brandList(ua, major, greaseMajorVersion)
 	fullVersionList := brandList(ua, chromeVersionOrFallback(chromeVersion), greaseFullVersion)
@@ -324,6 +318,35 @@ func PlatformVersionFor(uaDataPlatform string) string {
 		return version
 	}
 	return defaultPlatformVersions[uaDataPlatform]
+}
+
+// architectureFor derives the UA-CH architecture the persona advertises. The host
+// is consulted under the same gate hostPlatformVersion applies to the OS version:
+// only a persona describing this host may read it. Without that gate a Windows or
+// Linux persona on an Apple Silicon host answered getHighEntropyValues with arm
+// while its own UA said "Win64; x64" — a contradiction a detector reads for free.
+//
+// macOS is the only host arm, and not merely because hostPlatformVersion has two:
+// real Chrome on Apple Silicon ships the "Intel Mac OS X" UA with architecture arm,
+// so there the host value agrees with the UA. The shipped Windows and Linux UAs
+// carry x64 and x86_64 literally, so the host may never override them — those
+// personas always report x86 today, since no matrix UA carries an ARM token.
+// The UA branch below is what a future ARM matrix entry would travel through; it is
+// unreachable rather than dead, and deleting it would remove the only correct way
+// to offer an ARM persona.
+func architectureFor(ua, uaDataPlatform string) string {
+	return architectureForHost(ua, uaDataPlatform, goruntime.GOOS, goruntime.GOARCH)
+}
+
+func architectureForHost(ua, uaDataPlatform, hostOS, hostArch string) string {
+	switch {
+	case strings.Contains(ua, "arm64"), strings.Contains(ua, "aarch64"), strings.Contains(ua, "ARM"):
+		return "arm"
+	case uaDataPlatform == "macOS" && hostOS == "darwin" && hostArch == "arm64":
+		return "arm"
+	default:
+		return "x86"
+	}
 }
 
 func hostPlatformVersion(uaDataPlatform string) string {

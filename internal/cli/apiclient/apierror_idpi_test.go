@@ -80,3 +80,8 @@ func (b *driftedTabBridge) GetTabPolicyState(string) (bridge.TabPolicyState, boo
 }
 
 func (b *driftedTabBridge) SetTabPolicyState(string, bridge.TabPolicyState) {}
+
+// The read prelude asks every tab whether a JavaScript dialog is blocking it before
+// it touches the page. The embedded BridgeAPI is nil, so the promoted method would
+// panic rather than answer; this tab has no dialog.
+func (b *driftedTabBridge) GetDialogManager() *bridge.DialogManager { return nil }
