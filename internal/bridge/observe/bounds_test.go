@@ -11,19 +11,19 @@ import (
 	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
-// The scroll offset must not enter the test: boxes reach isVisible in viewport
+// The scroll offset must not enter the test: boxes reach IsOnScreen in viewport
 // coordinates, so a page scrolled to y=1000 sees the same numbers as an
 // unscrolled one.
 func TestIsVisibleUsesViewportCoordinates(t *testing.T) {
 	vp := ViewportInfo{Width: 800, Height: 600, ScrollX: 0, ScrollY: 1000}
 
-	if !isVisible(BoundingBox{X: 20, Y: 50, W: 100, H: 40}, vp) {
+	if !IsOnScreen(BoundingBox{X: 20, Y: 50, W: 100, H: 40}, vp) {
 		t.Fatal("box inside the viewport should be visible")
 	}
-	if isVisible(BoundingBox{X: 20, Y: -200, W: 100, H: 40}, vp) {
+	if IsOnScreen(BoundingBox{X: 20, Y: -200, W: 100, H: 40}, vp) {
 		t.Fatal("box scrolled above the viewport should not be visible")
 	}
-	if isVisible(BoundingBox{X: 20, Y: 700, W: 100, H: 40}, vp) {
+	if IsOnScreen(BoundingBox{X: 20, Y: 700, W: 100, H: 40}, vp) {
 		t.Fatal("box below the viewport should not be visible")
 	}
 }

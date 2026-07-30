@@ -82,7 +82,7 @@ func AnnotateBounds(ctx context.Context, nodes []A11yNode, pageCoords bool, vp V
 		if !ok {
 			continue
 		}
-		visible := isVisible(box, vp)
+		visible := IsOnScreen(box, vp)
 		if pageCoords {
 			box.X += vp.ScrollX
 			box.Y += vp.ScrollY
@@ -149,9 +149,12 @@ func ElementBorderBox(ctx context.Context, backendNodeID int64) (BoundingBox, bo
 	return BoundingBox{X: minX, Y: minY, W: maxX - minX, H: maxY - minY}, true
 }
 
-// isVisible takes b in viewport coordinates, the space DOM.getBoxModel reports
-// and the space AnnotateBounds measures in before any document transform.
-func isVisible(b BoundingBox, vp ViewportInfo) bool {
+// IsOnScreen is the one owner of the on-screen question: positive area AND
+// intersection with the viewport. b is in viewport coordinates, the space
+// DOM.getBoxModel reports and the space AnnotateBounds measures in before any
+// document transform. It is deliberately NOT the rendered-ness question that
+// GET /visible answers — that predicate ignores scroll position.
+func IsOnScreen(b BoundingBox, vp ViewportInfo) bool {
 	if b.W <= 0 || b.H <= 0 {
 		return false
 	}

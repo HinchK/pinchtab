@@ -118,6 +118,21 @@ taken: `withBounds=false`, a node with no backend node id, or a node whose
 box query failed. Treat a missing `visible` as unknown and a present
 `false` as off-screen; they are different answers.
 
+### `visible` here is not `GET /visible`
+
+`GET /visible` (and `pinchtab visible <ref>`) answers a different question
+under the same word: **CSS rendered-ness** — `display`, `visibility`,
+`opacity`, and a laid-out or positioned box with non-zero size. **Scroll
+position is not an input**, so an element far below the fold is `"visible":
+true` there while this snapshot reports `"visible": false` for the same node
+at the same moment. Both answers are correct and both are wanted: one says
+the element is rendered at all, the other says it is on screen right now.
+
+`GET /visible` also returns `onScreen`, which is this snapshot's predicate
+computed for that one element, so a single call answers both questions.
+`onScreen` follows the same absent-means-not-measured rule as `visible`
+above.
+
 ## Useful flags
 
 ### API Query Parameters

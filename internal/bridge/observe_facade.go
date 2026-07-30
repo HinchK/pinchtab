@@ -76,6 +76,10 @@ func ElementBorderBox(ctx context.Context, backendNodeID int64) (BoundingBox, bo
 	return bridgeobserve.ElementBorderBox(ctx, backendNodeID)
 }
 
+func IsOnScreen(box BoundingBox, vp ViewportInfo) bool {
+	return bridgeobserve.IsOnScreen(box, vp)
+}
+
 func FetchAXTree(ctx context.Context) ([]RawAXNode, error) {
 	return bridgeobserve.FetchAXTree(ctx)
 }

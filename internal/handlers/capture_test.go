@@ -296,3 +296,73 @@ func TestCaptureEnvelopeEmbedsSnapshotNodesVerbatim(t *testing.T) {
 		t.Fatal("the capture envelope no longer embeds result.Nodes directly; re-mapping nodes into a literal drops whatever field the map forgets")
 	}
 }
+
+// visible drives GET /visible for a ref the capture just published, on the same
+// tab and at the same scroll position.
+func (f captureFixture) visible(t *testing.T, ref string) map[string]any {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	f.handlers.HandleGetVisible(rec, httptest.NewRequest(http.MethodGet, "/visible?ref="+ref+"&tabId="+capturePairTabID, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/visible?ref=%s status %d: %s", ref, rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode /visible response: %v (body %s)", err, rec.Body.String())
+	}
+	return body
+}
+
+// Two surfaces publish a boolean called visible for the same node and they
+// answer different questions: GET /visible is CSS rendered-ness with scroll
+// position as no input, the capture snapshot's field is viewport intersection.
+// Both answers are wanted, so this fixture holds them apart — a later change
+// that quietly aligns the two predicates reds here. The endpoint's own onScreen
+// field is the bridge between them and must agree with capture node for node.
+func TestTheVisibleEndpointAndCaptureAnswerDifferentQuestions(t *testing.T) {
+	f := newCaptureFixture(t)
+	nodes := f.capture(t, "&"+captureBoundsParam+"=true")
+
+	for _, tc := range []struct {
+		name            string
+		wantCapture     bool
+		wantRendered    bool
+		wantOnScreen    bool
+		whyTheyDisagree string
+	}{
+		{
+			name: "TopBtn", wantCapture: false, wantRendered: true, wantOnScreen: false,
+			whyTheyDisagree: "scrolled past above: rendered by CSS, not intersecting the viewport",
+		},
+		{
+			name: "BotBtn", wantCapture: true, wantRendered: true, wantOnScreen: true,
+			whyTheyDisagree: "on screen: both questions answer true, so the divergence above is not a blanket disagreement",
+		},
+	} {
+		node := nodeByName(t, nodes, tc.name)
+		if node["visible"] != tc.wantCapture {
+			t.Fatalf("%s: capture visible = %v, want %v (%s)", tc.name, node["visible"], tc.wantCapture, tc.whyTheyDisagree)
+		}
+
+		ref, _ := node["ref"].(string)
+		if ref == "" {
+			t.Fatalf("%s: capture node published no ref: %v", tc.name, node)
+		}
+		body := f.visible(t, ref)
+
+		if body["visible"] != tc.wantRendered {
+			t.Errorf("%s: /visible visible = %v, want %v — the endpoint answers CSS rendered-ness and scroll position is not an input (%s)",
+				tc.name, body["visible"], tc.wantRendered, tc.whyTheyDisagree)
+		}
+		onScreen, ok := body["onScreen"]
+		if !ok {
+			t.Fatalf("%s: /visible published no onScreen for a node capture measured: %v", tc.name, body)
+		}
+		if onScreen != tc.wantOnScreen {
+			t.Errorf("%s: /visible onScreen = %v, want %v", tc.name, onScreen, tc.wantOnScreen)
+		}
+		if onScreen != node["visible"] {
+			t.Errorf("%s: /visible onScreen = %v but capture visible = %v; they must be the same predicate", tc.name, onScreen, node["visible"])
+		}
+	}
+}

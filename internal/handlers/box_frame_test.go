@@ -202,12 +202,9 @@ func TestVisibleIsFrameLocalForInFrameRef(t *testing.T) {
 	f := newFrameFixture(t)
 	nodeID := f.nodeIDByName(t, "button", "frame button")
 
-	f.handlers.Bridge.SetRefCache("tab-frame", &bridge.RefCache{Targets: map[string]bridge.RefTarget{
-		"e0": {BackendNodeID: nodeID},
-	}})
-	visible, err := f.handlers.getElementVisible(f.ctx, "tab-frame", "ref:e0")
+	visible, err := f.handlers.elementRendered(f.ctx, nodeID)
 	if err != nil {
-		t.Fatalf("getElementVisible: %v", err)
+		t.Fatalf("elementRendered: %v", err)
 	}
 	if !visible {
 		t.Fatal("an in-frame button that is on screen reported not visible")

@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +151,11 @@ func TestVisibleRoutesRegistered(t *testing.T) {
 type visibleMockBridge struct {
 	mockBridge
 	refCache *bridge.RefCache
+	rendered bool
+}
+
+func (m *visibleMockBridge) CallFunctionOnNode(ctx context.Context, backendNodeID int64, functionDecl string, args []map[string]any, result any) error {
+	return json.Unmarshal([]byte(strconv.FormatBool(m.rendered)), result)
 }
 
 func (m *visibleMockBridge) GetRefCache(tabID string) *bridge.RefCache {
@@ -260,5 +267,92 @@ func TestTheVisiblePredicateNeverReadsTheInlineStyleAttribute(t *testing.T) {
 	}
 	if strings.Index(elementVisibleJS, "getComputedStyle") > strings.Index(elementVisibleJS, "style.position") {
 		t.Errorf("style.position is read before getComputedStyle assigns it:\n%s", elementVisibleJS)
+	}
+}
+
+// The browser-backed divergence test lives in capture_test.go and skips where no
+// browser is installed, so the property it protects is also stated here, where a
+// browser is never needed: the endpoint predicate must not learn about scroll.
+func TestTheVisiblePredicateNeverConsultsScrollOrViewport(t *testing.T) {
+	for _, banned := range []string{"innerHeight", "innerWidth", "scrollY", "scrollX", "pageYOffset", "pageXOffset", "IntersectionObserver"} {
+		if strings.Contains(elementVisibleJS, banned) {
+			t.Errorf("the visible predicate reads %s, so it has become an on-screen check; that answer belongs to onScreen via bridge.IsOnScreen:\n%s", banned, elementVisibleJS)
+		}
+	}
+}
+
+// onScreen must stay the capture path's own predicate rather than a second
+// implementation that can drift from it — this card exists because two spellings
+// of one question disagreed.
+func TestTheOnScreenAnswerDelegatesToTheCapturePredicate(t *testing.T) {
+	src, err := os.ReadFile("visible.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "bridge.IsOnScreen(") {
+		t.Fatal("visible.go no longer asks bridge.IsOnScreen; the endpoint would answer on-screen-ness with its own predicate and could disagree with the capture snapshot")
+	}
+	if !strings.Contains(string(src), "bridge.ElementBorderBox(") || !strings.Contains(string(src), "bridge.FetchLayout(") {
+		t.Fatal("visible.go no longer measures through the border box and layout the capture path uses")
+	}
+}
+
+func TestVisibleResponseOmitsOnScreenWhenUnmeasured(t *testing.T) {
+	measured := false
+	for _, tc := range []struct {
+		name     string
+		response visibleResponse
+		wantKey  bool
+		wantVal  any
+	}{
+		{name: "unmeasured", response: visibleResponse{Ref: "e1", Visible: true}, wantKey: false},
+		{name: "measured false", response: visibleResponse{Ref: "e1", Visible: true, OnScreen: &measured}, wantKey: true, wantVal: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			encoded, err := json.Marshal(tc.response)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var decoded map[string]any
+			if err := json.Unmarshal(encoded, &decoded); err != nil {
+				t.Fatal(err)
+			}
+			value, ok := decoded["onScreen"]
+			if ok != tc.wantKey {
+				t.Fatalf("onScreen present = %v, want %v: absent means not measured, and a real false must stay visible (%s)", ok, tc.wantKey, encoded)
+			}
+			if tc.wantKey && value != tc.wantVal {
+				t.Fatalf("onScreen = %v, want %v", value, tc.wantVal)
+			}
+		})
+	}
+}
+
+// An element the endpoint can evaluate but cannot measure still gets its
+// rendered-ness answer; the missing on-screen answer never turns into a false.
+func TestHandleGetVisible_AnswersRenderedWhenNothingCanBeMeasured(t *testing.T) {
+	mb := &visibleMockBridge{
+		rendered: true,
+		refCache: &bridge.RefCache{
+			Refs:    map[string]int64{"e1": 100},
+			Targets: map[string]bridge.RefTarget{"e1": {BackendNodeID: 100}},
+		},
+	}
+	h := New(mb, &config.RuntimeConfig{}, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/visible?ref=e1", nil)
+	w := httptest.NewRecorder()
+	h.HandleGetVisible(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["visible"] != true {
+		t.Fatalf("visible = %v, want true: %s", body["visible"], w.Body.String())
+	}
+	if _, ok := body["onScreen"]; ok {
+		t.Fatalf("onScreen answered without a measurement: %s", w.Body.String())
 	}
 }
