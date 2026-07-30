@@ -1,12 +1,14 @@
 package fileout
 
 import (
-	"github.com/pinchtab/pinchtab/internal/srccensus"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 // Two writes of the same auto-built name must land on different paths with both files
@@ -246,7 +248,7 @@ const fileoutSourceFileFloor = 1
 func TestWriteUniqueRemovesTheFileItCreatedWhenTheWriteFails(t *testing.T) {
 	dir := t.TempDir()
 	created := ""
-	closedHandle := func(dir, base, ext string) (*os.File, string, error) {
+	closedHandle := func(dir, base, ext string) (uniqueFile, string, error) {
 		f, path, err := CreateUnique(dir, base, ext)
 		if err != nil {
 			return nil, "", err
@@ -277,5 +279,84 @@ func TestWriteUniqueRemovesTheFileItCreatedWhenTheWriteFails(t *testing.T) {
 	}
 	for _, entry := range entries {
 		t.Errorf("a failed write left %s in the output directory", entry.Name())
+	}
+}
+
+// writeThenFailToClose is the handle a real file cannot be: its Write succeeds and its
+// Close fails. That pairing is what reaches writeUnique's close branch, and it is the
+// production shape too — delayed allocation on a full filesystem, or NFS flushing at
+// close. A closed *os.File cannot stand in, because os.File.Write validates the
+// descriptor before it looks at the buffer and so fails one branch earlier.
+type writeThenFailToClose struct {
+	writeCalls int
+	writeN     int
+	writeErr   error
+	closeCalls int
+}
+
+func (f *writeThenFailToClose) Write(p []byte) (int, error) {
+	f.writeCalls++
+	f.writeN = len(p)
+	f.writeErr = nil
+	return len(p), nil
+}
+
+func (f *writeThenFailToClose) Close() error {
+	f.closeCalls++
+	return errors.New("close: no space left on device")
+}
+
+// The sibling of TestReserveUniqueRemovesThePlaceholderWhenTheCloseFails, for the
+// branch that had no test: a write that lands and a close that fails still leaves a
+// created file behind, wearing the output's name and holding bytes the caller was told
+// were not written.
+func TestWriteUniqueRemovesTheFileItCreatedWhenTheCloseFails(t *testing.T) {
+	dir := t.TempDir()
+	created := ""
+	handle := &writeThenFailToClose{}
+	uncloseable := func(dir, base, ext string) (uniqueFile, string, error) {
+		f, path, err := CreateUnique(dir, base, ext)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := f.Close(); err != nil {
+			return nil, "", err
+		}
+		created = path
+		return handle, path, nil
+	}
+
+	buf := []byte("bytes")
+	path, err := writeUnique(dir, "capture-20260101_000000", ".png", buf, uncloseable)
+
+	if err == nil {
+		t.Fatal("precondition: a handle whose Close fails must make writeUnique fail")
+	}
+	if !strings.Contains(err.Error(), "no space left on device") {
+		t.Fatalf("writeUnique returned %v, not the close failure — this test would be passing through the write branch, which its sibling already covers", err)
+	}
+	// The write ran AND succeeded, which is what proves the close branch was reached
+	// rather than the write branch next door.
+	if handle.writeCalls != 1 || handle.writeErr != nil || handle.writeN != len(buf) {
+		t.Fatalf("stub write: calls=%d n=%d err=%v; want exactly one successful write of %d bytes, or this test is not reaching the close branch", handle.writeCalls, handle.writeN, handle.writeErr, len(buf))
+	}
+	if handle.closeCalls != 1 {
+		t.Errorf("stub close called %d times, want 1", handle.closeCalls)
+	}
+	if path != "" {
+		t.Errorf("writeUnique returned %q alongside its error; a failed close has no path to report", path)
+	}
+	if created == "" {
+		t.Fatal("the stub creator never ran, so this guard checked nothing")
+	}
+	if _, err := os.Stat(created); !os.IsNotExist(err) {
+		t.Errorf("%s survived a failed close (stat err = %v); the created file must be removed", created, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		t.Errorf("a failed close left %s in the output directory", entry.Name())
 	}
 }

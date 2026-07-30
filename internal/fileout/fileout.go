@@ -18,6 +18,7 @@ package fileout
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,14 +63,42 @@ func CreateUnique(dir, base, ext string) (*os.File, string, error) {
 // 0-byte file under a name that reads like a real output — the same defect as an
 // abandoned reservation, one layer down.
 func WriteUnique(dir, base, ext string, buf []byte) (string, error) {
-	return writeUnique(dir, base, ext, buf, CreateUnique)
+	return writeUnique(dir, base, ext, buf, createUniqueFile)
 }
 
-// writeUnique takes its creator as a parameter so a test can hand it a handle whose
-// write fails and assert the file it created is gone. A real write failure needs a
+// uniqueFile is what writeUnique needs of the handle its creator hands back: the two
+// calls whose failure it must clean up after. An interface rather than *os.File
+// because the two failures are not equally reachable through a real file — see
+// writeUnique.
+type uniqueFile interface {
+	io.Writer
+	io.Closer
+}
+
+// createUniqueFile adapts CreateUnique to that seam. It exists so CreateUnique keeps
+// its concrete *os.File signature for every caller that wants the real handle, and
+// returns an explicit nil on error rather than a typed nil wearing the interface.
+func createUniqueFile(dir, base, ext string) (uniqueFile, string, error) {
+	f, path, err := CreateUnique(dir, base, ext)
+	if err != nil {
+		return nil, "", err
+	}
+	return f, path, nil
+}
+
+// writeUnique takes its creator as a parameter so a test can hand it a handle that
+// fails, and assert the file it created is gone. A real write or close failure needs a
 // full disk or a revoked handle, neither of which a test can arrange portably, and an
 // unpinned removal is an unproven one.
-func writeUnique(dir, base, ext string, buf []byte, create func(string, string, string) (*os.File, string, error)) (string, error) {
+//
+// The creator returns an INTERFACE because the two failures are reachable by different
+// means. A closed *os.File fails at the write — os.File.Write validates the descriptor
+// before it looks at the buffer, zero-length buffer included — so it can never reach
+// the close branch below. That branch's production case is the opposite shape: a write
+// that succeeds and a close that fails, which is delayed allocation on a full
+// filesystem, or NFS flushing at close. Only a stub can be both, so the seam admits
+// one.
+func writeUnique(dir, base, ext string, buf []byte, create func(string, string, string) (uniqueFile, string, error)) (string, error) {
 	f, path, err := create(dir, base, ext)
 	if err != nil {
 		return "", err
