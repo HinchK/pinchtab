@@ -529,7 +529,15 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(actionErr, bridge.ErrUnexpectedNavigation) {
-			httpx.ErrorCode(w, 409, "navigation_changed", actionErr.Error(), false, navigationChangedDetails(actionErr))
+			details := navigationChangedDetails(actionErr)
+			// A navigation reported after a recovered click has to say WHICH element was
+			// clicked: the caller named a ref that no longer resolved, so the dispatch went
+			// to whatever recovery matched. Without this the 409 discloses the navigation
+			// and hides the substitution.
+			if recoveryResult != nil {
+				details["recovery"] = recoveryResult
+			}
+			httpx.ErrorCode(w, 409, "navigation_changed", actionErr.Error(), false, details)
 			return
 		}
 		if browserops.IsIDPIBlocked(actionErr) {

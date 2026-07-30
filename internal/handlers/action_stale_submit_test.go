@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -37,10 +38,20 @@ func newOrderFixture(t *testing.T) orderFixture {
 		w.Header().Set("Content-Type", "text/html")
 		_, _ = w.Write([]byte(`<h1>Order placed</h1>`))
 	})
+	mux.HandleFunc("/terms", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte(`<h1>Terms</h1>`))
+	})
 	mux.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html")
+		// The link is what the navigation half needs: a click that moves the page and
+		// posts nothing, so the two halves of this card can be told apart on one fixture.
+		// It moves with history.pushState rather than an href, because the guard reads the
+		// URL as soon as the click returns and a real navigation is still in flight then —
+		// an href would make this test depend on that race rather than on the guard.
 		_, _ = w.Write([]byte(`<h1>Checkout</h1>
-			<form action="/order" method="post"><button id="b">Place order</button></form>`))
+			<form action="/order" method="post"><button id="b">Place order</button></form>
+			<a id="t" href="#" onclick="history.pushState({}, '', '/terms'); return false;">Read the terms</a>`))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -91,7 +102,14 @@ func staleSubmitHandlers(t *testing.T, f orderFixture) (*Handlers, context.Conte
 		t.Fatal(err)
 	}
 
-	cfg := &config.RuntimeConfig{ActionTimeout: 10 * time.Second, DefaultBrowser: config.BrowserChrome, StateDir: t.TempDir()}
+	// EnableActionGuards is what turns the unexpected-navigation check on; without it the
+	// bridge never compares the URL and the navigation half of this card is unobservable.
+	cfg := &config.RuntimeConfig{
+		ActionTimeout:      10 * time.Second,
+		DefaultBrowser:     config.BrowserChrome,
+		StateDir:           t.TempDir(),
+		EnableActionGuards: true,
+	}
 	b := bridge.New(context.Background(), ctx, cfg)
 	const tabID = "tab-stale-submit"
 	b.RegisterTab(tabID, ctx)
@@ -99,6 +117,10 @@ func staleSubmitHandlers(t *testing.T, f orderFixture) (*Handlers, context.Conte
 
 	h.Recovery.RecordIntent(tabID, "e2", recovery.IntentEntry{
 		Descriptor: semantic.ElementDescriptor{Ref: "e2", Role: "button", Name: "Place order"},
+		CachedAt:   time.Now(),
+	})
+	h.Recovery.RecordIntent(tabID, "e3", recovery.IntentEntry{
+		Descriptor: semantic.ElementDescriptor{Ref: "e3", Role: "link", Name: "Read the terms"},
 		CachedAt:   time.Now(),
 	})
 	return h, ctx, tabID
@@ -172,5 +194,136 @@ func TestTheSubmitCheckIsWhatStopsTheOrder(t *testing.T) {
 	}
 	if placed := f.settleForOrder(); placed != 1 {
 		t.Fatalf("orders placed without the check = %d, want 1: recovery no longer reaches the button, so this fixture has stopped reproducing the defect the guard prevents", placed)
+	}
+}
+
+// The honesty half, and the half a reviewer found pinned by nothing: a stale ref whose
+// recovered click NAVIGATES ran the action. Reporting it as "ref not found and recovery
+// failed" asserts two false things about a dispatch that happened, and the only sane
+// reaction to "not found" — retry — repeats it. This must answer the navigation itself.
+func TestAStaleRefWhoseRecoveredClickNavigatesAnswersTheNavigationNotNotFound(t *testing.T) {
+	f := newOrderFixture(t)
+	h, ctx, tabID := staleSubmitHandlers(t, f)
+
+	_, _, rr, err := h.executeActionResilient(ctx, &bridge.ActionRequest{Kind: bridge.ActionClick, Ref: "e3"}, h.Config, tabID, true)
+
+	if err == nil {
+		t.Fatalf("a recovered click that navigated reported success; the guard should surface the navigation")
+	}
+	if !errors.Is(err, bridge.ErrUnexpectedNavigation) {
+		t.Fatalf("error = %v, want the navigation guard's error", err)
+	}
+	if strings.Contains(err.Error(), "not found and recovery failed") {
+		t.Errorf("the navigation is reported as a lookup failure: %q — the ref WAS matched and the click DID land", err)
+	}
+	// The click went to whatever recovery matched, not to the ref the caller named, so the
+	// record of that substitution is the one thing this response must not hide.
+	if rr == nil {
+		t.Fatal("no recovery record published for a dispatched click, so nothing says which element was clicked")
+	}
+	if rr.NewRef == "" {
+		t.Errorf("recovery record names no matched ref: %+v", rr)
+	}
+}
+
+// The refusal is the opposite case and keeps the opposite rule: nothing was dispatched, so
+// a record reading recovered:true would suggest a click landed. Absence cannot be misread.
+func TestTheRefusalPublishesNoRecoveryRecordWhileTheNavigationDoes(t *testing.T) {
+	f := newOrderFixture(t)
+	h, ctx, tabID := staleSubmitHandlers(t, f)
+
+	_, _, refused, refusalErr := h.executeActionResilient(ctx, staleClick(), h.Config, tabID, true)
+	if !errors.Is(refusalErr, ErrStaleSubmitTarget) {
+		t.Fatalf("refusal error = %v", refusalErr)
+	}
+	if refused != nil {
+		t.Errorf("the refusal published a recovery record for a click that never happened: %+v", refused)
+	}
+
+	_, _, navigated, navErr := h.executeActionResilient(ctx, &bridge.ActionRequest{Kind: bridge.ActionClick, Ref: "e3"}, h.Config, tabID, true)
+	if !errors.Is(navErr, bridge.ErrUnexpectedNavigation) {
+		t.Fatalf("navigation error = %v", navErr)
+	}
+	if navigated == nil {
+		t.Error("the navigation published no recovery record, so a dispatched click discloses nothing about its target")
+	}
+}
+
+// The wire shape a caller actually sees. The helper-level tests above pin the behaviour at
+// the shared owner; this pins that the refusal survives the endpoint as a 404 naming the
+// snapshot, with dispatch state on it — and that following the printed remedy from the
+// refused state posts nothing.
+func TestTheEndpointRefusesAStaleSubmitRefWithASnapshotRemedyAndNoOrder(t *testing.T) {
+	f := newOrderFixture(t)
+	h, _, tabID := staleSubmitHandlers(t, f)
+
+	body := `{"kind":"click","ref":"e2","tabId":"` + tabID + `"}`
+	rec := httptest.NewRecorder()
+	h.HandleAction(rec, httptest.NewRequest(http.MethodPost, "/action", strings.NewReader(body)))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404: %s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Code    string         `json:"code"`
+		Error   string         `json:"error"`
+		Details map[string]any `json:"details"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode refusal: %v (%s)", err, rec.Body.String())
+	}
+	if resp.Code != "submit_target_not_found" {
+		t.Errorf("code = %q, want submit_target_not_found", resp.Code)
+	}
+	if dispatched, ok := resp.Details["dispatched"].(bool); !ok || dispatched {
+		t.Errorf("details.dispatched = %v, want false: this refusal exists to say nothing was clicked", resp.Details["dispatched"])
+	}
+	if got, _ := resp.Details["remedy"].(string); got != reSnapshot.Remedy().String() {
+		t.Errorf("remedy = %q, want %q", got, reSnapshot.Remedy())
+	}
+	if placed := f.settleForOrder(); placed != 0 {
+		t.Fatalf("%d order(s) placed by a refused request", placed)
+	}
+
+	// Follow the remedy from the state it was printed in: a snapshot is a read, so the
+	// advice cannot itself place the order the refusal just prevented.
+	snapRec := httptest.NewRecorder()
+	h.HandleSnapshot(snapRec, httptest.NewRequest(http.MethodGet, "/snapshot?tabId="+tabID, nil))
+	if snapRec.Code != http.StatusOK {
+		t.Fatalf("the printed remedy fails from the state it is printed in: %d %s", snapRec.Code, snapRec.Body.String())
+	}
+	if placed := f.settleForOrder(); placed != 0 {
+		t.Errorf("%d order(s) placed by following the remedy", placed)
+	}
+}
+
+// The macro/batch step path takes the same helper and the same refMissing argument, so the
+// refusal has to arrive there as a failed step carrying the same advice — a step that
+// reported success, or one whose text sent the caller back to --submit, would be the same
+// defect one entry point over.
+func TestTheStepPathTurnsTheRefusalIntoAFailedStepNamingTheSnapshot(t *testing.T) {
+	f := newOrderFixture(t)
+	h, ctx, tabID := staleSubmitHandlers(t, f)
+
+	step := staleClick()
+	result, _, _ := h.runResolvedActionStep(
+		ctx, ctx,
+		httptest.NewRequest(http.MethodPost, "/actions", strings.NewReader("{}")),
+		httptest.NewRecorder(),
+		step, h.Config, tabID, 0, true,
+		func(err error) string { return err.Error() },
+	)
+
+	if result.Success {
+		t.Fatalf("step reported success for a refused click: %+v", result)
+	}
+	if !strings.Contains(result.Error, "/snapshot") {
+		t.Errorf("step error = %q, which does not tell the caller to re-snapshot", result.Error)
+	}
+	if strings.Contains(result.Error, "--submit") {
+		t.Errorf("step error = %q recommends --submit, which cannot resolve a stale ref either", result.Error)
+	}
+	if placed := f.settleForOrder(); placed != 0 {
+		t.Errorf("%d order(s) placed by a refused step", placed)
 	}
 }

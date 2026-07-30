@@ -233,16 +233,25 @@ func (h *Handlers) executeActionResilient(ctx context.Context, req *bridge.Actio
 			},
 		)
 		if recErr != nil {
+			// Nothing was dispatched, so there is no recovery record to publish: the
+			// refusal happened before the match was used for anything. Absence cannot be
+			// misread, where a block reading recovered:true would suggest a click landed.
+			if errors.Is(recErr, ErrStaleSubmitTarget) {
+				return nil, "", nil, recErr
+			}
 			// The action RAN: the click landed and moved the page, and the guard reports
 			// that navigation from inside the callback. Wrapping it as "ref not found and
 			// recovery failed" asserted two false things about a dispatch that happened,
 			// and the natural retry then repeats it. The navigation is passed through
 			// unwrapped so this answers what the same click answers with a fresh ref.
-			if errors.Is(recErr, bridge.ErrUnexpectedNavigation) || errors.Is(recErr, ErrStaleSubmitTarget) {
-				// No recovery block either: nothing was re-resolved. A block reading
-				// recovered:true with a low-confidence score is a record of a match made
-				// against the page the click already navigated to.
-				return nil, "", nil, recErr
+			//
+			// The recovery record IS published here, unlike on the refusal above: it was
+			// built on the original page before the click, and it is the only disclosure
+			// of WHICH element received a click the caller aimed at a different ref.
+			// Suppressing it would leave the navigation reported with no way to learn the
+			// dispatch went somewhere else.
+			if errors.Is(recErr, bridge.ErrUnexpectedNavigation) {
+				return nil, "", &rr, recErr
 			}
 			return nil, "", &rr, fmt.Errorf("ref %s not found and recovery failed: %w", req.Ref, recErr)
 		}
