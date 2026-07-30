@@ -132,6 +132,9 @@ func TestHandleCapture_OpenAPIExposes(t *testing.T) {
 const capturePairFixtureHTML = `<body style="margin:0;height:4000px">
 <button id="top" style="position:absolute;top:0;left:0">TopBtn</button>
 <button id="bottom" style="position:absolute;top:2500px;left:0">BotBtn</button>
+<input type="checkbox" checked aria-label="OnBox" style="position:absolute;top:2600px;left:0">
+<input type="checkbox" aria-label="OffBox" style="position:absolute;top:2640px;left:0">
+<div role="checkbox" aria-checked="mixed" tabindex="0" aria-label="MixedBox" style="position:absolute;top:2680px;left:0"></div>
 </body>`
 
 const capturePairTabID = "tab-capture-visible"
@@ -265,6 +268,22 @@ func TestCaptureWithoutBoundsPublishesNoVisibleKey(t *testing.T) {
 		}
 		if _, ok := node["boundingBox"]; ok {
 			t.Errorf("node %d (%v) published boundingBox with bounds=false: %v", i, node["ref"], node)
+		}
+	}
+}
+
+func TestCaptureSerialisesCheckedStateForCheckableControls(t *testing.T) {
+	nodes := newCaptureFixture(t).capture(t, "&"+captureBoundsParam+"=true")
+
+	for name, want := range map[string]string{"OnBox": "true", "OffBox": "false", "MixedBox": "mixed"} {
+		if got := nodeByName(t, nodes, name)["checked"]; got != want {
+			t.Errorf("%s checked = %v, want %q", name, got, want)
+		}
+	}
+
+	for _, name := range []string{"TopBtn", "BotBtn"} {
+		if value, ok := nodeByName(t, nodes, name)["checked"]; ok {
+			t.Errorf("%s has no checkedness but published checked = %v", name, value)
 		}
 	}
 }
