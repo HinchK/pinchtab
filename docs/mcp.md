@@ -73,10 +73,10 @@ The MCP server communicates over stdio using JSON-RPC, which is the standard MCP
 | --- | --- |
 | `PINCHTAB_TOKEN` | Auth token for secured servers |
 
-For remote servers, use the root `--server` flag:
+For remote servers, use the root `--server` flag with that host's credential — a non-loopback host requires `PINCHTAB_TOKEN` (or `PINCHTAB_SESSION`), since the CLI refuses to send the local config's `server.token` off the machine:
 
 ```bash
-pinchtab --server http://remote:9867 mcp
+PINCHTAB_TOKEN=<that-host-token> pinchtab --server http://remote:9867 mcp
 ```
 
 ## Available Tools

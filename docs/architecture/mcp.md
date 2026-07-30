@@ -16,7 +16,7 @@ flowchart LR
 Key design decisions:
 
 - **No direct Chrome dependency** — the MCP process has no CDP connection. All browser work is delegated to the PinchTab instance.
-- **Any deployment works** — use `--server` flag to point at a local server, Docker container, or remote host.
+- **Any deployment works** — use `--server` flag to point at a local server, Docker container, or remote host; a non-loopback host needs its own credential in `PINCHTAB_TOKEN` (e.g. `PINCHTAB_TOKEN=<token> pinchtab --server http://remote:9867 mcp`), since the local config's `server.token` is never sent off the machine.
 - **Stateless protocol layer** — the MCP server holds no browser state itself; it is purely a translation adapter.
 
 ## Transport

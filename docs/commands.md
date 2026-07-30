@@ -354,10 +354,12 @@ pinchtab security down                  # Apply documented guards-down preset
 The root command supports:
 
 ```bash
-pinchtab --server http://host:9867 <command>
+PINCHTAB_TOKEN=<that-host-token> pinchtab --server http://host:9867 <command>
 pinchtab --help
 pinchtab --version
 ```
+
+A non-loopback `--server` host requires its credential in `PINCHTAB_TOKEN` (or `PINCHTAB_SESSION`) on the same command — the CLI refuses to send the local config's `server.token` off the machine.
 
 Commands with `--tab` currently include:
 

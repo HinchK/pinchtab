@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -102,10 +104,11 @@ func preflightBrowserBinary(cfg *config.RuntimeConfig) error {
 }
 
 func newCLIRuntime(cfg *config.RuntimeConfig) cliRuntime {
+	base := resolveCLIBase(cfg)
 	return cliRuntime{
 		client: newCLIHTTPClient(resolveCLIAgentID()),
-		base:   resolveCLIBase(cfg),
-		token:  resolveCLIToken(cfg),
+		base:   base,
+		token:  tokenForBaseOrExit(cfg, base),
 	}
 }
 
@@ -146,7 +149,12 @@ func resolveDefaultCLIBase(cfg *config.RuntimeConfig) string {
 // freshness window. Same target, same credential, or the probe cannot self-heal.
 var resolveTabStateEndpoint = func() (base, token string) {
 	cfg := config.Load()
-	return resolveBaseURL(resolveDefaultCLIBase(cfg)), resolveCLIToken(cfg)
+	base = resolveBaseURL(resolveDefaultCLIBase(cfg))
+	token, err := resolveCLIToken(cfg, base)
+	if err != nil {
+		return base, ""
+	}
+	return base, token
 }
 
 // resolveBaseURL returns the server base URL from flag/env/default.
@@ -168,19 +176,55 @@ func canAutoStartServerForCLI(cfg *config.RuntimeConfig, baseURL string) bool {
 	return strings.TrimRight(baseURL, "/") == resolveDefaultCLIBase(cfg)
 }
 
-func resolveCLIToken(cfg *config.RuntimeConfig) string {
+// resolveCLIToken is the ONE owner pairing a credential with its destination.
+// The config file's server.token is a secret for the LOCAL server: it is only
+// ever sent to a loopback base, so a typo'd or hostile --server host cannot
+// receive it — an explicit env credential travels anywhere the caller says.
+func resolveCLIToken(cfg *config.RuntimeConfig, base string) (string, error) {
 	if s := os.Getenv("PINCHTAB_SESSION"); s != "" {
 		apiclient.UseTokenSource("the PINCHTAB_SESSION environment variable")
-		return s
+		return s, nil
 	}
 	if t := os.Getenv("PINCHTAB_TOKEN"); t != "" {
 		apiclient.UseTokenSource("the PINCHTAB_TOKEN environment variable")
-		return t
+		return t, nil
+	}
+	if !loopbackBase(base) {
+		return "", fmt.Errorf("refusing to send the local config's server.token to %s: set PINCHTAB_TOKEN (or PINCHTAB_SESSION) with the credential for that host", base)
 	}
 	if cfg.Token != "" {
 		apiclient.UseTokenSource("server.token in " + cliTokenConfigPath())
 	}
-	return cfg.Token
+	return cfg.Token, nil
+}
+
+// tokenForBaseOrExit is the terminal wrapper for command paths: the refusal
+// happens here, before any client or request exists.
+func tokenForBaseOrExit(cfg *config.RuntimeConfig, base string) string {
+	token, err := resolveCLIToken(cfg, base)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pinchtab: %v\n", err)
+		osExit(1)
+	}
+	return token
+}
+
+var osExit = os.Exit
+
+func loopbackBase(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func cliTokenConfigPath() string {
