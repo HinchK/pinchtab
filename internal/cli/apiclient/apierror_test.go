@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
 func TestIsRouteNotFound(t *testing.T) {
@@ -339,5 +341,49 @@ func TestAFailedClearingSaysNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(unremovable); err != nil {
 		t.Fatalf("precondition: the path was removable after all, so this test proves nothing: %v", err)
+	}
+}
+
+func wireUnauthorizedBody(t *testing.T, code, presented string) []byte {
+	t.Helper()
+	w := httptest.NewRecorder()
+	httpx.Unauthorized(w, code, presented)
+	return w.Body.Bytes()
+}
+
+func TestThe401CasesRenderDistinctMessagesWithTheirCodes(t *testing.T) {
+	missing := renderAPIErrorBody(401, wireUnauthorizedBody(t, httpx.CodeMissingToken, ""))
+	bad := renderAPIErrorBody(401, wireUnauthorizedBody(t, httpx.CodeBadToken, "deadbeef"))
+
+	if !strings.Contains(missing, "(missing_token)") || !strings.Contains(missing, "PINCHTAB_TOKEN") {
+		t.Errorf("missing-token render = %q, want the code surfaced and PINCHTAB_TOKEN named", missing)
+	}
+	if !strings.Contains(bad, "(bad_token)") || !strings.Contains(bad, "--server") {
+		t.Errorf("bad-token render = %q, want the code surfaced and the remote cue", bad)
+	}
+	if missing == bad {
+		t.Errorf("both 401 cases render identically: %q — the collapse this card removes", missing)
+	}
+}
+
+func TestACodedErrorWithNoDetailsSurfacesItsCode(t *testing.T) {
+	got := renderAPIErrorBody(400, []byte(`{"error":"invalid button \"rihgt\"","code":"invalid_mouse_button"}`))
+	if !strings.Contains(got, "(invalid_mouse_button)") {
+		t.Errorf("render = %q; a coded error with no details drops the one machine-readable field the server sent", got)
+	}
+}
+
+func TestARejectedTokenNamesItsSource(t *testing.T) {
+	UseTokenSource("the PINCHTAB_TOKEN environment variable")
+	t.Cleanup(func() { UseTokenSource("") })
+
+	bad := renderAPIErrorBody(401, wireUnauthorizedBody(t, httpx.CodeBadToken, "deadbeef"))
+	if !strings.Contains(bad, "the rejected token came from the PINCHTAB_TOKEN environment variable") {
+		t.Errorf("bad-token render = %q, want the credential's provenance named", bad)
+	}
+
+	missing := renderAPIErrorBody(401, wireUnauthorizedBody(t, httpx.CodeMissingToken, ""))
+	if strings.Contains(missing, "came from") {
+		t.Errorf("missing-token render = %q names a provenance for a credential that was never sent", missing)
 	}
 }

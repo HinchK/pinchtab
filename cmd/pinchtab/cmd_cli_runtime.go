@@ -10,6 +10,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/activity"
 	"github.com/pinchtab/pinchtab/internal/browsers"
 	"github.com/pinchtab/pinchtab/internal/browsers/runtimekit"
+	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
 	"github.com/pinchtab/pinchtab/internal/cli/output"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/spf13/cobra"
@@ -160,15 +161,6 @@ func resolveBaseURL(defaultBase string) string {
 	return defaultBase
 }
 
-// resolveToken returns the auth token from env vars (session takes precedence).
-// Shared by both the full CLI runtime path and the lightweight tab probe.
-func resolveToken() string {
-	if s := os.Getenv("PINCHTAB_SESSION"); s != "" {
-		return s
-	}
-	return os.Getenv("PINCHTAB_TOKEN")
-}
-
 func canAutoStartServerForCLI(cfg *config.RuntimeConfig, baseURL string) bool {
 	if serverURL != "" || os.Getenv("PINCHTAB_SERVER") != "" {
 		return false
@@ -177,10 +169,25 @@ func canAutoStartServerForCLI(cfg *config.RuntimeConfig, baseURL string) bool {
 }
 
 func resolveCLIToken(cfg *config.RuntimeConfig) string {
-	if t := resolveToken(); t != "" {
+	if s := os.Getenv("PINCHTAB_SESSION"); s != "" {
+		apiclient.UseTokenSource("the PINCHTAB_SESSION environment variable")
+		return s
+	}
+	if t := os.Getenv("PINCHTAB_TOKEN"); t != "" {
+		apiclient.UseTokenSource("the PINCHTAB_TOKEN environment variable")
 		return t
 	}
+	if cfg.Token != "" {
+		apiclient.UseTokenSource("server.token in " + cliTokenConfigPath())
+	}
 	return cfg.Token
+}
+
+func cliTokenConfigPath() string {
+	if p := strings.TrimSpace(os.Getenv("PINCHTAB_CONFIG")); p != "" {
+		return p
+	}
+	return config.DefaultConfigPath()
 }
 
 func resolveCLIAgentID() string {

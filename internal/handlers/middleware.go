@@ -98,8 +98,7 @@ func AuthMiddlewareWithSessions(cfg *config.RuntimeConfig, sessions *browsersess
 		creds := authn.CredentialsFromRequest(r)
 		if creds.Value == "" {
 			authn.ClearSessionCookie(w, r, cfg != nil && cfg.TrustProxyHeaders, cookieSecureSetting(cfg))
-			w.Header().Set("WWW-Authenticate", `Bearer realm="pinchtab", error="missing_token"`)
-			httpx.ErrorCode(w, 401, "missing_token", "unauthorized", false, nil)
+			httpx.Unauthorized(w, httpx.CodeMissingToken, "")
 			return
 		}
 
@@ -136,8 +135,7 @@ func AuthMiddlewareWithSessions(cfg *config.RuntimeConfig, sessions *browsersess
 		case authn.MethodHeader:
 			if subtle.ConstantTimeCompare([]byte(creds.Value), []byte(token)) != 1 {
 				authn.ClearSessionCookie(w, r, cfg != nil && cfg.TrustProxyHeaders, cookieSecureSetting(cfg))
-				w.Header().Set("WWW-Authenticate", `Bearer realm="pinchtab", error="bad_token"`)
-				httpx.ErrorCode(w, 401, "bad_token", "unauthorized", false, nil)
+				httpx.Unauthorized(w, httpx.CodeBadToken, creds.Value)
 				return
 			}
 		case authn.MethodCookie:
@@ -149,8 +147,7 @@ func AuthMiddlewareWithSessions(cfg *config.RuntimeConfig, sessions *browsersess
 			}
 			if sessions == nil || !sessions.Validate(creds.Value, token) {
 				authn.ClearSessionCookie(w, r, cfg != nil && cfg.TrustProxyHeaders, cookieSecureSetting(cfg))
-				w.Header().Set("WWW-Authenticate", `Bearer realm="pinchtab", error="bad_token"`)
-				httpx.ErrorCode(w, 401, "bad_token", "unauthorized", false, nil)
+				httpx.Unauthorized(w, httpx.CodeBadToken, "")
 				return
 			}
 			if !cookieAuthAllowed(r) {
@@ -166,8 +163,7 @@ func AuthMiddlewareWithSessions(cfg *config.RuntimeConfig, sessions *browsersess
 			}
 		default:
 			authn.ClearSessionCookie(w, r, cfg != nil && cfg.TrustProxyHeaders, cookieSecureSetting(cfg))
-			w.Header().Set("WWW-Authenticate", `Bearer realm="pinchtab", error="bad_token"`)
-			httpx.ErrorCode(w, 401, "bad_token", "unauthorized", false, nil)
+			httpx.Unauthorized(w, httpx.CodeBadToken, creds.Value)
 			return
 		}
 		next.ServeHTTP(w, r)

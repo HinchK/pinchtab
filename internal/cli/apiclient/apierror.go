@@ -145,9 +145,12 @@ func renderAPIErrorBody(statusCode int, body []byte) string {
 	}
 
 	var b strings.Builder
-	if errResp.Error != "" {
+	switch {
+	case errResp.Error != "" && errResp.Code != "" && errResp.Code != errResp.Error:
+		fmt.Fprintf(&b, "Error %d: %s (%s)\n", statusCode, errResp.Error, errResp.Code)
+	case errResp.Error != "":
 		fmt.Fprintf(&b, "Error %d: %s\n", statusCode, errResp.Error)
-	} else {
+	default:
 		fmt.Fprintf(&b, "Error %d: %s\n", statusCode, string(body))
 	}
 
@@ -156,8 +159,28 @@ func renderAPIErrorBody(statusCode int, body []byte) string {
 		line, _ := errResp.Details["remedy"].(string)
 		b.WriteString(renderGuidance(hint, remedy.Remedy(line)))
 	}
+	b.WriteString(renderGuidance(rejectedTokenProvenance(statusCode, errResp.Code), remedy.None))
 	b.WriteString(renderGuidance(staleTabAdvice(statusCode, body)))
 	return b.String()
+}
+
+// TokenSource is where the credential the CLI just sent came from — resolved at
+// the moment of resolution, recorded as data so rendering an error performs no
+// I/O. The zero value asks for nothing.
+var tokenSource string
+
+// UseTokenSource records the provenance of the token the following requests
+// carry (an env var name, or the config file path the token was read from).
+func UseTokenSource(source string) { tokenSource = source }
+
+// rejectedTokenProvenance names where a rejected credential came from. That
+// single sentence is the fix in the common remote case: the CLI silently sent
+// the LOCAL machine's token to the host --server pointed at.
+func rejectedTokenProvenance(statusCode int, code string) string {
+	if statusCode != http.StatusUnauthorized || code != "bad_token" || tokenSource == "" {
+		return ""
+	}
+	return fmt.Sprintf("the rejected token came from %s", tokenSource)
 }
 
 // renderGuidance is the ONE writer of both guidance slots, so a second producer cannot

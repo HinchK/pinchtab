@@ -77,8 +77,7 @@ func (a *AuthAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 			a.loginLimiter.RecordFailure(clientIP)
 		}
 		authn.AuditWarn(r, "auth.login_failed", "reason", "missing_token")
-		w.Header().Set("WWW-Authenticate", `Bearer realm="pinchtab", error="missing_token"`)
-		httpx.ErrorCode(w, http.StatusUnauthorized, "missing_token", "unauthorized", false, nil)
+		httpx.Unauthorized(w, httpx.CodeMissingToken, "")
 		return
 	}
 
@@ -97,8 +96,7 @@ func (a *AuthAPI) HandleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		authn.ClearSessionCookie(w, r, a.runtime != nil && a.runtime.TrustProxyHeaders, cookieSecureSetting(a.runtime))
 		authn.AuditWarn(r, "auth.login_failed", "reason", "bad_token")
-		w.Header().Set("WWW-Authenticate", `Bearer realm="pinchtab", error="bad_token"`)
-		httpx.ErrorCode(w, http.StatusUnauthorized, "bad_token", "unauthorized", false, nil)
+		httpx.Unauthorized(w, httpx.CodeBadToken, provided)
 		return
 	}
 
@@ -165,20 +163,17 @@ func (a *AuthAPI) HandleElevate(w http.ResponseWriter, r *http.Request) {
 	provided := strings.TrimSpace(req.Token)
 	if provided == "" {
 		authn.AuditWarn(r, "auth.elevation_failed", "reason", "missing_token")
-		w.Header().Set("WWW-Authenticate", `Bearer realm="pinchtab", error="missing_token"`)
-		httpx.ErrorCode(w, http.StatusUnauthorized, "missing_token", "unauthorized", false, nil)
+		httpx.Unauthorized(w, httpx.CodeMissingToken, "")
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
 		authn.AuditWarn(r, "auth.elevation_failed", "reason", "bad_token")
-		w.Header().Set("WWW-Authenticate", `Bearer realm="pinchtab", error="bad_token"`)
-		httpx.ErrorCode(w, http.StatusUnauthorized, "bad_token", "unauthorized", false, nil)
+		httpx.Unauthorized(w, httpx.CodeBadToken, provided)
 		return
 	}
 	if !a.sessions.Elevate(creds.Value, token) {
 		authn.ClearSessionCookie(w, r, a.runtime != nil && a.runtime.TrustProxyHeaders, cookieSecureSetting(a.runtime))
-		w.Header().Set("WWW-Authenticate", `Bearer realm="pinchtab", error="bad_token"`)
-		httpx.ErrorCode(w, http.StatusUnauthorized, "bad_token", "unauthorized", false, nil)
+		httpx.Unauthorized(w, httpx.CodeBadToken, "")
 		return
 	}
 
