@@ -1,11 +1,11 @@
 package fileout
 
 import (
-	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 // This census lives beside the rule it defends, and it walks the MODULE. Two
@@ -14,10 +14,9 @@ import (
 // them they covered the two packages that had the defect and nothing else, so the next
 // auto-naming site, in any third package, would have shipped unseen. Walking from the
 // module root is the same fix the isolated-world boundary census in internal/bridge got
-// after the same blind spot.
-//
-// Not built on internal/srccensus deliberately: that helper reads ONE package's AST for
-// calls and assignments, and this rule is a literal scan across every package.
+// after the same blind spot. srccensus.Tree owns the enumeration — the rule stays a
+// literal scan over each file's text, but the walk exclusions (including the
+// nested-checkout skip a hand-rolled name list missed) are inherited, not remembered.
 
 // timestampLayouts are the second-resolution spellings this census recognises. A stamp is
 // what makes two outputs in the same second collide, so the layout is the signal.
@@ -71,46 +70,18 @@ var autoNamingSites = map[string]string{
 // and an accounted entry whose stamp is gone reds too, so the recorded boundary cannot
 // drift from the real one — a stale entry is how a site that stopped reserving hides.
 func TestNoPackageAutoNamesAFileItThenOverwrites(t *testing.T) {
-	root := moduleRoot(t)
+	// Tree's keys are module-relative slash paths — the shape autoNamingSites was
+	// already keyed on, so the accounted map is unchanged. The vacuity floor the
+	// scanned counter carried moves to Tree's minFiles at the same value.
+	files := srccensus.Tree(t, filepath.Join("..", ".."), 200)
 
 	found := map[string]bool{}
-	scanned := 0
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, file := range files {
+		if buildsASecondResolutionStamp(file.Text) {
+			found[file.Name] = true
 		}
-		if d.IsDir() {
-			if skipCensusDir(d.Name()) && path != root {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		name := d.Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			return nil
-		}
-		body, readErr := os.ReadFile(path) // #nosec G304 -- files walked from this repo's own tree.
-		if readErr != nil {
-			return readErr
-		}
-		scanned++
-		if !buildsASecondResolutionStamp(string(body)) {
-			return nil
-		}
-		rel, relErr := filepath.Rel(root, path)
-		if relErr != nil {
-			return relErr
-		}
-		found[filepath.ToSlash(rel)] = true
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("cannot walk the module, so this census checks nothing: %v", err)
 	}
 
-	if scanned < 200 {
-		t.Fatalf("scanned only %d non-test Go files under %s; the walk is not reaching the module, so this census would pass vacuously", scanned, root)
-	}
 	if len(found) == 0 {
 		t.Fatalf("found no file building a second-resolution timestamp anywhere in the module; either every auto-named output is gone or the layouts this census recognises (%s) no longer appear — re-point it at whatever replaced them rather than deleting it",
 			strings.Join(timestampLayouts, ", "))
@@ -139,33 +110,4 @@ func buildsASecondResolutionStamp(body string) bool {
 		}
 	}
 	return false
-}
-
-func skipCensusDir(name string) bool {
-	switch name {
-	case ".git", "node_modules", "dist", "vendor", ".tools", "testdata":
-		return true
-	}
-	return false
-}
-
-// moduleRoot walks up to the directory holding go.mod rather than counting "../" hops, so
-// moving this package does not silently point the census at a subtree.
-func moduleRoot(t *testing.T) string {
-	t.Helper()
-
-	dir, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("no go.mod found above the working directory; cannot locate the module root")
-		}
-		dir = parent
-	}
 }

@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 const gotestsumBinary = "gotestsum"
@@ -26,7 +28,7 @@ func TestNoGotestsumInvocationHidesTheOutputSummary(t *testing.T) {
 			return err
 		}
 		if d.IsDir() {
-			if skipScanDir(d.Name()) && path != root {
+			if path != root && (srccensus.ExcludedDir(path) || d.Name() == ".tools") {
 				return fs.SkipDir
 			}
 			return nil
@@ -281,14 +283,13 @@ func mayHoldInvocations(path string) bool {
 	return hasScannableExtension(path) || filepath.Ext(path) == ""
 }
 
-func skipScanDir(name string) bool {
-	switch name {
-	case ".git", "node_modules", "dist", "vendor", ".tools":
-		return true
-	}
-	return false
-}
-
+// The walk stays hand-rolled because its subject is scripts and workflow files, which
+// srccensus.Tree (a Go-source enumerator) cannot see — but the directory EXCLUSIONS,
+// including the nested-checkout skip whose absence let a worktree's copy of the test
+// script be counted as a module invocation, are inherited via srccensus.ExcludedDir
+// rather than copied. .tools is a local extra: vendored tool checkouts hold no
+// invocation of this repo's suite.
+//
 // repoRoot walks up to the directory holding go.mod rather than counting "../" hops, so
 // moving this package does not silently point the scan at a subtree.
 func repoRoot(t *testing.T) string {

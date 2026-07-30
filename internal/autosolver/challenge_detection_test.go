@@ -1,11 +1,11 @@
 package autosolver
 
 import (
-	"io/fs"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 // cloudflareTriggerTitles are the three titles isTurnstileChallenge matches.
@@ -50,37 +50,20 @@ func cutAfter(line, token string) (string, bool) {
 }
 
 func TestChallengeTypeHasOneProducer(t *testing.T) {
-	root := filepath.Join("..", "..")
+	// srccensus.Tree owns the enumeration (with the nested-checkout skip the old
+	// name-list walk lacked); its keys are module-relative slash paths, so the
+	// expected producer reads "internal/..." rather than the old walk-root-relative
+	// "../../internal/...". Message change only — the rule is unchanged.
+	files := srccensus.Tree(t, filepath.Join("..", ".."), 100)
+
 	var producers []string
-	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, file := range files {
+		if strings.Contains(file.Text, "ChallengeType:") || assignsIntentChallengeType(file.Name, file.Text) {
+			producers = append(producers, file.Name)
 		}
-		if d.IsDir() {
-			switch d.Name() {
-			case ".git", "node_modules", "dist", "vendor":
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		body, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		src := string(body)
-		if strings.Contains(src, "ChallengeType:") || assignsIntentChallengeType(filepath.ToSlash(path), src) {
-			producers = append(producers, filepath.ToSlash(filepath.Clean(path)))
-		}
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk: %v", err)
 	}
 
-	want := []string{"../../internal/autosolver/challenge_detection.go"}
+	want := []string{"internal/autosolver/challenge_detection.go"}
 	if strings.Join(producers, ",") != strings.Join(want, ",") {
 		t.Fatalf("ChallengeType must be produced only by challenge_detection.go, got %v", producers)
 	}

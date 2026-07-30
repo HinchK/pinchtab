@@ -429,3 +429,48 @@ func TestTestTreeFloorNamesTheFileClassItCounted(t *testing.T) {
 		t.Errorf("floor failure said %q, want it to name the file class counted", got)
 	}
 }
+
+// The census over the census files. Four module-wide guards hand-rolled their walks with
+// name-only skip lists and all four redded under a nested git worktree — the exclusions
+// live here precisely so they are inherited, and a fresh WalkDir opts out of them without
+// anyone deciding to. The rule: a _test.go that enumerates files FROM THE MODULE ROOT must
+// obtain its enumeration from this package — Tree/TestTree for Go-source subjects, or
+// ExcludedDir for a walker whose subject Tree cannot see (devtools' script census).
+// Subtree-scoped walkers (a single package or named subtrees) are outside the rule: a
+// repo-root worktree is outside every root they visit, which safelog records beside its
+// walk.
+func TestEveryModuleRootWalkerObtainsItsEnumerationFromSrccensus(t *testing.T) {
+	files := TestTree(t, filepath.Join("..", ".."), 100)
+
+	moduleRootAnchors := []string{`filepath.Join("..", "..")`, `"../.."`, `"go.mod"`}
+	enumerators := []string{"filepath.WalkDir(", "filepath.Walk(", "filepath.Glob("}
+
+	walkers := 0
+	for _, file := range files {
+		// The owner is exempt by construction: this package's own tests exercise the
+		// walker it exports, and being in-package they reference it unqualified.
+		if strings.HasPrefix(file.Name, "internal/srccensus/") {
+			continue
+		}
+		if !containsAnyMarker(file.Text, moduleRootAnchors) || !containsAnyMarker(file.Text, enumerators) {
+			continue
+		}
+		walkers++
+		if strings.Contains(file.Text, "srccensus.") {
+			continue
+		}
+		t.Errorf("%s enumerates files from the module root with its own walk and never consults srccensus; obtain the file list from srccensus.Tree or srccensus.TestTree, or — for a subject Tree cannot see — inherit the directory exclusions via srccensus.ExcludedDir. A hand-rolled walk loses the nested-checkout skip, and a worktree's copies then red this census with paths that vanish, or silently double its counts", file.Name)
+	}
+	if walkers < 2 {
+		t.Fatalf("found only %d module-root-anchored walker(s) in the whole module; the detector matched almost nothing and would pass vacuously — if the last hand-rooted walkers were converted to Tree, re-point this floor at whatever still walks", walkers)
+	}
+}
+
+func containsAnyMarker(text string, markers []string) bool {
+	for _, marker := range markers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}

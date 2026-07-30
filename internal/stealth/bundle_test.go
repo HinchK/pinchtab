@@ -1,7 +1,6 @@
 package stealth
 
 import (
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +9,7 @@ import (
 	_ "github.com/pinchtab/pinchtab/internal/browsers/chrome"
 	_ "github.com/pinchtab/pinchtab/internal/browsers/cloak"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 func TestNewBundleIncludesSeedLevelAndPopupGuard(t *testing.T) {
@@ -394,34 +394,14 @@ func equalStringSlices(a, b []string) bool {
 const chromeTemplateMarker = "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/"
 
 func TestChromeUserAgentTemplateHasOneOwner(t *testing.T) {
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-
+	// srccensus.Tree owns the enumeration (with the nested-checkout skip the old
+	// walk lacked entirely — it skipped no directory at all). Keys were already
+	// module-relative slash paths, so the owner key is unchanged.
 	owners := map[string]int{}
-	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	for _, file := range srccensus.Tree(t, filepath.Join("..", ".."), 100) {
+		if n := strings.Count(file.Text, chromeTemplateMarker); n > 0 {
+			owners[file.Name] = n
 		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		raw, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		if n := strings.Count(string(raw), chromeTemplateMarker); n > 0 {
-			rel, relErr := filepath.Rel(root, path)
-			if relErr != nil {
-				return relErr
-			}
-			owners[filepath.ToSlash(rel)] = n
-		}
-		return nil
-	})
-	if walkErr != nil {
-		t.Fatal(walkErr)
 	}
 
 	const owner = "internal/stealth/ua.go"

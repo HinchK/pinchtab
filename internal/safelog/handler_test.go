@@ -188,6 +188,12 @@ const (
 	minServerSourceFiles = 5
 )
 
+// sourcePackageDirs is safe from the nested-worktree false positives that hit the
+// module-ROOT censuses by SCOPE, not by exclusion: it walks three named subtrees
+// (cmd, internal, pkg), and a worktree created at the repo root sits outside all of
+// them. That safety is conditional — adding a root here, or a worktree created
+// INSIDE one of these subtrees, puts this walk in the vulnerable class, and then the
+// enumeration belongs on srccensus like the module-wide censuses.
 func sourcePackageDirs(t *testing.T) []string {
 	t.Helper()
 

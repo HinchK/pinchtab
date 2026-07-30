@@ -156,6 +156,15 @@ func TestTree(t testing.TB, root string, minFiles int) []SourceFile {
 	})
 }
 
+// ExcludedDir is the walk-exclusion rule itself — the name skips plus the
+// nested-checkout check — exported for a module-wide walker whose subject is
+// not Go source (scripts, workflows) and so cannot enumerate through Tree.
+// Such a walker inherits the rule by consulting this instead of copying it;
+// a copy is how the nested-worktree hazard regenerated twice already.
+func ExcludedDir(path string) bool {
+	return treeSkipDirs[filepath.Base(path)] || nestedCheckout(path)
+}
+
 func tree(t testing.TB, root string, minFiles int, kind string, include func(path string) bool) []SourceFile {
 	t.Helper()
 
@@ -173,7 +182,7 @@ func tree(t testing.TB, root string, minFiles int, kind string, include func(pat
 			if path == abs {
 				return nil
 			}
-			if treeSkipDirs[entry.Name()] || nestedCheckout(path) {
+			if ExcludedDir(path) {
 				return fs.SkipDir
 			}
 			return nil

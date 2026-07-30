@@ -3,12 +3,10 @@ package cdptk_test
 import (
 	"context"
 	"encoding/base64"
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
-	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +15,7 @@ import (
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/cdptk"
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
@@ -351,53 +350,28 @@ func TestClipViewportAppliesTheNonZeroScaleRule(t *testing.T) {
 // this is the browserless half: exactly one conversion of a cdptk.ScreenshotClip into a
 // page.Viewport in non-test code, and it is the one in this package.
 func TestOnlyCdptkConvertsAScreenshotClipToAViewport(t *testing.T) {
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	// srccensus.Tree owns the enumeration (and with it the nested-checkout skip a
+	// hand-rolled name list missed); its keys are module-relative slash paths, so
+	// the owning-directory check below reads "internal/cdptk" rather than a
+	// walk-root-relative "../..". Message change only — the rule is unchanged.
+	files := srccensus.Tree(t, filepath.Join("..", ".."), 100)
 
-	var scanned, converters int
-	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
+	converters := 0
+	for _, file := range files {
+		if !strings.Contains(file.Text, "page.Viewport{") {
+			continue
 		}
-		if d.IsDir() {
-			if d.Name() == ".git" || d.Name() == "node_modules" || d.Name() == "dist" {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		body, readErr := os.ReadFile(path) // #nosec G304 -- files walked from this repo's own tree.
-		if readErr != nil {
-			return readErr
-		}
-		scanned++
-		src := string(body)
-		if !strings.Contains(src, "page.Viewport{") {
-			return nil
-		}
-		converts, parseErr := buildsViewportFromAReceiversFields(src)
+		converts, parseErr := buildsViewportFromAReceiversFields(file.Text)
 		if parseErr != nil {
-			return fmt.Errorf("parse %s: %w", path, parseErr)
+			t.Fatalf("parse %s: %v", file.Name, parseErr)
 		}
 		if !converts {
-			return nil
+			continue
 		}
 		converters++
-		rel, _ := filepath.Rel(root, path)
-		if filepath.Dir(rel) != filepath.Join("internal", "cdptk") {
-			t.Errorf("%s builds a page.Viewport from a clip's fields; that conversion carries the non-zero-scale rule and belongs to cdptk.ClipViewport alone", rel)
+		if path.Dir(file.Name) != "internal/cdptk" {
+			t.Errorf("%s builds a page.Viewport from a clip's fields; that conversion carries the non-zero-scale rule and belongs to cdptk.ClipViewport alone", file.Name)
 		}
-		return nil
-	})
-	if walkErr != nil {
-		t.Fatalf("cannot scan the repo, so this census checks nothing: %v", walkErr)
-	}
-	if scanned < 100 {
-		t.Fatalf("scanned only %d Go files; this census would pass vacuously", scanned)
 	}
 	if converters == 0 {
 		t.Fatal("found no clip-to-viewport conversion at all; if ClipViewport was renamed or restructured, re-point this census rather than deleting it")
