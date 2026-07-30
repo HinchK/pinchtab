@@ -434,3 +434,30 @@ func TestChromeUserAgentTemplateHasOneOwner(t *testing.T) {
 		t.Errorf("%s spells the template %d times, want 3 (one arm per platform)", owner, owners[owner])
 	}
 }
+
+// The rotate path now refuses an empty UA at Bridge.SetUserAgentOverride, and that
+// guard must not be satisfiable by quietly making the launch override empty too. The
+// launch path does not go through it: emulation.go hands persona.UserAgent to
+// Emulation directly, which needs no guard for a checked reason rather than an
+// assumed one — BuildPersona reduces the version first and ReducedBrowserVersion
+// falls back, so the field cannot be empty whatever the configured version is.
+func TestTheLaunchOverrideUserAgentIsNeverEmpty(t *testing.T) {
+	for _, version := range []string{"", "   ", "144.0.7559.133", "144", "0", "not-a-version"} {
+		for _, customUA := range []string{"", "  "} {
+			persona := BuildPersona(customUA, version)
+			if strings.TrimSpace(persona.UserAgent) == "" {
+				t.Errorf("BuildPersona(%q, %q).UserAgent is empty; the launch path would apply it and blank navigator.userAgent", customUA, version)
+			}
+		}
+	}
+
+	// The field asserted above is the one the launch path applies. Without this the
+	// test would keep passing after the launch override started reading something else.
+	raw, err := os.ReadFile("emulation.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "emulation.SetUserAgentOverride(persona.UserAgent)") {
+		t.Error("emulation.go no longer applies persona.UserAgent, so the non-empty guarantee above is about a field the launch path does not use")
+	}
+}

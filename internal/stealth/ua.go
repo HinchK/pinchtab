@@ -98,13 +98,77 @@ func HostPlatform() string {
 	}
 }
 
+// The /fingerprint endpoint keys its matrix by these lowercase os names while the
+// persona vocabulary above spells the same three platforms "Windows", "macOS" and
+// "Linux". Two spellings of one thing drift, so the endpoint's names are DERIVED
+// from the persona's here rather than written a second time: fingerprintOSKeys is
+// the only place the two meet, and the endpoint keys its matrix by these constants.
+const (
+	FingerprintOSWindows = "windows"
+	FingerprintOSMac     = "mac"
+	FingerprintOSLinux   = "linux"
+)
+
+var fingerprintOSKeys = map[string]string{
+	PlatformWindows: FingerprintOSWindows,
+	PlatformMacOS:   FingerprintOSMac,
+	PlatformLinux:   FingerprintOSLinux,
+}
+
+// FingerprintOSKey is the endpoint's os key for a persona platform.
+func FingerprintOSKey(platform string) (string, bool) {
+	key, ok := fingerprintOSKeys[platform]
+	return key, ok
+}
+
+// HostFingerprintOS is the endpoint's os key for the machine this process runs on,
+// which is what a fingerprint request naming no os means: the caller delegated the
+// choice, and the honest answer is this host. A Linux host does advertise a rarer
+// desktop population than Windows would, and coherence still wins — a Linux browser
+// claiming Windows contradicts everything else it leaks (fonts, WebGL, UA-CH
+// platform), which is louder than a rare but consistent platform. The launch persona
+// already resolves from the host through GOOS, so defaulting the endpoint to the
+// host is what makes the two agree. This is not the same question as os: "random",
+// which means "surprise me within the usual desktop population" and deliberately
+// draws over the weighted rows only.
+func HostFingerprintOS() string {
+	key, _ := FingerprintOSKey(HostPlatform())
+	return key
+}
+
+// ResolveFingerprintOS translates a requested os into the endpoint's key, accepting
+// either vocabulary in any case — "macOS" and "mac" and "MACOS" all resolve. It is
+// an alias translation rather than case folding because "macOS" to "mac" is not a
+// case difference, and "macOS" is the spelling a caller who has read PlatformMacOS
+// will send. It reports false for anything else, so a genuinely unknown os stays a
+// refusal that names what the caller sent.
+func ResolveFingerprintOS(requested string) (string, bool) {
+	trimmed := strings.TrimSpace(requested)
+	if trimmed == "" {
+		return "", false
+	}
+	for platform, key := range fingerprintOSKeys {
+		if strings.EqualFold(trimmed, platform) || strings.EqualFold(trimmed, key) {
+			return key, true
+		}
+	}
+	return "", false
+}
+
 // resolveUserAgent honours an explicit custom UA verbatim and otherwise builds the
 // host's. It stays unexported: the only correct entry point is BuildPersona, which
 // reduces the version first — an exported form invites a caller to pass
 // cfg.BrowserVersion straight through and reintroduce the version drift the
 // fingerprint endpoint already had to be resynced for by hand.
+//
+// A blank-but-present custom UA counts as absent. Returning it verbatim made the
+// persona's UserAgent empty, and the launch path applies that field to
+// Emulation.setUserAgentOverride directly — so a configured "  " blanked
+// navigator.userAgent on every page, which is the one thing the whole persona exists
+// to avoid. It also makes the guarantee the rotate path's guard relies on true
+// without exception: persona.UserAgent is never empty.
 func resolveUserAgent(userAgent, chromeVersion string) string {
-	if userAgent != "" {
+	if strings.TrimSpace(userAgent) != "" {
 		return userAgent
 	}
 	return ChromeUserAgent(HostPlatform(), chromeVersion)

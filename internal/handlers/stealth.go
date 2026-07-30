@@ -145,7 +145,7 @@ func (h *Handlers) fingerprintMatrix() map[string]map[string]fingerprint {
 	linuxChrome := stealth.ChromeUserAgent(stealth.PlatformLinux, reducedBrowserVersion)
 
 	osConfigs := map[string]map[string]fingerprint{
-		"windows": {
+		stealth.FingerprintOSWindows: {
 			"chrome": {
 				UserAgent: windowsChrome,
 				Platform:  "Win32",
@@ -157,7 +157,7 @@ func (h *Handlers) fingerprintMatrix() map[string]map[string]fingerprint {
 				Vendor:    "Google Inc.",
 			},
 		},
-		"mac": {
+		stealth.FingerprintOSMac: {
 			"chrome": {
 				UserAgent: macChrome,
 				Platform:  "MacIntel",
@@ -174,7 +174,7 @@ func (h *Handlers) fingerprintMatrix() map[string]map[string]fingerprint {
 		// adding it there would change what a default request returns — but it is a
 		// fallback candidate for any browser no weighted row holds, so a browser only
 		// this row carries is reachable through os: "random" rather than refused.
-		"linux": {
+		stealth.FingerprintOSLinux: {
 			"chrome": {
 				UserAgent: linuxChrome,
 				Platform:  "Linux x86_64",
@@ -205,13 +205,32 @@ type weightedFingerprintOS struct {
 	weight float64
 }
 
+// resolveFingerprintBrowser defaults an absent browser to chrome and matches a
+// named one against the matrix keys case-insensitively, so "Chrome" is the same
+// request as "chrome". An unknown value is returned untouched: the refusal must name
+// what the caller sent rather than a normalised guess.
+func resolveFingerprintBrowser(matrix map[string]map[string]fingerprint, requested string) string {
+	trimmed := strings.TrimSpace(requested)
+	if trimmed == "" {
+		return "chrome"
+	}
+	for _, browsers := range matrix {
+		for name := range browsers {
+			if strings.EqualFold(trimmed, name) {
+				return name
+			}
+		}
+	}
+	return trimmed
+}
+
 // randomFingerprintOSWeights is the weighting behind os: "random". linux is absent
 // on purpose: adding it here would change what a default request returns. Absent
 // from the WEIGHTING is not absent from the draw — fingerprintOSCandidates falls
 // back to the unweighted rows when no weighted one holds the requested browser.
 var randomFingerprintOSWeights = []weightedFingerprintOS{
-	{name: "windows", weight: 0.7},
-	{name: "mac", weight: 0.3},
+	{name: stealth.FingerprintOSWindows, weight: 0.7},
+	{name: stealth.FingerprintOSMac, weight: 0.3},
 }
 
 // fingerprintOSCandidates is the set os: "random" draws from for one browser: the
@@ -297,15 +316,30 @@ func (h *Handlers) generateFingerprint(req fingerprintRequest) (fingerprint, err
 	fp := fingerprint{}
 	osConfigs := h.fingerprintMatrix()
 
-	browser := req.Browser
-	if browser == "" {
-		browser = "chrome"
+	browser := resolveFingerprintBrowser(osConfigs, req.Browser)
+
+	// A request naming no os is not a miss: it named nothing to contradict, so the
+	// host's own identity is the answer — see stealth.HostFingerprintOS for why
+	// coherence beats population size here. A named os is translated through the
+	// persona vocabulary, so "macOS" resolves the way "mac" does; anything else is
+	// left exactly as it arrived, so a genuine unknown still refuses naming what the
+	// caller sent.
+	os := req.OS
+	switch {
+	case strings.TrimSpace(os) == "":
+		os = stealth.HostFingerprintOS()
+	case os == "random":
+		// Left exactly as it arrived: the sentinel is compared verbatim, so this
+		// card widens nothing about what random accepts or draws over.
+	default:
+		if key, ok := stealth.ResolveFingerprintOS(os); ok {
+			os = key
+		}
 	}
 
 	// The random pick is constrained by the browser, so the message can only ever
 	// name an os the caller supplied. A refusal reporting "windows" to someone who
 	// asked for os: "random" is not actionable — retrying may well succeed.
-	os := req.OS
 	if os == "random" {
 		picked, ok := resolveRandomFingerprintOS(osConfigs, browser)
 		if !ok {

@@ -291,13 +291,7 @@ func TestGenerateFingerprintAgreesWithTheLaunchPersonaOnThisHost(t *testing.T) {
 	const version = "144.0.7559.133"
 	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: version}}
 
-	hostOS := map[string]string{
-		stealth.PlatformWindows: "windows",
-		stealth.PlatformMacOS:   "mac",
-		stealth.PlatformLinux:   "linux",
-	}[stealth.HostPlatform()]
-
-	fp, err := h.generateFingerprint(fingerprintRequest{OS: hostOS, Browser: "chrome"})
+	fp, err := h.generateFingerprint(fingerprintRequest{OS: stealth.HostFingerprintOS(), Browser: "chrome"})
 	if err != nil {
 		t.Fatalf("generateFingerprint: %v", err)
 	}
@@ -807,5 +801,158 @@ func TestEveryBrowserTheMatrixHoldsIsReachableThroughRandom(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The simplest possible call, and the one an agent or a curl writes first. It named
+// no os, so there is nothing to contradict by answering with this host's identity —
+// and the launch persona already resolves from the host, so this is also what makes
+// the endpoint and the browser PinchTab launches agree. Refusing it was PIN-121's
+// rule applied one input too far.
+func TestGenerateFingerprintWithNoOSAnswersWithThisHostsIdentity(t *testing.T) {
+	const version = "144.0.7559.133"
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: version}}
+	persona := stealth.BuildPersona("", version)
+
+	fp, err := h.generateFingerprint(fingerprintRequest{})
+	if err != nil {
+		t.Fatalf("the bare request was refused: %v", err)
+	}
+	if fp.UserAgent != persona.UserAgent {
+		t.Fatalf("bare request userAgent =\n  %q\nwant this host's persona\n  %q", fp.UserAgent, persona.UserAgent)
+	}
+	if fp.Platform != persona.NavigatorPlatform {
+		t.Errorf("bare request platform = %q, want the persona's %q", fp.Platform, persona.NavigatorPlatform)
+	}
+	if fp.UserAgent == "" {
+		t.Error("the bare request produced an empty userAgent, which is the blank identity this card exists to stop")
+	}
+}
+
+// identityOf is the part of a fingerprint that the os/browser selection decides.
+// CPUCores, Memory and a random screen are drawn per call, so comparing whole
+// structs would compare the dice.
+func identityOf(fp fingerprint) [3]string {
+	return [3]string{fp.UserAgent, fp.Platform, fp.Vendor}
+}
+
+// Two vocabularies for the same three platforms: internal/stealth spells them
+// Windows/macOS/Linux, the matrix keys them windows/mac/linux. "macOS" is the one
+// that dies under case folding — and it is the spelling a caller who has read
+// stealth.PlatformMacOS will send — so every member is asserted, both spellings and
+// mixed case, against the fingerprint the canonical key returns.
+func TestEverySpellingOfAPlatformResolvesToTheSameFingerprint(t *testing.T) {
+	const version = "144.0.7559.133"
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: version}}
+
+	for _, tc := range []struct{ key, spelling string }{
+		{key: stealth.FingerprintOSWindows, spelling: stealth.PlatformWindows},
+		{key: stealth.FingerprintOSWindows, spelling: "WINDOWS"},
+		{key: stealth.FingerprintOSMac, spelling: stealth.PlatformMacOS},
+		{key: stealth.FingerprintOSMac, spelling: "MacOS"},
+		{key: stealth.FingerprintOSLinux, spelling: stealth.PlatformLinux},
+		{key: stealth.FingerprintOSLinux, spelling: " linux "},
+	} {
+		t.Run(tc.spelling, func(t *testing.T) {
+			want, err := h.generateFingerprint(fingerprintRequest{OS: tc.key})
+			if err != nil {
+				t.Fatalf("os=%q was refused: %v", tc.key, err)
+			}
+			got, err := h.generateFingerprint(fingerprintRequest{OS: tc.spelling})
+			if err != nil {
+				t.Fatalf("os=%q was refused although it is the same platform as %q: %v", tc.spelling, tc.key, err)
+			}
+			if identityOf(got) != identityOf(want) {
+				t.Errorf("os=%q returned\n  %v\nwant the same identity as os=%q\n  %v", tc.spelling, identityOf(got), tc.key, identityOf(want))
+			}
+		})
+	}
+
+	// The browser name folds too, and an absent one still defaults to chrome.
+	lower, err := h.generateFingerprint(fingerprintRequest{OS: stealth.FingerprintOSWindows, Browser: "edge"})
+	if err != nil {
+		t.Fatalf("browser=edge was refused: %v", err)
+	}
+	for _, spelling := range []string{"Edge", "EDGE", " edge "} {
+		got, err := h.generateFingerprint(fingerprintRequest{OS: stealth.FingerprintOSWindows, Browser: spelling})
+		if err != nil {
+			t.Fatalf("browser=%q was refused: %v", spelling, err)
+		}
+		if identityOf(got) != identityOf(lower) {
+			t.Errorf("browser=%q returned %v, want the same identity as browser=edge %v", spelling, identityOf(got), identityOf(lower))
+		}
+	}
+}
+
+// The host default must not become a catch-all: an os that is not a platform at all
+// is still a miss, and PIN-121's refusal is what a caller needs to see. Asserted
+// alongside an unlisted pair, because the two refusals share the message.
+func TestAnUnknownOSStillRefusesRatherThanFallingBackToTheHost(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+	pairs := availableFingerprintPairs(h.fingerprintMatrix())
+
+	for _, tc := range []struct {
+		name string
+		req  fingerprintRequest
+	}{
+		{name: "unknown os", req: fingerprintRequest{OS: "ubuntu"}},
+		{name: "unknown os with a known browser", req: fingerprintRequest{OS: "ubuntu", Browser: "chrome"}},
+		{name: "unlisted pair", req: fingerprintRequest{OS: stealth.FingerprintOSLinux, Browser: "edge"}},
+		{name: "unknown browser", req: fingerprintRequest{OS: stealth.FingerprintOSWindows, Browser: "firefox"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fp, err := h.generateFingerprint(tc.req)
+			if err == nil {
+				t.Fatalf("%+v was accepted with userAgent %q; the host default must not swallow a genuine miss", tc.req, fp.UserAgent)
+			}
+			if fp != (fingerprint{}) {
+				t.Errorf("refused request returned a populated fingerprint: %+v", fp)
+			}
+			for _, want := range pairs {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q omits the available pair %q", err, want)
+				}
+			}
+		})
+	}
+
+	// The message names what the caller sent, not a translated or defaulted value.
+	_, err := h.generateFingerprint(fingerprintRequest{OS: "ubuntu"})
+	if err == nil {
+		t.Fatal("os=ubuntu was accepted")
+	}
+	if !strings.Contains(err.Error(), `"ubuntu"`) {
+		t.Errorf("error %q does not name the os the caller sent", err)
+	}
+	if strings.Contains(err.Error(), stealth.HostFingerprintOS()+`" with`) {
+		t.Errorf("error %q reports the host default instead of the requested os", err)
+	}
+}
+
+// The two vocabularies must stay in step: every platform internal/stealth knows maps
+// to a key the matrix holds, and every os key the matrix holds is one internal/stealth
+// owns. Derived from both sides, so adding a row to either without the other reds.
+func TestThePlatformAndMatrixVocabulariesAgree(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+	matrix := h.fingerprintMatrix()
+
+	owned := map[string]bool{}
+	for _, platform := range []string{stealth.PlatformWindows, stealth.PlatformMacOS, stealth.PlatformLinux} {
+		key, ok := stealth.FingerprintOSKey(platform)
+		if !ok {
+			t.Fatalf("internal/stealth knows platform %q but maps it to no fingerprint os key", platform)
+		}
+		owned[key] = true
+		if _, held := matrix[key]; !held {
+			t.Errorf("platform %q maps to os key %q, which the matrix does not hold — a request naming that platform would refuse", platform, key)
+		}
+	}
+	for key := range matrix {
+		if !owned[key] {
+			t.Errorf("the matrix holds os key %q that no platform in internal/stealth maps to, so no persona spelling can reach it", key)
+		}
+	}
+	if got := stealth.HostFingerprintOS(); !owned[got] {
+		t.Fatalf("HostFingerprintOS() = %q, which is not one of the keys it owns", got)
 	}
 }
