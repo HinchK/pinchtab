@@ -190,19 +190,6 @@ func (h *Handlers) resolveNavigateBrowser(w http.ResponseWriter, r *http.Request
 	return routing, true
 }
 
-// idpiAllowlistHint appends a copy-pasteable remediation to an IDPI domain-block
-// error so the user isn't left knowing only the cause. Widening the allowlist
-// reduces isolation, so the hint says so and points at the security guide.
-func idpiAllowlistHint(url string) string {
-	host, ok := navguard.ExtractHost(url)
-	if !ok || strings.TrimSpace(host) == "" {
-		return ""
-	}
-	return fmt.Sprintf(". To allow it, run: pinchtab config set security.allowedDomains "+
-		"\"$(pinchtab config get security.allowedDomains),%s\" then: pinchtab server restart "+
-		"(this widens what automation may reach — see docs/guides/security.md)", host)
-}
-
 // idpiScannerHint appends remediation to an IDPI content-scanner block, which
 // otherwise states only the cause. Unlike the domain allowlist, a scanner block
 // can be a false positive on legitimate pages, so the fix is to relax strict mode
@@ -225,7 +212,9 @@ func (h *Handlers) validateNavigateTargets(w http.ResponseWriter, r *http.Reques
 	domainResult := h.IDPIGuard.CheckDomain(url)
 	if domainResult.Blocked {
 		h.recordNavigateRequest(r, tabID, url)
-		httpx.Error(w, http.StatusForbidden, fmt.Errorf("navigation blocked by IDPI: %s%s", domainResult.Reason, idpiAllowlistHint(url)))
+		writeIDPIDomainBlocked(w,
+			fmt.Sprintf("navigation blocked by IDPI: %s", domainResult.Reason),
+			idpiRefusedURLDetails(url))
 		return navTargets{}, false
 	}
 	if domainResult.Threat {

@@ -5,29 +5,35 @@ import (
 	"testing"
 )
 
-func TestIDPIAllowlistHint(t *testing.T) {
-	hint := idpiAllowlistHint("https://example.com/some/path")
-	if !strings.Contains(hint, "example.com") {
-		t.Errorf("hint should name the blocked host; got %q", hint)
+// The allowlist guidance used to be appended to the error MESSAGE. It now lives
+// in details.remedy, which the CLI renders on its own line — but it has to keep
+// the properties that made it usable: name the host, append to the current value
+// instead of replacing it, and carry no placeholder a user would paste literally.
+func TestIDPIAllowlistRemedy(t *testing.T) {
+	remedy := idpiAllowlistRemedy("https://example.com/some/path")
+	if !strings.Contains(remedy, "example.com") {
+		t.Errorf("remedy should name the blocked host; got %q", remedy)
 	}
-	if !strings.Contains(hint, "security.allowedDomains") {
-		t.Errorf("hint should name the allowlist config key; got %q", hint)
+	if !strings.Contains(remedy, "security.allowedDomains") {
+		t.Errorf("remedy should name the allowlist config key; got %q", remedy)
 	}
-	if !strings.Contains(hint, "server restart") {
-		t.Errorf("hint should remind the user to restart; got %q", hint)
+	if !strings.Contains(remedy, "server restart") {
+		t.Errorf("remedy should remind the user to restart; got %q", remedy)
 	}
-	// Must be copy-paste-safe: no "…" placeholder (which users paste literally),
-	// and it should preserve existing domains via a `config get` append.
-	if strings.ContainsRune(hint, '…') {
-		t.Errorf("hint must not contain the … placeholder; got %q", hint)
+	if strings.ContainsRune(remedy, '…') {
+		t.Errorf("remedy must not contain the … placeholder; got %q", remedy)
 	}
-	if !strings.Contains(hint, "config get security.allowedDomains") {
-		t.Errorf("hint should append to existing domains via config get; got %q", hint)
+	if !strings.Contains(remedy, "config get security.allowedDomains") {
+		t.Errorf("remedy should append to existing domains via config get; got %q", remedy)
 	}
 
-	// Hostless targets (e.g. about:blank) can't be allowlisted, so no hint.
-	if got := idpiAllowlistHint("about:blank"); got != "" {
-		t.Errorf("expected empty hint for hostless url; got %q", got)
+	// A hostless target cannot be allowlisted, so it gets no remedy rather than
+	// one that cannot work.
+	if got := idpiAllowlistRemedy("about:blank"); got != "" {
+		t.Errorf("expected no remedy for a hostless url; got %q", got)
+	}
+	if _, ok := idpiRefusedURLDetails("about:blank")["remedy"]; ok {
+		t.Error("a hostless refused URL must not carry a remedy")
 	}
 }
 
