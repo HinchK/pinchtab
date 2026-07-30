@@ -86,6 +86,21 @@ func rejectMultiStepSubmitClicks(w http.ResponseWriter, actions []bridge.ActionR
 	return true
 }
 
+// A stale ref whose target submits a form is refused, and the only correct next move is to
+// re-read the page and click the ref that is actually there. `--submit` is the wrong advice
+// from this state — it answers 404 from the same staleness — so the remedy is the snapshot.
+const staleSubmitTargetHint = "The ref came from an older snapshot and now resolves to a control that submits a form. Nothing was dispatched. Take a fresh snapshot and click the ref it reports; do not retry this ref, and do not add --submit, which cannot resolve a stale ref either."
+
+var reSnapshot = remedy.Declare("pinchtab snap")
+
+func staleSubmitTargetDetails() map[string]any {
+	details := remedy.Details(staleSubmitTargetHint, reSnapshot.Remedy())
+	// The submit family reports dispatch state on every refusal, and this one is the
+	// reason the card exists: nothing was clicked.
+	details["dispatched"] = false
+	return details
+}
+
 const navigationChangedHint = "The action navigated the page, which the guard reports unless the request declares it: set waitNav true to wait for the navigation, or submit true when the click submits a form. From the CLI those are --wait-nav and --submit."
 
 // The ref stays a placeholder: this guard reports on an action it did not receive the ref
@@ -437,9 +452,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	refMissing := selectorResolution.refMissing
 	submitClick := bridge.IsSubmitClick(req.Kind, req)
 	if submitClick && refMissing {
-		httpx.ErrorCode(w, http.StatusNotFound, "submit_target_not_found", fmt.Sprintf("ref %s not found - take a /snapshot first", req.Ref), false, map[string]any{
-			"dispatched": false,
-		})
+		httpx.ErrorCode(w, http.StatusNotFound, "submit_target_not_found", fmt.Sprintf("ref %s not found - take a /snapshot first", req.Ref), false, staleSubmitTargetDetails())
 		return
 	}
 	if submitClick && req.NodeID <= 0 {
@@ -508,6 +521,11 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(actionErr, bridge.ErrInvalidActionRequest) {
 			httpx.ErrorCode(w, http.StatusBadRequest, "invalid_action_request", fmt.Sprintf("action %s: %v", req.Kind, actionErr), false, nil)
+			return
+		}
+		if errors.Is(actionErr, ErrStaleSubmitTarget) {
+			httpx.ErrorCode(w, http.StatusNotFound, "submit_target_not_found",
+				fmt.Sprintf("ref %s not found - take a /snapshot first", req.Ref), false, staleSubmitTargetDetails())
 			return
 		}
 		if errors.Is(actionErr, bridge.ErrUnexpectedNavigation) {

@@ -149,6 +149,48 @@ func (h *Handlers) cacheActionIntent(tabID string, req bridge.ActionRequest) {
 	})
 }
 
+// ErrStaleSubmitTarget refuses a click whose ref is stale and whose target submits a
+// form. The exactly-once rule the submit path already states cannot be honoured by an
+// automatic retry, and the DOM — not the request — decides whether a click submits: an
+// agent working from a snapshot row `e2:button "Place order"` has no way to declare it.
+//
+// Submit-detection is a PROXY for non-idempotency, not a solution to it. A delete link is
+// as dangerous and the DOM cannot say so; a policy for non-idempotent clicks at large is a
+// separate decision and this refusal does not claim to cover the class.
+var ErrStaleSubmitTarget = errors.New("ref is stale and its target submits a form; take a /snapshot first and click the fresh ref")
+
+// submitControlJS reports whether the node is the control that submits a form. A var so a
+// test can stub it: the guard's own effect is only visible against a real page, and the
+// stub is how the pre-fix dispatch is reproduced. A <button>
+// inside a form submits by DEFAULT — an absent type attribute means submit — which is the
+// case an agent is least likely to have declared. The closest ancestor is consulted so a
+// click landing on a <span> inside the button answers for the button.
+var submitControlJS = `function() {
+  var el = this.closest ? this.closest('button, input') : null;
+  if (!el || !el.form) return false;
+  var type = (el.getAttribute('type') || '').toLowerCase();
+  if (el.tagName.toLowerCase() === 'input') return type === 'submit' || type === 'image';
+  return type === '' || type === 'submit';
+}`
+
+// recoveredNodeSubmits answers whether a click about to be dispatched at a recovered node
+// would submit a form. Only clicks are asked: no other action kind dispatches a submit,
+// and a read of the DOM per recovery attempt is not free.
+//
+// A failed read answers false. The alternative — refusing when the page cannot be read —
+// would turn every transport hiccup into a refusal on the ordinary stale-link path, which
+// is the far more common one.
+func (h *Handlers) recoveredNodeSubmits(ctx context.Context, req bridge.ActionRequest, nodeID int64) bool {
+	if bridge.CanonicalActionKind(req.Kind) != bridge.ActionClick || nodeID <= 0 {
+		return false
+	}
+	var submits bool
+	if err := h.Bridge.CallFunctionOnNode(ctx, nodeID, submitControlJS, nil, &submits); err != nil {
+		return false
+	}
+	return submits
+}
+
 func (h *Handlers) executeAction(ctx context.Context, req bridge.ActionRequest, cfg *config.RuntimeConfig) (map[string]any, string, error) {
 	req.Kind = bridge.CanonicalActionKind(req.Kind)
 
@@ -169,12 +211,20 @@ func (h *Handlers) executeActionResilient(ctx context.Context, req *bridge.Actio
 	submitClick := bridge.IsSubmitClick(req.Kind, *req)
 	if refMissing {
 		if submitClick {
-			return nil, "", nil, fmt.Errorf("click submit target is unresolved; automatic recovery is disabled")
+			return nil, "", nil, ErrStaleSubmitTarget
 		}
 		rr, recRes, recErr := h.Recovery.Attempt(
 			ctx, resolvedTabID, req.Ref, req.Kind,
 			func(c context.Context, _ string, nodeID int64) (map[string]any, error) {
 				req.NodeID = nodeID
+				// The caller did not declare a submit, but whether a click submits a form
+				// is a property of the page. Recovery is about to dispatch at a node it
+				// MATCHED rather than resolved, and a submit dispatched at a guessed
+				// target cannot be taken back — so this refuses before the click rather
+				// than reporting afterwards.
+				if h.recoveredNodeSubmits(c, *req, nodeID) {
+					return nil, ErrStaleSubmitTarget
+				}
 				if secErr := h.refreshActionSecondaryTargets(c, resolvedTabID, req); secErr != nil {
 					return nil, secErr
 				}
@@ -183,6 +233,17 @@ func (h *Handlers) executeActionResilient(ctx context.Context, req *bridge.Actio
 			},
 		)
 		if recErr != nil {
+			// The action RAN: the click landed and moved the page, and the guard reports
+			// that navigation from inside the callback. Wrapping it as "ref not found and
+			// recovery failed" asserted two false things about a dispatch that happened,
+			// and the natural retry then repeats it. The navigation is passed through
+			// unwrapped so this answers what the same click answers with a fresh ref.
+			if errors.Is(recErr, bridge.ErrUnexpectedNavigation) || errors.Is(recErr, ErrStaleSubmitTarget) {
+				// No recovery block either: nothing was re-resolved. A block reading
+				// recovered:true with a low-confidence score is a record of a match made
+				// against the page the click already navigated to.
+				return nil, "", nil, recErr
+			}
 			return nil, "", &rr, fmt.Errorf("ref %s not found and recovery failed: %w", req.Ref, recErr)
 		}
 		return recRes, "", &rr, nil
