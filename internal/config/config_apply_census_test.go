@@ -33,15 +33,7 @@ var refusedRatherThanCarried = map[string]refusedKey{
 // acceptedAndDropped holds the keys `config set` still takes and the value in effect never
 // reflects. Each is a filed defect, not a licence: the entry names the mechanism and the
 // card that owns it, and the census reds again the moment one of them starts working.
-var acceptedAndDropped = map[string]string{
-	"browser.proxy.username":       "PIN-178: a proxy block with no server counts as absent, so the save drops it",
-	"browser.proxy.password":       "PIN-178: a proxy block with no server counts as absent, so the save drops it",
-	"browser.proxy.bypassList":     "PIN-178: a proxy block with no server counts as absent, so the save drops it",
-	"browser.proxy.geo.timezone":   "PIN-178: a proxy block with no server counts as absent, so the save drops it",
-	"browser.proxy.geo.locale":     "PIN-178: a proxy block with no server counts as absent, so the save drops it",
-	"browser.proxy.geo.webrtcIP":   "PIN-178: a proxy block with no server counts as absent, so the save drops it",
-	"browser.proxy.geo.countryISO": "PIN-178: a proxy block with no server counts as absent, so the save drops it",
-}
+var acceptedAndDropped = map[string]string{}
 
 // censusValueFor holds the values the generic candidate list cannot guess: a key whose
 // setter or loader takes only a fixed vocabulary needs a member of it, or the census would

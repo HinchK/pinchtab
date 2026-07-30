@@ -305,7 +305,9 @@ func geoProviderForConfig(cfg *config.RuntimeConfig) geo.Provider {
 }
 
 func resolveLaunchGeoAlignment(parent context.Context, cfg *config.RuntimeConfig) (launchGeoAlignment, error) {
-	if cfg == nil || cfg.Proxy.IsZero() || cfg.Proxy.Geo == nil || cfg.Proxy.Geo.IsZero() {
+	// HasNoServer, not IsZero: launch alignment matches geo to the PROXY's egress, so
+	// with no server there is no egress to align with.
+	if cfg == nil || cfg.Proxy.HasNoServer() || cfg.Proxy.Geo == nil || cfg.Proxy.Geo.IsZero() {
 		return launchGeoAlignment{}, nil
 	}
 	if !config.CloakBrowserActive(cfg) {

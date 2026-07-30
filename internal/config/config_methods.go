@@ -1,6 +1,9 @@
 package config
 
-import "path/filepath"
+import (
+	"fmt"
+	"path/filepath"
+)
 
 // EnabledSensitiveEndpoints returns the names of sensitive endpoint families
 // that are currently enabled in the runtime configuration.
@@ -74,3 +77,19 @@ const ActivityStateDirRefusal = "observability.activity.stateDir is not settable
 // and the wording it replaces ("remove the key") named an action no shipped command
 // performs, while riding a diagnostic that aborted every later config write off a TTY.
 const ActivityStateDirAdvisory = "observability.activity.stateDir is ignored: " + activityStateDirReason
+
+// ProxyServerRequiredAdvisory reports a proxy block that carries credentials, a bypass
+// list or geo overrides but no server: the values are kept and PinchTab uses none of
+// them, because with no server there is no proxy. It takes the block's own path so the
+// key it tells the reader to set is the one that block actually needs — browser.proxy
+// and each browser.targets.<name>.proxy have their own.
+//
+// An ADVISORY and not a validation error, deliberately, and the reason is the path
+// rather than the severity: validation errors gate `config set` through a confirm that
+// answers no off a TTY, so making this one gate would refuse the very write that
+// completes the block — `config set browser.proxy.username` would abort for every agent
+// and pipe, which is the failure the advisory tier was introduced to end. Unlike the
+// other advisory here there IS an action, so this one names it.
+func ProxyServerRequiredAdvisory(field string) string {
+	return fmt.Sprintf("%s has no server, so nothing it holds is used: set %s.server to a scheme://host:port to make it take effect", field, field)
+}

@@ -670,5 +670,24 @@ func FileConfigAdvisories(fc *FileConfig) []string {
 	if strings.TrimSpace(fc.Observability.Activity.StateDir) != "" {
 		advisories = append(advisories, ActivityStateDirAdvisory)
 	}
+	advisories = append(advisories, proxyServerAdvisories(fc)...)
+	return advisories
+}
+
+// proxyServerAdvisories reports every proxy block that holds something but no server.
+// Target proxies are walked too: their blocks were never dropped at save, so a
+// serverless one has always been kept and silently unused — the same state this card's
+// defect produced for browser.proxy, one level down.
+func proxyServerAdvisories(fc *FileConfig) []string {
+	var advisories []string
+	if !fc.Browser.Proxy.IsZero() && fc.Browser.Proxy.HasNoServer() {
+		advisories = append(advisories, ProxyServerRequiredAdvisory("browser.proxy"))
+	}
+	for _, name := range SortedBrowserTargetNames(fc.Browser.Targets) {
+		target := fc.Browser.Targets[name]
+		if !target.Proxy.IsZero() && target.Proxy.HasNoServer() {
+			advisories = append(advisories, ProxyServerRequiredAdvisory(fmt.Sprintf("browser.targets.%s.proxy", name)))
+		}
+	}
 	return advisories
 }

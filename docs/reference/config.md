@@ -433,6 +433,15 @@ on top of CloakBrowser's native patches.
 Advanced CloakBrowser flags can still go through `browser.extraFlags` when they
 are not PinchTab-owned lifecycle flags.
 
+`browser.proxy.server` is the prerequisite for the rest of the block:
+`browser.proxy.username`, `password`, `bypassList` and every `browser.proxy.geo.*`
+key do nothing without it, because there is no proxy to route through,
+authenticate to, or align geo with. The values are still kept — `config set`
+writes them, `config get` returns them, and setting the server afterwards makes
+them take effect — and PinchTab reports the incomplete block on each config read
+or write until a server is set. Clearing `browser.proxy.server` turns the proxy
+off and leaves the other values on disk for the next server.
+
 `browser.proxy.geo` is a CloakBrowser fingerprint-alignment hint. When a proxy
 server and geo block are configured for a CloakBrowser target, PinchTab maps the
 geo values into native CloakBrowser fingerprint flags unless the target already

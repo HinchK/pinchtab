@@ -55,7 +55,9 @@ func cloakBrowserConfigJSONFromFile(c CloakBrowserConfig) *cloakBrowserConfigJSO
 	}
 }
 
-// browserProxyJSONFromFile returns nil when proxy is disabled so omitempty drops the field.
+// browserProxyJSONFromFile returns nil only when NOTHING is set, so omitempty drops the
+// field. It used to drop the whole block whenever server was unset, which discarded
+// credentials, bypass list and geo that `config set` had just reported as saved.
 func browserProxyJSONFromFile(p BrowserProxyConfig) *BrowserProxyConfig {
 	if p.IsZero() {
 		return nil

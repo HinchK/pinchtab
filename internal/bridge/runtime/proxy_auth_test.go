@@ -246,3 +246,19 @@ func captureSlog(t *testing.T, fn func()) string {
 	fn()
 	return buf.String()
 }
+
+// The CDP credential path asks "is there a proxy to authenticate to", which is a
+// different question from "is anything set": a block holding credentials and no server
+// is kept on disk and reported to the operator, but there is nothing to answer for it.
+func TestProxyAuthNeedsAServerNotJustCredentials(t *testing.T) {
+	credentialsOnly := config.BrowserProxyConfig{Username: "bob", Password: "hunter2"}
+	if ProxyAuthEnabled(credentialsOnly) {
+		t.Error("proxy auth is enabled with credentials and no server, so a Fetch listener runs for a proxy that does not exist")
+	}
+
+	completed := credentialsOnly
+	completed.Server = "http://proxy.example:8080"
+	if !ProxyAuthEnabled(completed) {
+		t.Error("proxy auth is not enabled once the server is set, so credentials set before the server stay unused")
+	}
+}
