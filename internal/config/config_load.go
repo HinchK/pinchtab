@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pinchtab/pinchtab/internal/autosolver"
 	"github.com/pinchtab/pinchtab/internal/browsers"
 )
 
@@ -279,7 +280,7 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 			SolverTimeoutSec:  30,
 			RetryBaseDelayMs:  500,
 			RetryMaxDelayMs:   10000,
-			Solvers:           []string{"cloudflare", "semantic"},
+			Solvers:           autosolver.DefaultConfig().Solvers,
 			LLMFallback:       false,
 		},
 	}

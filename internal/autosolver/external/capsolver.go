@@ -67,7 +67,7 @@ func (c *Capsolver) CanHandle(ctx context.Context, page autosolver.Page) (bool, 
 // (create task → poll result → inject token) must be filled in
 // with the Capsolver API v1 protocol.
 func (c *Capsolver) Solve(ctx context.Context, page autosolver.Page, executor autosolver.ActionExecutor) (*autosolver.Result, error) {
-	result := &autosolver.Result{SolverUsed: autosolver.CapsolverSolverName}
+	result := &autosolver.Result{SolverUsed: c.Name()}
 
 	if c.config.APIKey == "" {
 		result.Error = "capsolver API key not configured"

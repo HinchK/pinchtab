@@ -11,8 +11,15 @@ import (
 	"github.com/pinchtab/pinchtab/internal/solver"
 )
 
+// cloudflareSolverName is this package's owner of the legacy registry identity:
+// the registration key, Name() and Result.Solver all read it. autosolver's
+// solvers.Cloudflare answers to the same spelling in the other registry, and that
+// equality is deliberately uncoupled — two registries with two Solver interfaces
+// means renaming one must not rename the other.
+const cloudflareSolverName = "cloudflare"
+
 func init() {
-	solver.MustRegister("cloudflare", &CloudflareSolver{})
+	solver.MustRegister(cloudflareSolverName, &CloudflareSolver{})
 }
 
 // CloudflareSolver detects and solves Cloudflare Turnstile/Interstitial challenges.
@@ -20,7 +27,7 @@ func init() {
 // and polls for resolution.
 type CloudflareSolver struct{}
 
-func (s *CloudflareSolver) Name() string { return "cloudflare" }
+func (s *CloudflareSolver) Name() string { return cloudflareSolverName }
 
 // CanHandle checks the page title for known Cloudflare challenge indicators.
 func (s *CloudflareSolver) CanHandle(ctx context.Context) (bool, error) {
@@ -38,7 +45,7 @@ func (s *CloudflareSolver) Solve(ctx context.Context, opts solver.Options) (*sol
 		maxAttempts = 3
 	}
 
-	result := &solver.Result{Solver: "cloudflare"}
+	result := &solver.Result{Solver: s.Name()}
 
 	var title string
 	if err := chromedp.Run(ctx, chromedp.Title(&title)); err != nil {

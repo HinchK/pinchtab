@@ -30,7 +30,7 @@ func (s *Cloudflare) CanHandle(_ context.Context, page autosolver.Page) (bool, e
 // Solve attempts to resolve the Cloudflare challenge by locating the
 // Turnstile widget and clicking the checkbox.
 func (s *Cloudflare) Solve(ctx context.Context, page autosolver.Page, executor autosolver.ActionExecutor) (*autosolver.Result, error) {
-	result := &autosolver.Result{SolverUsed: "cloudflare"}
+	result := &autosolver.Result{SolverUsed: s.Name()}
 
 	if !isCFChallenge(page.Title()) {
 		result.Solved = true

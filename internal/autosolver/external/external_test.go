@@ -7,12 +7,9 @@ import (
 	"github.com/pinchtab/pinchtab/internal/autosolver"
 )
 
-// The reported solver identity has to be the registered one. Both were spelled as
-// literals beside a Name() that already read the constant, so renaming the constant
-// changed what registers while leaving what the Result reports — and nothing in the
-// tree noticed. These solvers are skeletons today, which is why it stayed latent
-// rather than shipping a wrong name; it is also why it would have survived until
-// the first real implementation.
+// The reported solver identity has to be the registered one. Solve now builds it
+// from Name(), which makes drift impossible rather than merely detectable; this
+// test reds if either one goes back to spelling the name a second time.
 func TestSolverUsedMatchesTheRegisteredName(t *testing.T) {
 	for _, solver := range []autosolver.Solver{
 		NewCapsolver(CapsolverConfig{}),

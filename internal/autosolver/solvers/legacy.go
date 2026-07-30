@@ -35,20 +35,21 @@ func (a *LegacyAdapter) CanHandle(ctx context.Context, _ autosolver.Page) (bool,
 	return a.solver.CanHandle(ctx)
 }
 
-// Solve delegates to the legacy solver's Solve method.
-// The legacy solver uses the chromedp context directly from ctx.
+// Solve delegates to the legacy solver's Solve method. Both paths report
+// a.Name() as the solver identity: legacyResult.Solver is json:"omitempty" and a
+// legacy solver may leave it unset, which reported an empty name on success.
 func (a *LegacyAdapter) Solve(ctx context.Context, page autosolver.Page, _ autosolver.ActionExecutor) (*autosolver.Result, error) {
 	legacyResult, err := a.solver.Solve(ctx, legacySolver.Options{MaxAttempts: 3})
 	if err != nil {
 		return &autosolver.Result{
-			SolverUsed: a.solver.Name(),
+			SolverUsed: a.Name(),
 			Error:      err.Error(),
 		}, err
 	}
 
 	return &autosolver.Result{
 		Solved:     legacyResult.Solved,
-		SolverUsed: legacyResult.Solver,
+		SolverUsed: a.Name(),
 		Attempts:   legacyResult.Attempts,
 		FinalTitle: legacyResult.Title,
 	}, nil

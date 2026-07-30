@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/pinchtab/pinchtab/internal/autosolver"
 )
 
 // CurrentConfigVersion is bumped when config schema changes require migration or wizard re-run.
@@ -276,7 +278,7 @@ func DefaultFileConfig() FileConfig {
 			SolverTimeoutSec:  &autoSolverSolverTimeoutSec,
 			RetryBaseDelayMs:  &autoSolverRetryBaseDelayMs,
 			RetryMaxDelayMs:   &autoSolverRetryMaxDelayMs,
-			Solvers:           []string{"cloudflare", "semantic"},
+			Solvers:           autosolver.DefaultConfig().Solvers,
 			LLMFallback:       &autoSolverLLMFallback,
 		},
 	}

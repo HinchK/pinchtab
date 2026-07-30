@@ -4,8 +4,8 @@ import "time"
 
 // SemanticSolverName is what the built-in semantic stage answers to. It is a
 // stage rather than a registry solver, so it has no Name() method to own its
-// name — this constant is that owner, for the attempt entries it reports and
-// for the names autoSolver.solvers accepts.
+// name — this constant is that owner, and catalog reads it to include the stage
+// among the names autoSolver.solvers accepts.
 const SemanticSolverName = "semantic"
 
 // IntentType classifies the detected page state.
