@@ -580,7 +580,8 @@ func EffectiveConfigValue(path string) (string, error) {
 // answer, so reading the file would report something nothing acts on:
 //
 //	scheduler.*                      a configured zero means "use the default" here
-//	observability.activity.stateDir  applyFileConfig never copies it; the path derives
+//	observability.activity.stateDir  the path derives from server.stateDir; a file value
+//	                                 is refused at config set and warned about at load
 func runtimeSettlesTheValue(path string) bool {
 	return strings.HasPrefix(path, "scheduler.") || path == "observability.activity.stateDir"
 }

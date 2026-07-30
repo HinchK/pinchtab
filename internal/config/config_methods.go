@@ -56,3 +56,11 @@ func (cfg *RuntimeConfig) ActivityLogDir() string {
 }
 
 const activityLogSubdir = "activity"
+
+// ActivityStateDirRefusal is the one wording behind refusing observability.activity.stateDir
+// at `config set` and warning about it at validation: the location is derived, so a file
+// value would be accepted and then discarded. It names the derived path and why the
+// derivation exists, because a user reaching for the key wants the logs elsewhere and
+// deserves to learn why that is not on offer.
+const ActivityStateDirRefusal = "observability.activity.stateDir is not settable: activity logs are always written to <server.stateDir>/" + activityLogSubdir +
+	" so two instances cannot share a log directory; set server.stateDir to move them"

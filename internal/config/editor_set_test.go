@@ -1,6 +1,9 @@
 package config
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestSetConfigValue_AllowedDomainsValidation(t *testing.T) {
 	tests := []struct {
@@ -417,5 +420,38 @@ func TestSetBrowsersDefaultRejectsUnknownBrowser(t *testing.T) {
 	}
 	if fc.Browsers.Default != "cloak" {
 		t.Fatalf("Default = %q, want normalized cloak", fc.Browsers.Default)
+	}
+}
+
+// The refusal has to say more than no: it names the directory the logs go to, the reason
+// the location is not the operator's to choose, and what to set instead. Properties rather
+// than the sentence, so a reword stays free.
+func TestActivityStateDirRefusalCarriesTheReasonAndTheRemedy(t *testing.T) {
+	for _, want := range []string{
+		"observability.activity.stateDir",
+		"<server.stateDir>/activity",
+		"cannot share a log directory",
+		"set server.stateDir",
+	} {
+		if !strings.Contains(ActivityStateDirRefusal, want) {
+			t.Errorf("ActivityStateDirRefusal = %q, want it to carry %q", ActivityStateDirRefusal, want)
+		}
+	}
+}
+
+func TestSetActivityStateDirIsRefusedRatherThanSilentlyIgnored(t *testing.T) {
+	fc := &FileConfig{}
+	err := SetConfigValue(fc, "observability.activity.stateDir", "/tmp/elsewhere")
+	if err == nil {
+		t.Fatal("config set observability.activity.stateDir was accepted; the runtime never reads it")
+	}
+	if err.Error() != ActivityStateDirRefusal {
+		t.Errorf("refusal = %q, want %q", err.Error(), ActivityStateDirRefusal)
+	}
+	if fc.Observability.Activity.StateDir != "" {
+		t.Errorf("StateDir = %q, want the refused value left unwritten", fc.Observability.Activity.StateDir)
+	}
+	if err := SetConfigValue(fc, "observability.activity.retentionDays", "7"); err != nil {
+		t.Fatalf("the neighbouring activity keys must stay settable: %v", err)
 	}
 }

@@ -313,6 +313,9 @@ func ValidateFileConfig(fc *FileConfig) []error {
 			Message: fmt.Sprintf("must be > 0 (got %d)", *fc.Observability.Activity.RetentionDays),
 		})
 	}
+	if strings.TrimSpace(fc.Observability.Activity.StateDir) != "" {
+		errs = append(errs, fmt.Errorf("%s; remove the key, the file value is ignored", ActivityStateDirRefusal))
+	}
 	if fc.Sessions.Dashboard.IdleTimeoutSec != nil && *fc.Sessions.Dashboard.IdleTimeoutSec <= 0 {
 		errs = append(errs, ValidationError{
 			Field:   "sessions.dashboard.idleTimeoutSec",

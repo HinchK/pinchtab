@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -1190,5 +1191,41 @@ func TestValidateFileConfig_DefaultSolversAreKnown(t *testing.T) {
 		if !catalog.IsKnown(name) {
 			t.Errorf("default config names solver %q, which validation rejects (known: %v)", name, catalog.Names())
 		}
+	}
+}
+
+// A file that already carries the key keeps loading — validation errors are non-fatal
+// diagnostics here — but it no longer does so in silence: the same reason the setter gives
+// is reported, so the operator learns the value is dead rather than discovering it never
+// took effect.
+func TestValidateFileConfigWarnsAboutActivityStateDirWithoutBreakingTheLoad(t *testing.T) {
+	root := t.TempDir()
+	body := `{"server":{"stateDir":` + quoteJSON(root) + `},
+		"observability":{"activity":{"stateDir":"/tmp/elsewhere"}}}`
+	writeConfigForGet(t, body)
+
+	fc, _, err := LoadFileConfig()
+	if err != nil {
+		t.Fatalf("LoadFileConfig() error = %v; a file carrying the key must still load", err)
+	}
+	found := ""
+	for _, e := range ValidateFileConfig(fc) {
+		if strings.Contains(e.Error(), "observability.activity.stateDir") {
+			found = e.Error()
+		}
+	}
+	if found == "" {
+		t.Fatal("validation said nothing about a file carrying observability.activity.stateDir")
+	}
+	if !strings.Contains(found, ActivityStateDirRefusal) {
+		t.Errorf("validation warning = %q, want it to carry the same reason %q", found, ActivityStateDirRefusal)
+	}
+
+	cfg, _, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v; the warning must not make an existing config unloadable", err)
+	}
+	if want := filepath.Join(root, "activity"); cfg.ActivityLogDir() != want {
+		t.Errorf("ActivityLogDir() = %q, want the derived %q", cfg.ActivityLogDir(), want)
 	}
 }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -239,7 +240,7 @@ func setActivityField(a *ActivityFileConfig, field, value string) error {
 		}
 		a.RetentionDays = &n
 	case "stateDir":
-		a.StateDir = value
+		return errors.New(ActivityStateDirRefusal)
 	default:
 		return fmt.Errorf("unknown field observability.activity.%s", field)
 	}

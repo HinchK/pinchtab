@@ -662,6 +662,12 @@ headers correctly.
 }
 ```
 
+Activity logs are always written to `<server.stateDir>/activity`, so two instances cannot
+end up sharing one log directory. `observability.activity.stateDir` is therefore not
+settable — `config set` refuses it and a file that carries it loads with a warning — and
+`config get observability.activity.stateDir` reports the derived directory in effect. Move
+the logs with `server.stateDir`.
+
 `server.trustProxyHeaders` should stay `false` unless PinchTab is behind a trusted reverse proxy that overwrites `Forwarded` and `X-Forwarded-*` headers. Do not enable it on direct-exposure deployments or behind proxies that pass client-supplied forwarding headers through unchanged.
 
 ## Legacy Flat Format
