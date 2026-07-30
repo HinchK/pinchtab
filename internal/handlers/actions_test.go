@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -685,4 +686,198 @@ func TestHandleAction_NavigationChangedCarriesHintAndRemedy(t *testing.T) {
 	if got, _ := resp.Details["url"].(string); got != "https://pinchtab.com/docs/" {
 		t.Fatalf("details[url] = %q, want the resulting URL", got)
 	}
+}
+
+// The GET convenience form of /action is served by the bridge front, and it decoded no
+// scroll delta and carried no presence flag: every scroll moved one 120px notch and said
+// success, whether the caller asked for 400px or for an explicit zero. The delta rule has a
+// single owner in the bridge (resolveScrollDelta), and it reads ScrollX/ScrollY plus the
+// presence flags — so the whole defect is what this decoder hands it.
+func TestActionQueryDecodesScrollDeltasAndTheirPresence(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		query      string
+		wantScroll [2]int
+		wantDelta  [2]int
+		wantHasS   bool
+		wantHasD   bool
+	}{
+		{
+			name:       "the requested scroll delta reaches the request",
+			query:      "kind=scroll&scrollY=400",
+			wantScroll: [2]int{0, 400},
+			wantHasS:   true,
+		},
+		{
+			name:       "a horizontal scroll delta too",
+			query:      "kind=scroll&scrollX=-250",
+			wantScroll: [2]int{-250, 0},
+			wantHasS:   true,
+		},
+		{
+			name:       "an explicit zero scroll is explicit, not absent",
+			query:      "kind=scroll&scrollY=0",
+			wantScroll: [2]int{0, 0},
+			wantHasS:   true,
+		},
+		{
+			name:      "an explicit zero wheel delta is explicit too",
+			query:     "kind=mouse-wheel&deltaY=0",
+			wantDelta: [2]int{0, 0},
+			wantHasD:  true,
+		},
+		{
+			name:      "a wheel delta reaches the request with its presence flag",
+			query:     "kind=mouse-wheel&deltaY=400",
+			wantDelta: [2]int{0, 400},
+			wantHasD:  true,
+		},
+		{
+			name:  "no delta key at all leaves both flags clear, so the notch still applies",
+			query: "kind=scroll",
+		},
+		{
+			name:  "an empty value is not a delta",
+			query: "kind=scroll&scrollY=",
+		},
+		{
+			name:     "the explicit presence parameter is honoured on its own",
+			query:    "kind=scroll&hasScroll=true",
+			wantHasS: true,
+		},
+		{
+			name:     "and its wheel twin",
+			query:    "kind=mouse-wheel&hasDelta=true",
+			wantHasD: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req, ok := decodeActionRequest(rec, httptest.NewRequest(http.MethodGet, "/action?"+tc.query, nil))
+
+			if !ok {
+				t.Fatalf("decode refused %q: %s", tc.query, rec.Body.String())
+			}
+			if got := [2]int{req.ScrollX, req.ScrollY}; got != tc.wantScroll {
+				t.Errorf("scrollX/scrollY = %v, want %v — the delta the caller asked for was discarded", got, tc.wantScroll)
+			}
+			if got := [2]int{req.DeltaX, req.DeltaY}; got != tc.wantDelta {
+				t.Errorf("deltaX/deltaY = %v, want %v", got, tc.wantDelta)
+			}
+			if req.HasScroll != tc.wantHasS {
+				t.Errorf("HasScroll = %v, want %v — the resolver reads this to tell an explicit zero from an absent delta", req.HasScroll, tc.wantHasS)
+			}
+			if req.HasDelta != tc.wantHasD {
+				t.Errorf("HasDelta = %v, want %v", req.HasDelta, tc.wantHasD)
+			}
+		})
+	}
+}
+
+// PARITY, derived from the request type rather than from a list of fields someone remembered:
+// for every JSON key bridge.ActionRequest declares, the GET query form and the POST body form
+// must decode to the same request. That is the guard this defect needed — scrollX/scrollY were
+// simply missing from a hand-written decoder, and nothing could see the omission. A field wired
+// into one branch only now reds by name.
+//
+// queryUndecodedActionFields RECORDS what the GET form cannot express; it is not an
+// endorsement. A caller needing one of these must POST.
+var queryUndecodedActionFields = map[string]string{
+	"hasText":   "derived: the flag comes from the presence of text/value, so it is not a parameter of its own",
+	"hasToXY":   "derived: the flag comes from the presence of toX/toY",
+	"mode":      "the GET form cannot express it; a caller needing it must POST",
+	"frameW":    "the GET form cannot express it; a caller needing it must POST",
+	"frameH":    "the GET form cannot express it; a caller needing it must POST",
+	"modifiers": "the GET form cannot express it; a caller needing a key chord must POST",
+	"dragX":     "the GET form cannot express it; a caller needing a drag must POST",
+	"dragY":     "the GET form cannot express it; a caller needing a drag must POST",
+	"toNodeId":  "the GET form cannot express it; a caller needing a drag destination by node must POST",
+	"waitNav":   "the GET form cannot express it; a caller needing to wait for navigation must POST",
+	"fast":      "the GET form cannot express it; a caller needing it must POST",
+	"humanize":  "the GET form cannot express it; a caller needing humanized input must POST",
+}
+
+func TestActionQueryAndBodyDecodeToTheSameRequest(t *testing.T) {
+	fields := reflect.VisibleFields(reflect.TypeOf(bridge.ActionRequest{}))
+	if len(fields) == 0 {
+		t.Fatal("ActionRequest declares no fields; this parity guard would pass vacuously")
+	}
+
+	compared := 0
+	for _, field := range fields {
+		key, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if key == "" || key == "-" {
+			continue
+		}
+		if reason, excused := queryUndecodedActionFields[key]; excused {
+			if reason == "" {
+				t.Errorf("%q is excused with no reason", key)
+			}
+			continue
+		}
+
+		value, ok := parityValueFor(field.Type)
+		if !ok {
+			t.Errorf("%q has type %s, which this guard cannot drive — extend it rather than excusing the field", key, field.Type)
+			continue
+		}
+
+		fromQuery, okQuery := decodeActionRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/action?"+key+"="+value, nil))
+		body := fmt.Sprintf(`{"%s":%s}`, key, jsonLiteral(field.Type, value))
+		fromBody, okBody := decodeActionRequest(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/action", bytes.NewReader([]byte(body))))
+
+		if !okQuery || !okBody {
+			t.Errorf("%q: decode refused (query ok=%v, body ok=%v)", key, okQuery, okBody)
+			continue
+		}
+		if !reflect.DeepEqual(fromQuery, fromBody) {
+			t.Errorf("%q decodes differently on the two forms — the GET convenience form silently drops or mis-carries it:\n  query %+v\n  body  %+v", key, fromQuery, fromBody)
+		}
+		compared++
+	}
+
+	if compared == 0 {
+		t.Fatal("no field was compared; the guard is not exercising either decoder")
+	}
+	for key := range queryUndecodedActionFields {
+		if !declaresActionJSONKey(key) {
+			t.Errorf("%q is recorded as undecodable but ActionRequest no longer declares it — the record is stale", key)
+		}
+	}
+}
+
+func declaresActionJSONKey(key string) bool {
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(bridge.ActionRequest{})) {
+		if name, _, _ := strings.Cut(field.Tag.Get("json"), ","); name == key {
+			return true
+		}
+	}
+	return false
+}
+
+func parityValueFor(t reflect.Type) (string, bool) {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	switch t.Kind() {
+	case reflect.String:
+		return "z", true
+	case reflect.Bool:
+		return "true", true
+	case reflect.Int, reflect.Int64:
+		return "7", true
+	case reflect.Float64:
+		return "7.5", true
+	}
+	return "", false
+}
+
+func jsonLiteral(t reflect.Type, value string) string {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() == reflect.String {
+		return `"` + value + `"`
+	}
+	return value
 }

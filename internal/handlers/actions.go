@@ -217,8 +217,28 @@ func decodeActionRequest(w http.ResponseWriter, r *http.Request) (bridge.ActionR
 			d.Bool("autoSwitch", &autoSwitch)
 			req.AutoSwitch = &autoSwitch
 		}
-		d.Int("deltaX", &req.DeltaX)
-		d.Int("deltaY", &req.DeltaY)
+		if d.present("scrollX") {
+			d.Int("scrollX", &req.ScrollX)
+			req.HasScroll = true
+		}
+		if d.present("scrollY") {
+			d.Int("scrollY", &req.ScrollY)
+			req.HasScroll = true
+		}
+		var hasScrollParam bool
+		d.Bool("hasScroll", &hasScrollParam)
+		req.HasScroll = req.HasScroll || hasScrollParam
+		if d.present("deltaX") {
+			d.Int("deltaX", &req.DeltaX)
+			req.HasDelta = true
+		}
+		if d.present("deltaY") {
+			d.Int("deltaY", &req.DeltaY)
+			req.HasDelta = true
+		}
+		var hasDeltaParam bool
+		d.Bool("hasDelta", &hasDeltaParam)
+		req.HasDelta = req.HasDelta || hasDeltaParam
 		req.Browser = q.Get("browser")
 		if err := d.Err(); err != nil {
 			httpx.Error(w, 400, err)
