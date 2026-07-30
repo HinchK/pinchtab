@@ -106,10 +106,39 @@ func (a *SessionAPI) handleGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	sess, ok := a.store.Get(id)
 	if !ok {
-		httpx.ErrorCode(w, http.StatusNotFound, "session_not_found", "session not found", false, nil)
+		respondSessionNotFound(w, id)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, sess)
+}
+
+// tokenSuppliedForIDDetails explains the one mistake these endpoints cannot otherwise
+// explain: `session create` hands the caller a TOKEN and every id-taking endpoint here
+// rejects it, so the refusal reads as already-gone and the likely next action is to
+// shrug and leave a live session running. The two values are distinguishable exactly,
+// so the refusal names which one arrived rather than guessing.
+//
+// callerSessionID is the id of the session the request is authenticated AS, when it is
+// authenticated as one at all. Handing that back is safe — the caller already holds
+// that session's secret — and it is the whole remedy, so they need no second command.
+// Returns nil for anything that is not a token, leaving the plain refusal alone.
+func tokenSuppliedForIDDetails(supplied, callerSessionID string) map[string]any {
+	if !session.LooksLikeToken(supplied) {
+		return nil
+	}
+	remedy := "pinchtab session info (with PINCHTAB_SESSION set) prints the id, or pinchtab session list"
+	if callerSessionID != "" {
+		remedy = "pinchtab session revoke " + callerSessionID
+	}
+	return map[string]any{
+		"hint":   "that is a session TOKEN, not a session id — these endpoints take the id so an operator can end a session without holding its secret",
+		"remedy": remedy,
+	}
+}
+
+func respondSessionNotFound(w http.ResponseWriter, supplied string) {
+	httpx.ErrorCode(w, http.StatusNotFound, "session_not_found", "session not found", false,
+		tokenSuppliedForIDDetails(supplied, ""))
 }
 
 func (a *SessionAPI) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +166,12 @@ func (a *SessionAPI) handleRevoke(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if sess.ID != id {
-			httpx.ErrorCode(w, http.StatusForbidden, "forbidden", "session callers may only revoke their own session", false, nil)
+			// The path a caller following the product's own instructions takes: with
+			// PINCHTAB_SESSION exported, revoking "$PINCHTAB_SESSION" lands HERE rather
+			// than on the 404, and "may only revoke their own session" is then actively
+			// misleading — this IS their own session, named by the wrong value.
+			httpx.ErrorCode(w, http.StatusForbidden, "forbidden", "session callers may only revoke their own session", false,
+				tokenSuppliedForIDDetails(id, sess.ID))
 			return
 		}
 	case authn.MethodHeader, authn.MethodCookie:
@@ -151,7 +185,7 @@ func (a *SessionAPI) handleRevoke(w http.ResponseWriter, r *http.Request) {
 		remainingTabIDs = append(remainingTabIDs, a.sessionTabIDs(id)...)
 	}
 	if !a.store.Revoke(id) {
-		httpx.ErrorCode(w, http.StatusNotFound, "session_not_found", "session not found", false, nil)
+		respondSessionNotFound(w, id)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, map[string]any{

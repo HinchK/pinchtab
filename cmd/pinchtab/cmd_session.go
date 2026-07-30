@@ -11,6 +11,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type sessionCreateResult struct {
+	ID     string `json:"id"`
+	Token  string `json:"sessionToken"`
+	Status string `json:"status"`
+}
+
+// printSessionCreated splits the two values by stream on purpose. The token is the only
+// thing on stdout, because the documented usage captures it with $(...). The id goes to
+// stderr as a hint: it is the handle `session revoke` takes, and withholding it is why
+// revoking your own session used to need a list-and-correlate detour through
+// `session list`.
+func printSessionCreated(result sessionCreateResult) {
+	fmt.Println(result.Token)
+	if result.ID != "" {
+		output.Hint("session id " + result.ID + " — revoke takes the id: pinchtab session revoke " + result.ID)
+	}
+}
+
 func init() {
 	sessionCmd := &cobra.Command{
 		Use:     "session",
@@ -76,10 +94,7 @@ func init() {
 				if statusCode >= 400 {
 					apiclient.ExitWithAPIError(statusCode, rawBody)
 				}
-				var result struct {
-					Token  string `json:"sessionToken"`
-					Status string `json:"status"`
-				}
+				var result sessionCreateResult
 				if err := json.Unmarshal(rawBody, &result); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: failed to parse session response\n")
 					os.Exit(1)
@@ -89,7 +104,7 @@ func init() {
 					output.Hint("create a new session: pinchtab session create --agent-id <id>")
 					os.Exit(1)
 				}
-				fmt.Println(result.Token)
+				printSessionCreated(result)
 			})
 		},
 	}

@@ -678,19 +678,19 @@ func (s *Store) writeSnapshot(job snapshotJob) {
 }
 
 func generateSessionID() (string, error) {
-	buf := make([]byte, 8)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return "ses_" + hex.EncodeToString(buf), nil
+	return generatePrefixedHex(idRandomBytes)
 }
 
 func generateToken() (string, error) {
-	buf := make([]byte, 24)
+	return generatePrefixedHex(tokenRandomBytes)
+}
+
+func generatePrefixedHex(size int) (string, error) {
+	buf := make([]byte, size)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return "ses_" + hex.EncodeToString(buf), nil
+	return IDPrefix + hex.EncodeToString(buf), nil
 }
 
 func hashToken(token string) [32]byte {
