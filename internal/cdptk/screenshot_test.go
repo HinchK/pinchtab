@@ -3,6 +3,10 @@ package cdptk_test
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -375,9 +379,11 @@ func TestOnlyCdptkConvertsAScreenshotClipToAViewport(t *testing.T) {
 		if !strings.Contains(src, "page.Viewport{") {
 			return nil
 		}
-		// A clip conversion reads a clip's fields; scaledScreenshotClip synthesises a
-		// viewport-covering clip from width/height instead and is not one.
-		if !strings.Contains(src, "clip.Width") || !strings.Contains(src, "clip.Height") {
+		converts, parseErr := buildsViewportFromAReceiversFields(src)
+		if parseErr != nil {
+			return fmt.Errorf("parse %s: %w", path, parseErr)
+		}
+		if !converts {
 			return nil
 		}
 		converters++
@@ -395,5 +401,137 @@ func TestOnlyCdptkConvertsAScreenshotClipToAViewport(t *testing.T) {
 	}
 	if converters == 0 {
 		t.Fatal("found no clip-to-viewport conversion at all; if ClipViewport was renamed or restructured, re-point this census rather than deleting it")
+	}
+}
+
+// buildsViewportFromAReceiversFields reports whether src builds a page.Viewport by
+// copying two or more of its field values off the SAME receiver, whatever that receiver
+// is called. Matching the field reads as text keyed the census to one spelling: the
+// identical conversion through a local or parameter named anything else went unseen,
+// which is the hole this shape closes.
+//
+// TWO rather than all, and this is the part a later simplification would break: cdptk's
+// own converter takes Scale from a normalised local, so a rule demanding every field be
+// a selector would miss the converter the census exists to find. Two is also what keeps
+// scaledScreenshotClip out — it synthesises from float64 locals and reads a single
+// selector, opts.Scale.
+//
+// Syntactic on purpose. "A selector on a *cdptk.ScreenshotClip" would need go/types and
+// real package loading to know what a receiver is; the two-on-one-receiver shape draws
+// the same line with the standard parser, and over this tree it flags exactly the one
+// legitimate converter.
+func buildsViewportFromAReceiversFields(src string) (bool, error) {
+	file, err := parser.ParseFile(token.NewFileSet(), "src.go", src, 0)
+	if err != nil {
+		return false, err
+	}
+
+	found := false
+	ast.Inspect(file, func(node ast.Node) bool {
+		lit, ok := node.(*ast.CompositeLit)
+		if !ok || !isPageViewportLiteral(lit.Type) {
+			return true
+		}
+		fieldsPerReceiver := map[string]int{}
+		for _, elt := range lit.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			sel, ok := kv.Value.(*ast.SelectorExpr)
+			if !ok {
+				continue
+			}
+			receiver, ok := sel.X.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			fieldsPerReceiver[receiver.Name]++
+		}
+		for _, fields := range fieldsPerReceiver {
+			if fields >= 2 {
+				found = true
+			}
+		}
+		return true
+	})
+	return found, nil
+}
+
+func isPageViewportLiteral(expr ast.Expr) bool {
+	sel, ok := expr.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	pkg, ok := sel.X.(*ast.Ident)
+	return ok && pkg.Name == "page" && sel.Sel.Name == "Viewport"
+}
+
+// TestTheClipToViewportCensusIsBlindToTheReceiverName pins the census's own rule against
+// the shapes that matter, so the guard cannot quietly stop catching the thing it was
+// widened for. The two evasions are the acceptance: identical conversions differing only
+// in what the receiver is called. The nesting cases prove the walk descends — an earlier
+// AST census in this repo missed a literal inside a call operand.
+func TestTheClipToViewportCensusIsBlindToTheReceiverName(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		flagged bool
+		src     string
+	}{
+		{"cdptk's own converter, Scale from a local", true, `package p
+func ClipViewport(clip *ScreenshotClip) *page.Viewport {
+	scale := clip.Scale
+	return &page.Viewport{X: clip.X, Y: clip.Y, Width: clip.Width, Height: clip.Height, Scale: scale}
+}`},
+		{"scaledScreenshotClip's synthesis", false, `package p
+func scaledScreenshotClip(opts ScreenshotOpts, width, height float64) *page.Viewport {
+	return &page.Viewport{X: 0, Y: 0, Width: width, Height: height, Scale: opts.Scale}
+}`},
+		{"re-open-coded through a renamed local", true, `package p
+func f(clip *cdptk.ScreenshotClip) *page.Viewport {
+	sc := clip
+	return &page.Viewport{X: sc.X, Y: sc.Y, Width: sc.Width, Height: sc.Height, Scale: sc.Scale}
+}`},
+		{"re-open-coded through a renamed parameter", true, `package p
+func f(region *cdptk.ScreenshotClip) *page.Viewport {
+	return &page.Viewport{X: region.X, Y: region.Y, Width: region.Width, Height: region.Height}
+}`},
+		{"nested in a function literal", true, `package p
+func f(sc *cdptk.ScreenshotClip) {
+	run(func() *page.Viewport { return &page.Viewport{X: sc.X, Y: sc.Y, Width: sc.Width, Height: sc.Height} })
+}`},
+		{"nested in a composite literal", true, `package p
+func f(sc *cdptk.ScreenshotClip) {
+	params := map[string]any{"clip": &page.Viewport{X: sc.X, Y: sc.Y, Width: sc.Width, Height: sc.Height}}
+	_ = params
+}`},
+		{"nested in a call argument", true, `package p
+func f(sc *cdptk.ScreenshotClip) {
+	capture(&page.Viewport{X: sc.X, Y: sc.Y, Width: sc.Width, Height: sc.Height})
+}`},
+		{"one field off a receiver", false, `package p
+func f(sc *cdptk.ScreenshotClip) *page.Viewport {
+	return &page.Viewport{X: 0, Y: 0, Width: 100, Height: sc.Height}
+}`},
+		{"two fields off different receivers", false, `package p
+func f(a, b geometry) *page.Viewport {
+	return &page.Viewport{X: 0, Y: 0, Width: a.Width, Height: b.Height}
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := buildsViewportFromAReceiversFields(tc.src)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got != tc.flagged {
+				t.Errorf("flagged = %v, want %v", got, tc.flagged)
+			}
+		})
+	}
+}
+
+func TestTheClipToViewportCensusFailsOnSourceItCannotParse(t *testing.T) {
+	if _, err := buildsViewportFromAReceiversFields("package p\nfunc f( {"); err == nil {
+		t.Error("unparseable source reported no conversion instead of an error; a file the census cannot read must fail it, not pass silently")
 	}
 }
