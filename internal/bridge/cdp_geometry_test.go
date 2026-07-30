@@ -9,18 +9,6 @@ import (
 	"testing"
 )
 
-// TestGetElementCenterJS_ContextCancelled verifies that getElementCenterJS
-// returns an error when the context is already cancelled (no browser panic).
-func TestGetElementCenterJS_ContextCancelled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	_, _, err := getElementCenterJS(ctx, 1)
-	if err == nil {
-		t.Error("expected error for cancelled context, got nil")
-	}
-}
-
 func TestPointerPointForNode_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

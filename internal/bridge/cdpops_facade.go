@@ -45,10 +45,6 @@ func SetResourceBlocking(ctx context.Context, patterns []string) error {
 	return bridgecdpops.SetResourceBlocking(ctx, patterns)
 }
 
-func getElementCenterJS(ctx context.Context, backendNodeID int64) (float64, float64, error) {
-	return bridgecdpops.GetElementCenterJS(ctx, backendNodeID)
-}
-
 // ScrollIntoViewAndGetBox scrolls the element into view and reports the box it
 // ended up at, in the same top-level viewport space /box and /capture report.
 func ScrollIntoViewAndGetBox(ctx context.Context, nodeID int64) (map[string]any, error) {

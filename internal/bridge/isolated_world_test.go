@@ -188,7 +188,6 @@ var mainWorldResolvers = map[string]string{
 	"internal/bridge/cdpops/element_ops.go": "element ops act on an already-chosen node",
 	"internal/bridge/cdpops/frame_dom.go":   "callFunctionOn helper for an already-chosen node",
 	"internal/bridge/cdpops/pointer.go":     "pointer actions act on an already-chosen node",
-	"internal/bridge/cdpops/geometry.go":    "dead pending deletion: GetElementCenterJS reaches production through no caller — only the unexported facade wrapper and its cancellation test; the live click-point path is PointerPointForNode, which is isolated",
 }
 
 // resolveNodeSpellings pairs each way of issuing DOM.resolveNode with the token
