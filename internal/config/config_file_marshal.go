@@ -249,6 +249,7 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 		Profiles: profilesConfigJSON{
 			BaseDir:        fc.Profiles.BaseDir,
 			DefaultProfile: fc.Profiles.DefaultProfile,
+			QuarantineKeep: fc.Profiles.QuarantineKeep,
 		},
 		MultiInstance: multiInstanceConfigJSON{
 			Strategy:          fc.MultiInstance.Strategy,
@@ -419,6 +420,8 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 	autoSolverRetryMaxDelayMs := cfg.AutoSolver.RetryMaxDelayMs
 	autoSolverLLMFallback := cfg.AutoSolver.LLMFallback
 
+	quarantineKeep := cfg.ProfileQuarantineKeep
+
 	mode := "headless"
 	if !cfg.Headless {
 		mode = "headed"
@@ -523,6 +526,7 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 		Profiles: ProfilesConfig{
 			BaseDir:        cfg.ProfilesBaseDir,
 			DefaultProfile: cfg.DefaultProfile,
+			QuarantineKeep: &quarantineKeep,
 		},
 		MultiInstance: MultiInstanceConfig{
 			Strategy:          cfg.Strategy,

@@ -111,6 +111,7 @@ func compareSemver(a, b [3]int) int {
 func DefaultFileConfig() FileConfig {
 	start := 9868
 	end := 9968
+	quarantineKeep := DefaultProfileQuarantineKeep
 	restartMaxRestarts := 20
 	restartInitBackoffSec := 2
 	restartMaxBackoffSec := 60
@@ -220,6 +221,7 @@ func DefaultFileConfig() FileConfig {
 		// defaults to userConfigDir().
 		Profiles: ProfilesConfig{
 			DefaultProfile: "default",
+			QuarantineKeep: &quarantineKeep,
 		},
 		MultiInstance: MultiInstanceConfig{
 			Strategy:          "always-on",

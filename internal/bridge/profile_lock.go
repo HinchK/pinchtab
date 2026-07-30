@@ -17,11 +17,14 @@ package bridge
 import (
 	"bytes"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -127,20 +130,173 @@ var quarantineExitWait = 5 * time.Second
 
 const quarantineSuffix = ".quarantine-"
 
-var quarantineDirName = regexp.MustCompile(regexp.QuoteMeta(quarantineSuffix) + `\d+$`)
+var quarantineDirName = regexp.MustCompile(`^(.+)` + regexp.QuoteMeta(quarantineSuffix) + `(\d+)$`)
+
+// SplitQuarantineName reads a quarantine directory name back into the profile it was
+// made from and the timestamp it carries. It is the one owner of the pattern: the
+// predicate below and the prune both go through it, so a reader cannot drift from what
+// quarantine writes.
+func SplitQuarantineName(dirName string) (profile string, stamp int64, ok bool) {
+	match := quarantineDirName.FindStringSubmatch(dirName)
+	if match == nil {
+		return "", 0, false
+	}
+	stamp, err := strconv.ParseInt(match[2], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	return match[1], stamp, true
+}
 
 // IsQuarantinedProfileDir reports whether a directory name is one quarantine
 // produced. Only the "<name>.quarantine-<unix>" suffix decides, so a profile a
 // user named after the word stays an ordinary profile.
 func IsQuarantinedProfileDir(dirName string) bool {
-	return quarantineDirName.MatchString(dirName)
+	_, _, ok := SplitQuarantineName(dirName)
+	return ok
+}
+
+// QuarantineRemoval is one directory a prune reclaimed, for the caller to log and
+// for a user-invoked reclaim to report.
+type QuarantineRemoval struct {
+	Path  string
+	Bytes int64
+}
+
+// KeepAllQuarantinedProfiles is the keep count that turns pruning off, restoring
+// the behaviour of keeping every quarantined profile for ever.
+const KeepAllQuarantinedProfiles = 0
+
+// PruneQuarantinedProfiles keeps the newest `keep` quarantined siblings of one
+// profile and removes the rest, returning what it reclaimed. It is the only
+// deleter of quarantined profiles, so a user-invoked reclaim reuses it rather
+// than growing a second one.
+//
+// Two things bound what it can touch. Eligibility goes through
+// IsQuarantinedProfileDir, the predicate quarantine's own writer uses, so a live
+// profile directory sitting beside them is not a candidate — and because the
+// pattern demands the "<name>.quarantine-<digits>" suffix, a profile a user named
+// after the word is not one either. A user who names a profile exactly
+// "<something>.quarantine-1700000000" IS indistinguishable on disk from a real
+// quarantine; what stops it being deleted is the sibling scope, since it would
+// have to sit in the profiles base dir under the name of ANOTHER profile with
+// that suffix, and it is still never the newest-kept entry of its own name.
+//
+// justCreated is excluded by path, not by being newest: quarantine may proceed
+// while a dying browser still holds the directory, so the entry that can still be
+// written to must never be a candidate even if a same-second timestamp ties it
+// with an older one.
+func PruneQuarantinedProfiles(profileDir, justCreated string, keep int) ([]QuarantineRemoval, error) {
+	if keep <= KeepAllQuarantinedProfiles {
+		return nil, nil
+	}
+	profileDir = strings.TrimSpace(profileDir)
+	if profileDir == "" {
+		return nil, nil
+	}
+
+	siblings, err := quarantinedSiblings(profileDir)
+	if err != nil {
+		return nil, err
+	}
+	// Newest first, so keeping a prefix keeps the freshest artefacts — the ones
+	// most likely to relate to a problem being investigated now.
+	sort.Slice(siblings, func(i, j int) bool { return siblings[i].stamp > siblings[j].stamp })
+
+	// The just-created directory takes the first slot before anything else is
+	// considered, so keep=1 means exactly one quarantined profile survives and it is
+	// that one. Reserving rather than ranking is what makes this independent of the
+	// timestamp order: two quarantines in the same second tie, and the entry a dying
+	// browser may still be writing to must not lose a coin toss.
+	budget := keep
+	for _, sibling := range siblings {
+		if sibling.path == justCreated {
+			budget--
+			break
+		}
+	}
+
+	var removals []QuarantineRemoval
+	for _, sibling := range siblings {
+		if sibling.path == justCreated {
+			continue
+		}
+		if budget > 0 {
+			budget--
+			continue
+		}
+		reclaimed := dirBytes(sibling.path)
+		if err := os.RemoveAll(sibling.path); err != nil {
+			slog.Warn("could not prune quarantined profile", "profile", sibling.path, "err", err)
+			continue
+		}
+		removals = append(removals, QuarantineRemoval{Path: sibling.path, Bytes: reclaimed})
+	}
+	return removals, nil
+}
+
+type quarantinedSibling struct {
+	path  string
+	stamp int64
+}
+
+// quarantinedSiblings finds the quarantined directories belonging to one profile: same
+// parent, same profile name. Both halves have exactly one owner — SplitQuarantineName
+// decides whether a name is a quarantine at all, and the profile it reports decides whose
+// it is, which is what keeps one profile's prune away from another profile's evidence.
+func quarantinedSiblings(profileDir string) ([]quarantinedSibling, error) {
+	parent := filepath.Dir(profileDir)
+	profileName := filepath.Base(profileDir)
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read profiles dir: %w", err)
+	}
+
+	var siblings []quarantinedSibling
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		profile, stamp, ok := SplitQuarantineName(entry.Name())
+		if !ok {
+			continue
+		}
+		if profile != profileName {
+			continue
+		}
+		siblings = append(siblings, quarantinedSibling{path: filepath.Join(parent, entry.Name()), stamp: stamp})
+	}
+	return siblings, nil
+}
+
+func dirBytes(path string) int64 {
+	var total int64
+	_ = filepath.WalkDir(path, func(_ string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
+		}
+		if info, err := entry.Info(); err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
 }
 
 // quarantineCorruptedProfile renames profileDir to "<profileDir>.quarantine-<ts>"
 // and recreates an empty directory at the original path. Used to recover
 // from silent CDP attach failures where CloakBrowser refuses to ingest
 // existing profile state.
-func quarantineCorruptedProfile(profileDir string) (string, error) {
+//
+// keep bounds how many quarantined siblings of this profile survive, newest first,
+// pruned here rather than on a startup sweep: a sweep would delete directories the
+// operator never asked about, while this only reclaims as the same profile keeps
+// failing. Directories belonging to profiles that never quarantine again are
+// therefore never reclaimed by this path.
+func quarantineCorruptedProfile(profileDir string, keep int) (string, error) {
 	profileDir = strings.TrimSpace(profileDir)
 	if profileDir == "" {
 		return "", fmt.Errorf("empty profile dir")
@@ -169,6 +325,14 @@ func quarantineCorruptedProfile(profileDir string) (string, error) {
 	}
 	if err := os.MkdirAll(profileDir, 0700); err != nil {
 		return quarantinePath, fmt.Errorf("recreate profile dir: %w", err)
+	}
+	// After the rename, so a failed quarantine never costs an older artefact.
+	removals, err := PruneQuarantinedProfiles(profileDir, quarantinePath, keep)
+	if err != nil {
+		slog.Warn("could not prune older quarantined profiles", "profile", profileDir, "err", err)
+	}
+	for _, removal := range removals {
+		slog.Info("pruned older quarantined profile", "profile", removal.Path, "bytesReclaimed", removal.Bytes, "keep", keep)
 	}
 	return quarantinePath, nil
 }

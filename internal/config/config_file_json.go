@@ -77,6 +77,7 @@ type instanceDefaultsConfigJSON struct {
 type profilesConfigJSON struct {
 	BaseDir        string `json:"baseDir"`
 	DefaultProfile string `json:"defaultProfile"`
+	QuarantineKeep *int   `json:"quarantineKeep,omitempty"`
 }
 
 type securityConfigJSON struct {

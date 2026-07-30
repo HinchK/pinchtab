@@ -52,16 +52,18 @@ type RuntimeConfig struct {
 	ProfileDir          string
 	ProfilesBaseDir     string
 	DefaultProfile      string
-	BrowserVersion      string
-	Timezone            string
-	BlockImages         bool
-	BlockMedia          bool
-	BlockAds            bool
-	MaxTabs             int
-	MaxParallelTabs     int // 0 = auto-detect from runtime.NumCPU
-	BrowserBinary       string
-	BrowserDebugPort    int
-	BrowserExtraFlags   string
+	// ProfileQuarantineKeep bounds quarantined copies of one profile; 0 keeps all.
+	ProfileQuarantineKeep int
+	BrowserVersion        string
+	Timezone              string
+	BlockImages           bool
+	BlockMedia            bool
+	BlockAds              bool
+	MaxTabs               int
+	MaxParallelTabs       int // 0 = auto-detect from runtime.NumCPU
+	BrowserBinary         string
+	BrowserDebugPort      int
+	BrowserExtraFlags     string
 	// CDPAttachURL: when set, the bridge skips launching its own Chrome and
 	// connects to an already-running Chrome whose browser-level CDP
 	// WebSocket URL is provided here (e.g.
@@ -409,9 +411,21 @@ type TabPolicyDefaults struct {
 	Restore       *bool  `json:"restore,omitempty"`       // restore tabs from sessions.json on startup; default false
 }
 
+// DefaultProfileQuarantineKeep is how many quarantined copies of one profile PinchTab
+// keeps when a new quarantine is created. One keeps the freshest forensic artefact —
+// the only reason to keep any, since nothing in the product reads them — while
+// bounding growth. Zero in the config means keep every one.
+const DefaultProfileQuarantineKeep = 1
+
 type ProfilesConfig struct {
 	BaseDir        string `json:"baseDir,omitempty"`
 	DefaultProfile string `json:"defaultProfile,omitempty"`
+
+	// QuarantineKeep is how many quarantined copies of one profile survive when a new
+	// quarantine is created, newest first. A pointer because 0 is a real value here —
+	// it means keep every one, the behaviour before this was bounded — so absent must
+	// not read as 0.
+	QuarantineKeep *int `json:"quarantineKeep,omitempty"`
 }
 
 type SecurityConfig struct {

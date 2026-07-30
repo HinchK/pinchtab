@@ -444,6 +444,12 @@
         "defaultProfile": {
           "type": "string",
           "default": "default"
+        },
+        "quarantineKeep": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1,
+          "description": "How many quarantined copies of one profile to keep when a new quarantine is created, newest first. 0 keeps every one."
         }
       }
     },

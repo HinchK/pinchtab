@@ -77,7 +77,7 @@ func startBrowserWithRecovery(parentCtx context.Context, cfg *config.RuntimeConf
 		}
 
 		if silentDrop && !retriedProfileCorruption && hooks.QuarantineCorruptedProfile != nil && strings.TrimSpace(cfg.ProfileDir) != "" {
-			if quarantinePath, qerr := hooks.QuarantineCorruptedProfile(cfg.ProfileDir); qerr == nil {
+			if quarantinePath, qerr := hooks.QuarantineCorruptedProfile(cfg.ProfileDir, cfg.ProfileQuarantineKeep); qerr == nil {
 				slog.Warn("browser silently dropped CDP attach; quarantined profile and retrying with fresh profile",
 					"provider", browserID,
 					"originalProfile", cfg.ProfileDir,

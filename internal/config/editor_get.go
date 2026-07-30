@@ -353,6 +353,11 @@ func getProfilesField(p *ProfilesConfig, field string) (string, error) {
 		return p.BaseDir, nil
 	case "defaultProfile":
 		return p.DefaultProfile, nil
+	case "quarantineKeep":
+		if p.QuarantineKeep == nil {
+			return "", nil
+		}
+		return strconv.Itoa(*p.QuarantineKeep), nil
 	default:
 		return "", fmt.Errorf("unknown field profiles.%s", field)
 	}

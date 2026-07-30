@@ -266,7 +266,8 @@ Current nested file-config shape:
   },
   "profiles": {
     "baseDir": "/path/to/profiles",
-    "defaultProfile": "default"
+    "defaultProfile": "default",
+    "quarantineKeep": 1
   },
   "multiInstance": {
     "strategy": "always-on",
@@ -648,6 +649,29 @@ headers correctly.
 `security.attach.allowHosts` is an allowlist. If you set it to `["*"]`, PinchTab accepts any reachable attach host with an allowed scheme. That is a documented, non-default, security-reducing override: it removes host allowlisting entirely and should only be used on isolated, operator-controlled networks.
 
 `security.attach.forwardProxyAuth` controls whether PinchTab may send configured proxy authentication credentials over remote CDP attach. It defaults to `false`; enable it only when the attached browser process and CDP transport are trusted.
+
+### Quarantined Profile Retention
+
+When a browser profile turns out to be unusable, PinchTab renames it aside as
+`<profile>.quarantine-<unix>` and starts fresh. PinchTab keeps the most recent
+quarantined copy of each profile and prunes the older ones at the moment a new quarantine
+is created — the newest is the copy most likely to relate to a problem being investigated
+now, and nothing in the product reads the older ones. Every removal is logged with the
+path and the bytes reclaimed.
+
+```json
+{
+  "profiles": {
+    "quarantineKeep": 1
+  }
+}
+```
+
+`profiles.quarantineKeep` defaults to `1`. Set it to `0` to keep every quarantined
+profile, which is exactly the behaviour before this setting existed. Pruning only ever
+runs when a new quarantine is created, never on startup or a timer, so quarantined copies
+of a profile that never fails again are left alone — clearing that backlog is a separate,
+explicit operation.
 
 ### Activity Retention
 

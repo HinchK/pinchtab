@@ -42,8 +42,10 @@ type Hooks struct {
 	// QuarantineCorruptedProfile moves profileDir aside and recreates an
 	// empty dir at the same path. Used to recover from silent CDP attach
 	// failures (observed with CloakBrowser when the profile dir holds
-	// state it cannot ingest). Returns the quarantine path on success.
-	QuarantineCorruptedProfile func(profileDir string) (string, error)
+	// state it cannot ingest). Returns the quarantine path on success. keep is how
+	// many quarantined siblings of that profile survive, newest first, with 0
+	// meaning keep every one.
+	QuarantineCorruptedProfile func(profileDir string, keep int) (string, error)
 }
 
 // InitBrowser initializes a browser for a Bridge instance.

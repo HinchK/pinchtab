@@ -22,7 +22,7 @@ func TestQuarantineCorruptedProfile(t *testing.T) {
 		t.Fatalf("write marker: %v", err)
 	}
 
-	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("quarantineCorruptedProfile: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestQuarantineCorruptedProfile(t *testing.T) {
 func TestQuarantineCorruptedProfile_MissingDir(t *testing.T) {
 	t.Parallel()
 
-	path, err := quarantineCorruptedProfile(filepath.Join(t.TempDir(), "does-not-exist"))
+	path, err := quarantineCorruptedProfile(filepath.Join(t.TempDir(), "does-not-exist"), KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("missing dir should not error: %v", err)
 	}
@@ -66,10 +66,10 @@ func TestQuarantineCorruptedProfile_MissingDir(t *testing.T) {
 func TestQuarantineCorruptedProfile_EmptyPath(t *testing.T) {
 	t.Parallel()
 
-	if _, err := quarantineCorruptedProfile(""); err == nil {
+	if _, err := quarantineCorruptedProfile("", KeepAllQuarantinedProfiles); err == nil {
 		t.Fatal("expected error for empty profile dir")
 	}
-	if _, err := quarantineCorruptedProfile("   "); err == nil {
+	if _, err := quarantineCorruptedProfile("   ", KeepAllQuarantinedProfiles); err == nil {
 		t.Fatal("expected error for blank profile dir")
 	}
 }
@@ -345,7 +345,7 @@ func TestQuarantineCorruptedProfile_WaitsForBrowserExit(t *testing.T) {
 		chromeExitPollInterval = oldPoll
 	})
 
-	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("quarantineCorruptedProfile: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestQuarantineCorruptedProfile_ProceedsAfterWaitTimeout(t *testing.T) {
 		chromeExitPollInterval = oldPoll
 	})
 
-	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("quarantine should proceed (with a warning) after the wait times out: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestQuarantineDropsTheStaleProfileMetadata(t *testing.T) {
 		t.Fatalf("setup metadata: %v", err)
 	}
 
-	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("quarantineCorruptedProfile: %v", err)
 	}
@@ -433,7 +433,7 @@ func TestQuarantineWithoutMetadataStillSucceeds(t *testing.T) {
 		t.Fatalf("setup: %v", err)
 	}
 
-	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("quarantineCorruptedProfile: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestQuarantineCorruptedProfileProducesAFlaggedName(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("quarantineCorruptedProfile: %v", err)
 	}

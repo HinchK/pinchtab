@@ -535,6 +535,15 @@ func setProfilesField(p *ProfilesConfig, field, value string) error {
 		p.BaseDir = value
 	case "defaultProfile":
 		p.DefaultProfile = value
+	case "quarantineKeep":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("profiles.quarantineKeep must be a number: %w", err)
+		}
+		if n < 0 {
+			return fmt.Errorf("profiles.quarantineKeep must be >= 0 (0 keeps every quarantined profile)")
+		}
+		p.QuarantineKeep = &n
 	default:
 		return fmt.Errorf("unknown field profiles.%s", field)
 	}

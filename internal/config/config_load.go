@@ -221,6 +221,7 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 		ProfileDir:             "",
 		ProfilesBaseDir:        "",
 		DefaultProfile:         "default",
+		ProfileQuarantineKeep:  DefaultProfileQuarantineKeep,
 		BrowserVersion:         "144.0.7559.133",
 		Timezone:               "",
 		BlockImages:            false,
@@ -724,6 +725,9 @@ func applyProfilesConfig(cfg *RuntimeConfig, p ProfilesConfig) {
 	}
 	if p.DefaultProfile != "" {
 		cfg.DefaultProfile = p.DefaultProfile
+	}
+	if p.QuarantineKeep != nil && *p.QuarantineKeep >= 0 {
+		cfg.ProfileQuarantineKeep = *p.QuarantineKeep
 	}
 	cfg.ProfileDir = ""
 }
