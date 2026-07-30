@@ -173,3 +173,140 @@ describe("ProfilesPage", () => {
     expect(saveButton).toBeEnabled();
   });
 });
+
+describe("ProfilesPage classification groups", () => {
+  const mixedProfiles: Profile[] = [
+    {
+      id: "prof_user",
+      name: "default",
+      created: "2026-03-01T10:00:00Z",
+      lastUsed: "2026-03-05T10:00:00Z",
+      diskUsage: 4096,
+      sizeMB: 0,
+      running: false,
+    },
+    {
+      // The flag decides, not the string: a profile the user named after the word is
+      // still theirs, and it must not be grouped with the debris.
+      id: "prof_notes",
+      name: "my.quarantine-notes",
+      created: "2026-03-01T10:00:00Z",
+      lastUsed: "2026-03-05T10:00:00Z",
+      diskUsage: 1024,
+      sizeMB: 0,
+      running: false,
+    },
+    {
+      id: "prof_q1",
+      name: "default.quarantine-1700000001",
+      created: "2026-03-01T10:00:00Z",
+      lastUsed: "2026-03-05T10:00:00Z",
+      diskUsage: 1024 * 1024,
+      sizeMB: 1,
+      running: false,
+      quarantined: true,
+    },
+    {
+      id: "prof_q2",
+      name: "default.quarantine-1700000002",
+      created: "2026-03-01T10:00:00Z",
+      lastUsed: "2026-03-05T10:00:00Z",
+      diskUsage: 3 * 1024 * 1024,
+      sizeMB: 3,
+      running: false,
+      quarantined: true,
+    },
+    {
+      id: "prof_tmp",
+      name: "instance-9868",
+      created: "2026-03-01T10:00:00Z",
+      lastUsed: "2026-03-05T10:00:00Z",
+      diskUsage: 512 * 1024,
+      sizeMB: 0,
+      running: false,
+      temporary: true,
+    },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useAppStore.setState({
+      profiles: mixedProfiles,
+      profilesLoading: false,
+      instances: [],
+    });
+  });
+
+  function sidebarRowNames() {
+    const sidebar = document.querySelector(
+      ".bg-bg-surface\\/50",
+    ) as HTMLElement;
+    return within(sidebar)
+      .getAllByRole("button")
+      .filter((b) => b.classList.contains("border-b"))
+      .map((b) => b.querySelector(".text-sm.font-semibold")?.textContent ?? "");
+  }
+
+  it("keeps the user's own profiles above the quarantined and temporary groups", () => {
+    renderProfilesPage();
+
+    const names = sidebarRowNames();
+    expect(names.slice(0, 2)).toEqual(["default", "my.quarantine-notes"]);
+    expect(names.indexOf("instance-9868")).toBeGreaterThan(
+      names.indexOf("my.quarantine-notes"),
+    );
+    expect(names.indexOf("default.quarantine-1700000001")).toBeGreaterThan(
+      names.indexOf("instance-9868"),
+    );
+  });
+
+  it("heads each classification group with its count and combined size", () => {
+    renderProfilesPage();
+
+    const quarantined = screen.getByTestId("profile-group-quarantined");
+    expect(quarantined).toHaveTextContent("Quarantined (2)");
+    expect(quarantined).toHaveTextContent("4.0 MB total");
+
+    const temporary = screen.getByTestId("profile-group-temporary");
+    expect(temporary).toHaveTextContent("Temporary (1)");
+    expect(temporary).toHaveTextContent("512.0 KB total");
+  });
+
+  it("marks quarantined and temporary rows and leaves user rows unmarked", () => {
+    renderProfilesPage();
+
+    const rowFor = (name: string) => {
+      const label = screen.getByText(name, {
+        selector: ".text-sm.font-semibold",
+      });
+      return label.closest("button") as HTMLElement;
+    };
+
+    expect(rowFor("default.quarantine-1700000001")).toHaveTextContent(
+      "quarantined",
+    );
+    expect(rowFor("instance-9868")).toHaveTextContent("temporary");
+
+    // The name contains the word and the flag does not: no badge, and no group header
+    // above it either.
+    expect(rowFor("my.quarantine-notes")).not.toHaveTextContent("quarantined");
+    expect(rowFor("default")).not.toHaveTextContent("quarantined");
+    expect(rowFor("default")).not.toHaveTextContent("temporary");
+  });
+
+  it("adds no bulk-delete or cleanup affordance", () => {
+    renderProfilesPage();
+
+    const sidebar = document.querySelector(
+      ".bg-bg-surface\\/50",
+    ) as HTMLElement;
+    for (const label of [
+      /delete all/i,
+      /clean ?up/i,
+      /prune/i,
+      /safe to delete/i,
+    ]) {
+      expect(within(sidebar).queryByText(label)).toBeNull();
+    }
+  });
+});

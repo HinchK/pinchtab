@@ -23,6 +23,7 @@ type profileResponse struct {
 	SizeMB            float64   `json:"sizeMB"`
 	Running           bool      `json:"running"`
 	Quarantined       bool      `json:"quarantined"`
+	Temporary         bool      `json:"temporary"`
 	Source            string    `json:"source"`
 	ChromeProfileName string    `json:"chromeProfileName"`
 	AccountEmail      string    `json:"accountEmail"`
@@ -44,6 +45,7 @@ func newProfileResponse(p bridge.ProfileInfo) profileResponse {
 		SizeMB:            float64(p.DiskUsage) / (1024 * 1024),
 		Running:           p.Running,
 		Quarantined:       p.Quarantined,
+		Temporary:         p.Temporary,
 		Source:            p.Source,
 		ChromeProfileName: p.ChromeProfileName,
 		AccountEmail:      p.AccountEmail,
@@ -89,19 +91,20 @@ func (pm *ProfileManager) handleList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// One shape for both branches. all=true used to serve bridge.ProfileInfo directly, so
+	// the only listing that CAN contain a temporary profile was also the only one missing
+	// the fields the response type declares (sizeMB among them) — which is how a client
+	// reading `temporary` could never see it: absent from the filtered branch by design,
+	// and absent from the response shape in the other.
 	showAll := r.URL.Query().Get("all") == "true"
-	if !showAll {
-		filtered := []profileResponse{}
-		for _, p := range profiles {
-			if !p.Temporary {
-				filtered = append(filtered, newProfileResponse(p))
-			}
+	out := []profileResponse{}
+	for _, p := range profiles {
+		if !showAll && p.Temporary {
+			continue
 		}
-		httpx.JSON(w, 200, filtered)
-		return
+		out = append(out, newProfileResponse(p))
 	}
-
-	httpx.JSON(w, 200, profiles)
+	httpx.JSON(w, 200, out)
 }
 
 func (pm *ProfileManager) handleCreate(w http.ResponseWriter, r *http.Request) {

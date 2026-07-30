@@ -1,11 +1,83 @@
 import { useState } from "react";
 import { EmptyState, Button, Badge } from "../components/atoms";
+import type { Instance, Profile } from "../generated/types";
+import {
+  formatProfileBytes,
+  groupBytes,
+  groupOrder,
+  groupProfiles,
+  type ProfileGroupKind,
+} from "./profileGroups";
 import {
   CreateProfileModal,
   StartInstanceModal,
 } from "../components/molecules";
 import ProfileDetailsPanel from "../profiles/ProfileDetailsPanel";
 import { useProfilesController, getProfileKey } from "./useProfilesController";
+
+const kindBadge: Partial<Record<ProfileGroupKind, string>> = {
+  temporary: "temporary",
+  quarantined: "quarantined",
+};
+
+function ProfileRow({
+  profile,
+  kind,
+  instance,
+  selected,
+  onSelect,
+}: {
+  profile: Profile;
+  kind: ProfileGroupKind;
+  instance?: Instance;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const accountText =
+    profile.accountEmail || profile.accountName || "No account";
+  const statusVariant =
+    instance?.status === "running"
+      ? "success"
+      : instance?.status === "error"
+        ? "danger"
+        : "default";
+  const statusLabel =
+    instance?.status === "running"
+      ? `:${instance.port}`
+      : instance?.status === "error"
+        ? "error"
+        : "stopped";
+  const badge = kindBadge[kind];
+
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={`w-full border-b border-border-subtle px-3 py-2.5 text-left transition-colors ${
+        selected ? "bg-bg-hover text-text-primary" : "hover:bg-bg-hover/50"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-text-primary">
+            {profile.name}
+          </div>
+          <div className="mt-1 text-xs text-text-muted">{accountText}</div>
+        </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {badge && <Badge variant="warning">{badge}</Badge>}
+          <Badge variant={statusVariant}>{statusLabel}</Badge>
+        </div>
+      </div>
+
+      {profile.useWhen && (
+        <div className="mt-3 line-clamp-2 text-xs leading-5 text-text-secondary">
+          {profile.useWhen}
+        </div>
+      )}
+    </button>
+  );
+}
 
 export default function ProfilesPage() {
   const {
@@ -24,6 +96,7 @@ export default function ProfilesPage() {
     handleSave,
   } = useProfilesController();
   const [showCreate, setShowCreate] = useState(false);
+  const groups = groupProfiles(orderedProfiles);
 
   return (
     <div className="flex h-full flex-col">
@@ -60,62 +133,43 @@ export default function ProfilesPage() {
                 </div>
 
                 <div className="flex-1 overflow-auto">
-                  <div>
-                    {orderedProfiles.map((profile) => {
-                      const instance = instanceByProfile.get(profile.name);
-                      const isSelected =
-                        getProfileKey(profile) === selectedProfileKey;
-                      const accountText =
-                        profile.accountEmail ||
-                        profile.accountName ||
-                        "No account";
-                      const statusVariant =
-                        instance?.status === "running"
-                          ? "success"
-                          : instance?.status === "error"
-                            ? "danger"
-                            : "default";
-                      const statusLabel =
-                        instance?.status === "running"
-                          ? `:${instance.port}`
-                          : instance?.status === "error"
-                            ? "error"
-                            : "stopped";
-
-                      return (
-                        <button
-                          key={getProfileKey(profile)}
-                          type="button"
-                          onClick={() =>
-                            setSelectedProfileKey(getProfileKey(profile))
-                          }
-                          className={`w-full border-b border-border-subtle px-3 py-2.5 text-left transition-colors ${
-                            isSelected
-                              ? "bg-bg-hover text-text-primary"
-                              : "hover:bg-bg-hover/50"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <div className="truncate text-sm font-semibold text-text-primary">
-                                {profile.name}
-                              </div>
-                              <div className="mt-1 text-xs text-text-muted">
-                                {accountText}
-                              </div>
-                            </div>
-                            <Badge variant={statusVariant}>{statusLabel}</Badge>
+                  {groupOrder.map(({ kind, label }) => {
+                    const rows = groups[kind];
+                    if (rows.length === 0) {
+                      return null;
+                    }
+                    return (
+                      <div key={kind}>
+                        {kind !== "user" && (
+                          <div
+                            className="flex items-baseline justify-between border-b border-border-subtle bg-bg-surface px-3 py-1.5 text-xs text-text-muted"
+                            data-testid={`profile-group-${kind}`}
+                          >
+                            <span className="font-medium uppercase tracking-[0.08em]">
+                              {label} ({rows.length})
+                            </span>
+                            <span>
+                              {formatProfileBytes(groupBytes(rows))} total
+                            </span>
                           </div>
-
-                          {profile.useWhen && (
-                            <div className="mt-3 line-clamp-2 text-xs leading-5 text-text-secondary">
-                              {profile.useWhen}
-                            </div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
+                        )}
+                        {rows.map((profile) => (
+                          <ProfileRow
+                            key={getProfileKey(profile)}
+                            profile={profile}
+                            kind={kind}
+                            instance={instanceByProfile.get(profile.name)}
+                            selected={
+                              getProfileKey(profile) === selectedProfileKey
+                            }
+                            onSelect={() =>
+                              setSelectedProfileKey(getProfileKey(profile))
+                            }
+                          />
+                        ))}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
