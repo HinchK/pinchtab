@@ -2,9 +2,16 @@ package safelog
 
 import (
 	"bytes"
+	"io/fs"
 	"log/slog"
+	"os"
+	"path"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 func TestHandlerRedactsAndSanitizesStringAttrs(t *testing.T) {
@@ -113,4 +120,98 @@ func TestParseLevel(t *testing.T) {
 			t.Errorf("ParseLevel(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
+}
+
+// InstallDefault owns the process default logger, and a second owner — the server
+// installing a discard handler — is what silenced every default run. RunDashboard starts
+// a server, so no unit test reaches that line: the invariant is only checkable
+// structurally, and it belongs to the package that holds the rule.
+//
+// The scope is derived: every package directory under cmd/, internal/ and pkg/, so a new
+// installer anywhere in this repo's own source reddens it. tests/, tools/, scripts/,
+// plugin/ and docs/examples/ are deliberately out of scope — a harness or example binary
+// installing its own logger is legitimate, and walking them means walking node_modules.
+func TestOnlySafelogInstallsTheProcessLogger(t *testing.T) {
+	installers := []string{}
+	scanned := 0
+	for _, dir := range sourcePackageDirs(t) {
+		pkg := srccensus.Load(t, filepath.Join("..", "..", dir), 1)
+		scanned += len(pkg.Files())
+		for _, site := range pkg.CallsAllowingNone("slog.SetDefault") {
+			installers = append(installers, path.Join(dir, site.File))
+		}
+	}
+	if scanned < minRepoSourceFiles {
+		t.Fatalf("censused %d non-test files under cmd/, internal/ and pkg/, want at least %d; the scan lost most of the repo and would pass vacuously", scanned, minRepoSourceFiles)
+	}
+
+	want := []string{"internal/safelog/handler.go"}
+	if !reflect.DeepEqual(installers, want) {
+		t.Errorf("slog.SetDefault callers = %v, want only %v; two writers to the process default logger is what silenced the server — route the new caller through InstallDefault, or if ownership genuinely moved, re-point this census at the new owner rather than deleting it", installers, want)
+	}
+}
+
+// The discard handler lived in internal/server, and a package-local test there could not
+// state why it must never come back: recording a run is safelog's job, not the server's.
+func TestTheServerNeverDiscardsLogOutput(t *testing.T) {
+	paths, err := filepath.Glob(filepath.Join("..", "server", "*.go"))
+	if err != nil {
+		t.Fatalf("cannot enumerate internal/server, so this guard would check nothing: %v", err)
+	}
+
+	scanned := 0
+	for _, sourcePath := range paths {
+		if strings.HasSuffix(sourcePath, "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(sourcePath)
+		if err != nil {
+			t.Fatalf("cannot read %s, so this guard would skip it silently: %v", sourcePath, err)
+		}
+		scanned++
+		for i, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "//") {
+				continue
+			}
+			if strings.Contains(line, "io."+"Discard") {
+				t.Errorf("internal/server/%s:%d discards log output; a run must record its requests and errors without a flag, and the level belongs in safelog", filepath.Base(sourcePath), i+1)
+			}
+		}
+	}
+	if scanned < minServerSourceFiles {
+		t.Fatalf("scanned %d non-test files in internal/server, want at least %d; the guard matched almost nothing and would pass vacuously", scanned, minServerSourceFiles)
+	}
+}
+
+const (
+	minRepoSourceFiles   = 500
+	minServerSourceFiles = 5
+)
+
+func sourcePackageDirs(t *testing.T) []string {
+	t.Helper()
+
+	dirs := []string{}
+	for _, root := range []string{"cmd", "internal", "pkg"} {
+		err := filepath.WalkDir(filepath.Join("..", "..", root), func(sourcePath string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || !strings.HasSuffix(sourcePath, ".go") || strings.HasSuffix(sourcePath, "_test.go") {
+				return nil
+			}
+			dir := path.Clean(filepath.ToSlash(strings.TrimPrefix(filepath.Dir(sourcePath), filepath.Join("..", "..")+string(filepath.Separator))))
+			if len(dirs) == 0 || dirs[len(dirs)-1] != dir {
+				dirs = append(dirs, dir)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("cannot enumerate %s, so this census would silently skip it: %v", root, err)
+		}
+	}
+	if len(dirs) == 0 {
+		t.Fatal("no package directory found under cmd/, internal/ or pkg/; this census is checking nothing")
+	}
+	return dirs
 }

@@ -28,6 +28,11 @@ is set: `--log-level debug|info|warn|error`, then `server.logLevel` in the confi
 file, then `-v`, then the default `info`. `-v` always adds the full startup banner,
 and it raises the level to debug only when neither of the other two is set.
 
+The access log is what an open dashboard costs: its errors and console panels each poll
+on a 3s interval, so a dashboard left open writes roughly 40 lines a minute. That is the
+deliberate trade for a run that explains itself afterwards, and `--log-level warn` is the
+escape hatch when you want the record without the polling.
+
 A daemon-installed server and the server a bare `pinchtab nav` auto-starts both run
 `pinchtab server` with no flags, so `server.logLevel` is the only way to set their
 threshold (`pinchtab config set server.logLevel warn`).

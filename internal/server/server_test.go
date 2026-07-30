@@ -2,13 +2,9 @@ package server
 
 import (
 	"bytes"
-	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -61,63 +57,4 @@ func TestDefaultRunRecordsErrorsAndWarnings(t *testing.T) {
 	if !strings.Contains(out, "TARGET CRASHED") {
 		t.Errorf("a default run dropped an error:\n%s", out)
 	}
-}
-
-// RunDashboard starts a server, so no unit test calls it; the second-owner
-// regression is only reachable as a structural guard.
-func TestOnlySafelogInstallsTheProcessLogger(t *testing.T) {
-	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	installers := []string{}
-	scanned := 0
-	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-			return nil
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		scanned++
-		rel := filepath.ToSlash(mustRel(t, root, path))
-		for _, line := range strings.Split(string(raw), "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "//") {
-				continue
-			}
-			if strings.Contains(trimmed, "slog.SetDefault(") {
-				installers = append(installers, rel)
-			}
-		}
-		if strings.HasPrefix(rel, "internal/server/") && strings.Contains(string(raw), "io."+"Discard") {
-			t.Errorf("%s discards log output; a run must record its requests and errors without a flag", rel)
-		}
-		return nil
-	})
-	if walkErr != nil {
-		t.Fatal(walkErr)
-	}
-	if scanned == 0 {
-		t.Fatal("no Go file scanned — this guard is checking nothing")
-	}
-
-	want := []string{"internal/safelog/handler.go"}
-	if !reflect.DeepEqual(installers, want) {
-		t.Errorf("slog.SetDefault callers = %v, want only %v; two writers to the process default logger is what silenced the server", installers, want)
-	}
-}
-
-func mustRel(t *testing.T, root, path string) string {
-	t.Helper()
-	rel, err := filepath.Rel(root, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return rel
 }

@@ -13,7 +13,6 @@ import (
 	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
 
-// DefaultLevel is what a run records with no level set.
 const DefaultLevel = slog.LevelInfo
 
 // LevelName renders a level the way the config file and --log-level spell it, so a

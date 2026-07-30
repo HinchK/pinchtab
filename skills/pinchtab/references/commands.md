@@ -19,6 +19,8 @@ pinchtab server -e ./ext        # load browser extension
 |------|-------|-------------|
 | `--headed` | `-H` | Start browser in headed (visible) mode |
 | `--extension <path>` | `-e` | Load browser extension (repeatable) |
+| `--log-level <level>` | | Log threshold: `debug`, `info` (default), `warn` or `error` |
+| `--verbose` | `-v` | Show the full startup banner and log at debug level |
 
 > **Note:** Use `--headed` only when you need visual feedback (debugging, watching automation). Headless mode is more resource-efficient.
 
