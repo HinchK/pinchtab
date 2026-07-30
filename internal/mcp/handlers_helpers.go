@@ -235,7 +235,67 @@ func resultFromBytes(body []byte, code int) (*mcp.CallToolResult, error) {
 	if code >= 400 {
 		return mcp.NewToolResultError(fmt.Sprintf("HTTP %d: %s", code, string(body))), nil
 	}
+	if reason := reportsNoSuccess(body); reason != "" {
+		return mcp.NewToolResultError(reason), nil
+	}
 	return mcp.NewToolResultText(string(body)), nil
+}
+
+// reportsNoSuccess is the funnel's body-level failure rule: an endpoint that answers 200
+// while reporting it achieved nothing must reach the agent as an error, or the agent
+// confirms work the browser never did — the cookie-set path shipped exactly that.
+//
+// The rule keys on the COUNTING SHAPE, not on failure-flavoured key names: a top-level
+// numeric "failed" above zero marks a response that counts the work it was asked to do.
+// That is what keeps the exclusions structural rather than a list — the observability
+// snapshot, /health/tabs and the console endpoint report failures AS their payload but
+// carry no top-level failed count, and /network's per-request "failed" is a nested bool,
+// so none of them can match. A key-name rule would break exactly those.
+//
+// Partial success stays a SUCCESS carrying detail: the succeeded items' effects already
+// happened, and the body's own counts and failures list are what the agent needs to retry
+// only what missed. Zero success is an error, with the body riding along as the reason.
+// Fail closed within the shape: a failed count with no readable success count beside it
+// confirms nothing and is refused. A body that does not parse as an object cannot carry
+// the shape and keeps the status rule — most funnel responses are not counting anything.
+//
+// The cookie tool keeps unsetCookieReport ON TOP of this rule deliberately: it confirms a
+// single named write with a stricter fail-closed contract (an unreadable body, or one
+// missing its counts, refuses) than a funnel serving every tool can impose without
+// breaking non-counting responses. Its check runs first, so its more specific message
+// wins; this rule is the class-wide net behind it.
+func reportsNoSuccess(body []byte) string {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		return ""
+	}
+	failed, ok := topLevelCount(top, "failed")
+	if !ok || failed == 0 {
+		return ""
+	}
+	for _, key := range []string{"set", "successful", "succeeded"} {
+		succeeded, ok := topLevelCount(top, key)
+		if !ok {
+			continue
+		}
+		if succeeded > 0 {
+			return ""
+		}
+		return fmt.Sprintf("the call reported no successes (%s 0, failed %d): %s", key, failed, strings.TrimSpace(string(body)))
+	}
+	return fmt.Sprintf("the call reported %d failed and no success count to confirm anything landed: %s", failed, strings.TrimSpace(string(body)))
+}
+
+func topLevelCount(top map[string]json.RawMessage, key string) (int, bool) {
+	raw, ok := top[key]
+	if !ok {
+		return 0, false
+	}
+	var n float64
+	if err := json.Unmarshal(raw, &n); err != nil {
+		return 0, false
+	}
+	return int(n), true
 }
 
 type profileInstanceStatus struct {
