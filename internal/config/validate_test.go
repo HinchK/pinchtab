@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -1198,7 +1199,11 @@ func TestValidateFileConfig_DefaultSolversAreKnown(t *testing.T) {
 // diagnostics here — but it no longer does so in silence: the same reason the setter gives
 // is reported, so the operator learns the value is dead rather than discovering it never
 // took effect.
-func TestValidateFileConfigWarnsAboutActivityStateDirWithoutBreakingTheLoad(t *testing.T) {
+// A file that already carries the key keeps loading and still says so — but from the
+// non-gating list. It rode the gating list once, and because every caller that decides
+// whether a write may proceed gates on that list, one inert key aborted every later config
+// write. Which list the diagnostic lives in IS the behaviour here.
+func TestActivityStateDirIsAdvisoryRatherThanGating(t *testing.T) {
 	root := t.TempDir()
 	body := `{"server":{"stateDir":` + quoteJSON(root) + `},
 		"observability":{"activity":{"stateDir":"/tmp/elsewhere"}}}`
@@ -1208,24 +1213,97 @@ func TestValidateFileConfigWarnsAboutActivityStateDirWithoutBreakingTheLoad(t *t
 	if err != nil {
 		t.Fatalf("LoadFileConfig() error = %v; a file carrying the key must still load", err)
 	}
-	found := ""
+
 	for _, e := range ValidateFileConfig(fc) {
 		if strings.Contains(e.Error(), "observability.activity.stateDir") {
-			found = e.Error()
+			t.Errorf("gating validation reported %q; an inert key must not gate a save", e)
+		}
+	}
+
+	advisories := FileConfigAdvisories(fc)
+	found := ""
+	for _, advisory := range advisories {
+		if strings.Contains(advisory, "observability.activity.stateDir") {
+			found = advisory
 		}
 	}
 	if found == "" {
-		t.Fatal("validation said nothing about a file carrying observability.activity.stateDir")
+		t.Fatalf("advisories = %v, want one naming the ignored key: silently swallowing it is not the fix", advisories)
 	}
-	if !strings.Contains(found, ActivityStateDirRefusal) {
-		t.Errorf("validation warning = %q, want it to carry the same reason %q", found, ActivityStateDirRefusal)
+	if found != ActivityStateDirAdvisory {
+		t.Errorf("advisory = %q, want %q", found, ActivityStateDirAdvisory)
 	}
 
-	cfg, _, err := LoadConfig()
+	cfg, diags, err := LoadConfig()
 	if err != nil {
-		t.Fatalf("LoadConfig() error = %v; the warning must not make an existing config unloadable", err)
+		t.Fatalf("LoadConfig() error = %v; the advisory must not make an existing config unloadable", err)
+	}
+	if !hasDiagnostic(diags, slog.LevelWarn, "config setting has no effect") {
+		t.Errorf("load diagnostics = %v, want the advisory reported at load", diags)
 	}
 	if want := filepath.Join(root, "activity"); cfg.ActivityLogDir() != want {
 		t.Errorf("ActivityLogDir() = %q, want the derived %q", cfg.ActivityLogDir(), want)
+	}
+}
+
+// The severity split has to hold in both directions: carrying the key in a file is an
+// advisory, and SETTING it is still an error on that write.
+func TestSettingTheIgnoredKeyIsStillRefusedWhileCarryingItIsNot(t *testing.T) {
+	fc := DefaultFileConfig()
+	if err := SetConfigValue(&fc, "observability.activity.stateDir", "/tmp/elsewhere"); err == nil {
+		t.Fatal("config set observability.activity.stateDir was accepted")
+	}
+
+	carrying := DefaultFileConfig()
+	carrying.Observability.Activity.StateDir = "/tmp/elsewhere"
+	if errs := ValidateFileConfig(&carrying); len(errs) > 0 {
+		t.Errorf("carrying the key produced gating errors %v, want none", errs)
+	}
+	if len(FileConfigAdvisories(&carrying)) != 1 {
+		t.Errorf("advisories = %v, want exactly the ignored-key notice", FileConfigAdvisories(&carrying))
+	}
+}
+
+// The guardrail on the tier: a genuinely invalid value must keep gating, or this fix trades
+// a blocked agent for a config that saves nonsense.
+func TestARealValidationErrorStillGates(t *testing.T) {
+	fc := DefaultFileConfig()
+	fc.Server.Port = "99999"
+	fc.Observability.Activity.StateDir = "/tmp/elsewhere"
+
+	errs := ValidateFileConfig(&fc)
+	if len(errs) == 0 {
+		t.Fatal("an out-of-range port produced no gating error")
+	}
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "observability.activity.stateDir") {
+			t.Errorf("gating errors include the advisory %q", e)
+		}
+	}
+}
+
+// The advisory instructs nothing, which is the point of the rewording: the key is inert, so
+// there is nothing to do, and the text it replaced named an action no command performs. The
+// refusal DOES instruct, and what it names has to be a real, settable key.
+func TestTheIgnoredKeyTextsInstructOnlyWhatTheProductCanDo(t *testing.T) {
+	for _, banned := range []string{"remove", "delete", "unset"} {
+		if strings.Contains(strings.ToLower(ActivityStateDirAdvisory), banned) {
+			t.Errorf("advisory = %q, want no %q instruction: no shipped command does that to a key", ActivityStateDirAdvisory, banned)
+		}
+	}
+	for _, want := range []string{"observability.activity.stateDir", "ignored", "<server.stateDir>/activity"} {
+		if !strings.Contains(ActivityStateDirAdvisory, want) {
+			t.Errorf("advisory = %q, want it to carry %q", ActivityStateDirAdvisory, want)
+		}
+	}
+
+	if !strings.Contains(ActivityStateDirRefusal, "set server.stateDir") {
+		t.Fatalf("refusal = %q, want it to name the setting that moves the logs", ActivityStateDirRefusal)
+	}
+	// The remedy the refusal names must be a key `config set` accepts, or the text
+	// dead-ends the same way "remove the key" did.
+	fc := DefaultFileConfig()
+	if err := SetConfigValue(&fc, "server.stateDir", t.TempDir()); err != nil {
+		t.Errorf("the refusal names server.stateDir but config set rejects it: %v", err)
 	}
 }

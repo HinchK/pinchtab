@@ -25,7 +25,15 @@ func (e ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Field, e.Message)
 }
 
-// ValidateFileConfig validates a FileConfig and returns all errors found.
+// ValidateFileConfig returns the GATING problems in a FileConfig: values that are wrong,
+// out of range, or no longer supported. Every caller that decides whether a write may
+// proceed gates on this, so anything returned here blocks a save — off a TTY that means an
+// agent's write is refused, which is correct for an invalid port and wrong for a key that
+// merely does nothing.
+//
+// Advisories live in FileConfigAdvisories instead. Two severities rather than one is the
+// whole point: a diagnostic about an inert key used to ride this list and abort every
+// later config write, including writes to unrelated keys.
 func ValidateFileConfig(fc *FileConfig) []error {
 	var errs []error
 
@@ -312,9 +320,6 @@ func ValidateFileConfig(fc *FileConfig) []error {
 			Field:   "observability.activity.retentionDays",
 			Message: fmt.Sprintf("must be > 0 (got %d)", *fc.Observability.Activity.RetentionDays),
 		})
-	}
-	if strings.TrimSpace(fc.Observability.Activity.StateDir) != "" {
-		errs = append(errs, fmt.Errorf("%s; remove the key, the file value is ignored", ActivityStateDirRefusal))
 	}
 	if fc.Sessions.Dashboard.IdleTimeoutSec != nil && *fc.Sessions.Dashboard.IdleTimeoutSec <= 0 {
 		errs = append(errs, ValidationError{
@@ -645,4 +650,25 @@ func validateBrowsersBlock(fc FileConfig) []error {
 	}
 
 	return errs
+}
+
+// FileConfigAdvisories reports what a config file says that has no effect. These are
+// REPORTED, never gating: nothing here means the file is unsafe to load or the next write
+// is unsafe to make, so blocking a save on one would refuse work for no reason.
+//
+// A diagnostic belongs here only when the value is inert — PinchTab reads something else,
+// or nothing — and the reader has nothing to fix. Anything the user could get wrong, and
+// anything PinchTab will act on, stays in ValidateFileConfig where it gates.
+//
+//	observability.activity.stateDir  the path is derived from server.stateDir; the loader
+//	                                 never reads this key, and `config set` refuses it
+func FileConfigAdvisories(fc *FileConfig) []string {
+	if fc == nil {
+		return nil
+	}
+	var advisories []string
+	if strings.TrimSpace(fc.Observability.Activity.StateDir) != "" {
+		advisories = append(advisories, ActivityStateDirAdvisory)
+	}
+	return advisories
 }

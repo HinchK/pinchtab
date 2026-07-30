@@ -57,10 +57,20 @@ func (cfg *RuntimeConfig) ActivityLogDir() string {
 
 const activityLogSubdir = "activity"
 
-// ActivityStateDirRefusal is the one wording behind refusing observability.activity.stateDir
-// at `config set` and warning about it at validation: the location is derived, so a file
-// value would be accepted and then discarded. It names the derived path and why the
-// derivation exists, because a user reaching for the key wants the logs elsewhere and
-// deserves to learn why that is not on offer.
-const ActivityStateDirRefusal = "observability.activity.stateDir is not settable: activity logs are always written to <server.stateDir>/" + activityLogSubdir +
-	" so two instances cannot share a log directory; set server.stateDir to move them"
+// activityStateDirReason is the fact both surfaces below state, written once. A user
+// reaching for observability.activity.stateDir wants the logs elsewhere and deserves to
+// learn why that is not on offer, rather than being told only that the key is wrong.
+const activityStateDirReason = "activity logs are always written to <server.stateDir>/" + activityLogSubdir +
+	" so two instances cannot share a log directory"
+
+// ActivityStateDirRefusal is what `config set` answers. It ends in an action because there
+// is one: server.stateDir moves the logs, and `config set server.stateDir <path>` performs
+// it.
+const ActivityStateDirRefusal = "observability.activity.stateDir is not settable: " + activityStateDirReason +
+	"; set server.stateDir to move them"
+
+// ActivityStateDirAdvisory is what a FILE already carrying the key is told, and it
+// instructs nothing on purpose. The key is inert, so there is nothing the reader must do —
+// and the wording it replaces ("remove the key") named an action no shipped command
+// performs, while riding a diagnostic that aborted every later config write off a TTY.
+const ActivityStateDirAdvisory = "observability.activity.stateDir is ignored: " + activityStateDirReason

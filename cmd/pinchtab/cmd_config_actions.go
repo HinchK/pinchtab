@@ -90,7 +90,15 @@ func handleConfigPatch(jsonPatch string) error {
 // applyPreparedChange reviews validation warnings (gating on confirmSaveAnyway),
 // saves the change, prints the success message, and emits the restart hint — the
 // shared mutate path for `config set` and `config patch` so they cannot drift.
+//
+// Advisories are printed and never gated. They were gated once, when the validator had a
+// single severity, and one inert key in a file then aborted every later write — off a TTY,
+// where confirmSaveAnyway cannot ask, so agents could not save anything at all. Gating
+// still applies to real validation errors, which is what stops an out-of-range port
+// slipping through unnoticed.
 func applyPreparedChange(change *workflow.PreparedChange, warningNoun, abortNoun, successMessage string) error {
+	printConfigAdvisories(config.FileConfigAdvisories(change.FileConfig))
+
 	if errs := change.ValidationErrors; len(errs) > 0 {
 		fmt.Fprintf(os.Stderr, "Warning: %s causes validation error(s):\n", warningNoun)
 		for _, err := range errs {
@@ -108,6 +116,15 @@ func applyPreparedChange(change *workflow.PreparedChange, warningNoun, abortNoun
 	fmt.Println(successMessage)
 	hintRestartIfRunning()
 	return nil
+}
+
+// printConfigAdvisories reports settings the file carries that PinchTab does not act on.
+// stderr, so it never lands in piped output a caller is parsing, and no exit code: an
+// advisory describes something inert, and there is nothing for the reader to do about it.
+func printConfigAdvisories(advisories []string) {
+	for _, advisory := range advisories {
+		fmt.Fprintf(os.Stderr, "Note: %s\n", advisory)
+	}
 }
 
 // confirmSaveAnyway prompts on a TTY; on non-TTY (agent / pipe) it returns
@@ -156,11 +173,13 @@ func isSensitiveConfigPath(path string) bool {
 }
 
 func handleConfigValidate() {
-	configPath, errs, err := workflow.ValidateCurrentFile()
+	configPath, errs, advisories, err := workflow.ValidateCurrentFile()
 	if err != nil {
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+
+	printConfigAdvisories(advisories)
 
 	if len(errs) > 0 {
 		fmt.Printf("Config file has %d error(s):\n", len(errs))

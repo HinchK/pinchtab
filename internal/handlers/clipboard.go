@@ -42,6 +42,20 @@ func (h *Handlers) clipboardEnabled() bool {
 	return h != nil && h.Config != nil && h.Config.AllowClipboard
 }
 
+// clipboardSetting is the config path gating the clipboard endpoints. Clipboard
+// has no entry in the route catalogue's capability table, so unlike every other
+// gate its setting has no owner there and is declared here instead.
+const clipboardSetting = "security.allowClipboard"
+
+// writeClipboardDisabled emits the clipboard capability refusal. It exists so the
+// read and write gates cannot drift apart, and so the clipboard carries the same
+// guidance — including the restart — as every catalogued capability.
+func writeClipboardDisabled(w http.ResponseWriter) {
+	httpx.ErrorCode(w, 403, "clipboard_disabled",
+		httpx.DisabledEndpointMessage("clipboard", clipboardSetting), false,
+		httpx.DisabledEndpointDetails(clipboardSetting))
+}
+
 func rejectClipboardTabID(w http.ResponseWriter, r *http.Request) bool {
 	if strings.TrimSpace(r.URL.Query().Get("tabId")) != "" {
 		httpx.Error(w, http.StatusBadRequest, fmt.Errorf("tabId is not supported for shared clipboard operations"))
@@ -53,9 +67,7 @@ func rejectClipboardTabID(w http.ResponseWriter, r *http.Request) bool {
 // HandleClipboardRead reads text from the clipboard.
 func (h *Handlers) HandleClipboardRead(w http.ResponseWriter, r *http.Request) {
 	if !h.clipboardEnabled() {
-		httpx.ErrorCode(w, 403, "clipboard_disabled", httpx.DisabledEndpointMessage("clipboard", "security.allowClipboard"), false, map[string]any{
-			"setting": "security.allowClipboard",
-		})
+		writeClipboardDisabled(w)
 		return
 	}
 	if rejectClipboardTabID(w, r) {
@@ -79,9 +91,7 @@ func (h *Handlers) HandleClipboardRead(w http.ResponseWriter, r *http.Request) {
 // HandleClipboardWrite writes text to the clipboard.
 func (h *Handlers) HandleClipboardWrite(w http.ResponseWriter, r *http.Request) {
 	if !h.clipboardEnabled() {
-		httpx.ErrorCode(w, 403, "clipboard_disabled", httpx.DisabledEndpointMessage("clipboard", "security.allowClipboard"), false, map[string]any{
-			"setting": "security.allowClipboard",
-		})
+		writeClipboardDisabled(w)
 		return
 	}
 	if rejectClipboardTabID(w, r) {

@@ -49,19 +49,21 @@ func SavePreparedChange(change *PreparedChange) error {
 	return nil
 }
 
-func ValidateCurrentFile() (string, []error, error) {
+// ValidateCurrentFile returns the file's gating errors and its non-gating advisories
+// separately, because only the first decides whether the file is valid.
+func ValidateCurrentFile() (string, []error, []string, error) {
 	configPath := CurrentConfigPath()
 	data, err := os.ReadFile(configPath)
 	if err != nil {
-		return configPath, nil, fmt.Errorf("read config file: %w", err)
+		return configPath, nil, nil, fmt.Errorf("read config file: %w", err)
 	}
 
 	fc := &config.FileConfig{}
 	if err := json.Unmarshal(data, fc); err != nil {
-		return configPath, nil, fmt.Errorf("parse config: %w", err)
+		return configPath, nil, nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	return configPath, config.ValidateFileConfig(fc), nil
+	return configPath, config.ValidateFileConfig(fc), config.FileConfigAdvisories(fc), nil
 }
 
 func UpdateValue(path, value string) (*config.RuntimeConfig, bool, error) {

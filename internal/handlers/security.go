@@ -21,7 +21,7 @@ func (h *Handlers) writeCapabilityDisabled(w http.ResponseWriter, cap routes.Cap
 	meta, _ := routes.Meta(cap)
 	httpx.ErrorCode(w, http.StatusForbidden, meta.DisabledCode,
 		httpx.DisabledEndpointMessage(meta.Label, meta.Setting), false,
-		map[string]any{"setting": meta.Setting})
+		httpx.DisabledEndpointDetails(meta.Setting))
 }
 
 // capState builds the /security projection for a capability-gated endpoint
@@ -77,8 +77,8 @@ func (h *Handlers) endpointSecurityStates() map[string]endpointSecurityState {
 		// clipboard has no capability gate in the route catalog, so its metadata stays local.
 		"clipboard": {
 			Enabled: h.clipboardEnabled(),
-			Setting: "security.allowClipboard",
-			Message: httpx.DisabledEndpointMessage("clipboard", "security.allowClipboard"),
+			Setting: clipboardSetting,
+			Message: httpx.DisabledEndpointMessage("clipboard", clipboardSetting),
 			Paths:   []string{"GET /clipboard/read", "POST /clipboard/write", "POST /clipboard/copy", "GET /clipboard/paste"},
 		},
 		"stateExport": capState(routes.CapStateExport, h.stateExportEnabled(),

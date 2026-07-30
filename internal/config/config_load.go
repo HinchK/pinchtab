@@ -51,6 +51,7 @@ type parsedConfigFile struct {
 	UnknownFields  error    // non-fatal: unrecognized nested fields
 	UnknownKeys    []string // the dotted paths behind UnknownFields
 	ValidationErrs []error  // non-fatal: ValidateFileConfig
+	Advisories     []string // non-gating: FileConfigAdvisories
 }
 
 func resolveConfigPath() (path, defaultPath string, envOverride bool) {
@@ -103,6 +104,7 @@ func readAndParseConfigFile() parsedConfigFile {
 	}
 	if res.FC != nil {
 		res.ValidationErrs = ValidateFileConfig(res.FC)
+		res.Advisories = FileConfigAdvisories(res.FC)
 	}
 	return res
 }
@@ -333,6 +335,11 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 	}
 	for _, e := range res.ValidationErrs {
 		diags = append(diags, LoadDiagnostic{slog.LevelWarn, "config validation error", []any{"path", res.Path, "error", e}})
+	}
+	// Reported at load like the rest, but from the non-gating list: the file says
+	// something inert, which is worth knowing and is nobody's blocker.
+	for _, advisory := range res.Advisories {
+		diags = append(diags, LoadDiagnostic{slog.LevelWarn, "config setting has no effect", []any{"path", res.Path, "advisory", advisory}})
 	}
 
 	diags = append(diags, applyFileConfig(cfg, res.FC)...)
