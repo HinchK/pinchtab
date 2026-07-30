@@ -81,13 +81,16 @@ func Navigate(client *http.Client, base, token string, url string, cmd *cobra.Co
 
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	if jsonOutput {
-		result := postNavigate(client, base, token, req, true)
+		result, usedFallback := postNavigate(client, base, token, req, true)
+		resultTabID := tabIDFromNavigateResult(result)
+		reportFallbackNewTab(usedFallback, req.tabID, resultTabID)
 		apiclient.SuggestNextAction("navigate", result)
-		return tabIDFromNavigateResult(result)
+		return resultTabID
 	}
 
-	result := postNavigate(client, base, token, req, false)
+	result, usedFallback := postNavigate(client, base, token, req, false)
 	resultTabID := tabIDFromNavigateResult(result)
+	reportFallbackNewTab(usedFallback, req.tabID, resultTabID)
 	if resultTabID != "" {
 		fmt.Println(resultTabID)
 	}
@@ -132,6 +135,10 @@ type navigateRequest struct {
 	path               string
 	body               map[string]any
 	fallbackOnNotFound bool
+	// tabID is the tab the request was scoped to, kept so a fallback can name
+	// the tab that turned out to be gone. Read once, here, rather than again at
+	// the reporting site.
+	tabID string
 }
 
 func buildNavigateRequest(url string, cmd *cobra.Command) navigateRequest {
@@ -166,21 +173,51 @@ func buildNavigateRequest(url string, cmd *cobra.Command) navigateRequest {
 		path:               path,
 		body:               body,
 		fallbackOnNotFound: fallbackOnNotFound,
+		tabID:              tabID,
 	}
 }
 
-func postNavigate(client *http.Client, base, token string, req navigateRequest, printResponse bool) map[string]any {
+// postNavigate returns the decoded response and whether the tab-scoped request
+// 404'd and was retried unscoped, which is the case the caller has to report.
+func postNavigate(client *http.Client, base, token string, req navigateRequest, printResponse bool) (map[string]any, bool) {
 	statusCode, respBody, result := apiclient.DoPostQuietWithStatus(client, base, token, req.path, req.body)
+	usedFallback := false
 	if statusCode == http.StatusNotFound && req.fallbackOnNotFound {
+		usedFallback = true
 		statusCode, respBody, result = apiclient.DoPostQuietWithStatus(client, base, token, "/navigate", req.body)
 	}
 	if statusCode >= 400 {
 		apiclient.ExitWithAPIError(statusCode, respBody)
 	}
 	if printResponse {
-		return apiclient.PrintAndDecode(respBody)
+		return apiclient.PrintAndDecode(respBody), usedFallback
 	}
-	return result
+	return result, usedFallback
+}
+
+// reportFallbackNewTab says so when the fallback left the caller on a second tab.
+//
+// The retry drops the tab id, which makes it an unscoped request, and the server's
+// published contract for an UNSCOPED navigate is caller-identity dependent
+// (docs/endpoints.md): an anonymous caller always gets a new tab — CurrentTabStore
+// has no entry for a global scope to adopt — while a session or agent-id caller
+// reuses that scope's current tab. So the notice is exactly as narrow as the
+// guarantee behind it: anonymous callers, where "a new tab was opened" is a fact
+// rather than an inference. An identified caller stays silent because nothing was
+// created for it to hear about.
+//
+// The remedy is deliberately absent: an anonymous navigate already prints
+// cli.NoSessionHint, which carries the run-with-a-session advice, and repeating it
+// here would be the same guidance twice on one command.
+func reportFallbackNewTab(usedFallback bool, staleTabID, newTabID string) {
+	if !usedFallback || isIdentifiedCaller() {
+		return
+	}
+	if newTabID == "" {
+		output.Hint(fmt.Sprintf("tab %s no longer exists — the server opened a new tab for this navigation", staleTabID))
+		return
+	}
+	output.Hint(fmt.Sprintf("tab %s no longer exists — opened a new tab %s for this navigation", staleTabID, newTabID))
 }
 
 func isIdentifiedCaller() bool {

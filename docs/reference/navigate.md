@@ -62,6 +62,7 @@ pinchtab nav https://example.com --block-images  # Skip images
 - `POST /tabs/{id}/navigate`, `POST /navigate` with `tabId`, and `pinchtab nav <url> --tab <id>` reuse the specified tab and make it the current tab for later unscoped operations.
 - `--new-tab` and `newTab:true` force a new tab even if another tab is current.
 - Commands that operate without `--tab` use the current tracked tab. Focusing or using a tab updates that current-tab pointer; if the pointer is stale, PinchTab falls back to the most recently used tracked tab.
+- When the saved current-tab pointer names a tab the server no longer has, `pinchtab nav` retries the navigation without the tab id. For a session or agent-id caller that retry reuses that scope's current tab. For a session-less caller the server opens a **new** tab — the documented anonymous contract — so the CLI prints a `HINT` on stderr naming both the tab that was gone and the new one, rather than reporting plain success while leaving you with two tabs on one URL. Run with `PINCHTAB_SESSION` set to keep a single work surface. An explicit `--tab` never retries: it surfaces the 404.
 
 Rationale: the CLI keeps one obvious work surface by default. Use `--new-tab` when you intentionally want another tab, or `--tab`/`tabId` when you need a specific tab.
 

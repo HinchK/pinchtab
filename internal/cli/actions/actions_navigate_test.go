@@ -508,3 +508,170 @@ func TestNavigateTextFetchesPageText(t *testing.T) {
 		t.Errorf("stdout = %q, want the page text after navigation", out)
 	}
 }
+
+// The reported defect: a stale saved tab id 404s, the CLI silently re-posts
+// without it, and the server — following its published anonymous contract —
+// opens a SECOND tab on the same URL. The navigate reported success and said
+// nothing, so an agent had a page it was not looking at.
+func TestNavigateFallbackAnnouncesTheNewTabWithoutASession(t *testing.T) {
+	t.Setenv("PINCHTAB_SESSION", "")
+	t.Setenv("PINCHTAB_AGENT_ID", "")
+
+	m := newMockServer()
+	m.setResponse(http.MethodPost, "/tabs/STALE123/navigate", http.StatusNotFound, `{"error":"tab not found"}`)
+	m.setResponse(http.MethodPost, "/navigate", http.StatusOK, `{"tabId":"NEW123","status":"ok"}`)
+	defer m.close()
+
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://pinchtab.com", staleTabCmd(t, "STALE123"))
+		})
+	})
+
+	notice := fallbackNoticeLine(t, stderr)
+	for _, want := range []string{"STALE123", "NEW123", "new tab"} {
+		if !strings.Contains(notice, want) {
+			t.Errorf("notice = %q, want it to contain %q", notice, want)
+		}
+	}
+	// The retry still has to have worked — a notice about a navigation that
+	// failed would be worse than silence.
+	if len(m.requests) != 2 || m.requests[1].Path != "/navigate" {
+		t.Fatalf("requests = %+v, want the tab-scoped attempt then the unscoped retry", m.requests)
+	}
+}
+
+// The session path is the one that already works: the unscoped retry reuses the
+// session's current tab, so nothing was created and there is nothing to
+// announce. Saying "opened a new tab" here would be false.
+func TestNavigateFallbackStaysSilentForAnIdentifiedCaller(t *testing.T) {
+	t.Setenv("PINCHTAB_SESSION", "ses_something")
+
+	m := newMockServer()
+	m.setResponse(http.MethodPost, "/tabs/STALE123/navigate", http.StatusNotFound, `{"error":"tab not found"}`)
+	m.setResponse(http.MethodPost, "/navigate", http.StatusOK, `{"tabId":"SESSION_CURRENT","status":"ok"}`)
+	defer m.close()
+
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://pinchtab.com", staleTabCmd(t, "STALE123"))
+		})
+	})
+
+	if strings.Contains(stderr, "new tab") {
+		t.Fatalf("stderr = %q, want no new-tab notice for a caller whose retry adopts the session's current tab", stderr)
+	}
+	// The retry itself is unchanged: still one unscoped POST, still no tab id in
+	// the body, so the server keeps owning the tab-selection policy.
+	if len(m.requests) != 2 || m.requests[1].Path != "/navigate" {
+		t.Fatalf("requests = %+v, want the fallback to still fire", m.requests)
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(m.requests[1].Body), &body)
+	if _, ok := body["tabId"]; ok {
+		t.Errorf("retry body = %v; the CLI must not start naming a tab, that is the server's policy", body)
+	}
+}
+
+// Absence assertion: an ordinary navigate that never hits the fallback gains no
+// extra output. Without this the notice could fire on every call and the tests
+// above would still pass.
+func TestNavigateWithoutFallbackAnnouncesNothingExtra(t *testing.T) {
+	t.Setenv("PINCHTAB_SESSION", "")
+	t.Setenv("PINCHTAB_AGENT_ID", "")
+
+	m := newMockServer()
+	m.response = `{"tabId":"ABC123","status":"ok"}`
+	defer m.close()
+
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://pinchtab.com", newNavigateCmd())
+		})
+	})
+
+	if strings.Contains(stderr, "no longer exists") {
+		t.Fatalf("stderr = %q, want no fallback notice when no fallback fired", stderr)
+	}
+}
+
+// The notice must not repeat the session advice cli.NoSessionHint already
+// carries: an anonymous fallback prints both lines, and the same remedy twice on
+// one command is the shape that trains readers to skip hints.
+func TestFallbackNoticeDoesNotRepeatTheSessionRemedy(t *testing.T) {
+	t.Setenv("PINCHTAB_SESSION", "")
+	t.Setenv("PINCHTAB_AGENT_ID", "")
+
+	m := newMockServer()
+	m.setResponse(http.MethodPost, "/tabs/STALE123/navigate", http.StatusNotFound, `{"error":"tab not found"}`)
+	m.setResponse(http.MethodPost, "/navigate", http.StatusOK, `{"tabId":"NEW123","status":"ok"}`)
+	defer m.close()
+
+	stderr := captureStderr(t, func() {
+		captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://pinchtab.com", staleTabCmd(t, "STALE123"))
+		})
+	})
+
+	if strings.Count(stderr, cli.SessionCreateCommand) != 1 {
+		t.Errorf("stderr carries the session command %d times, want exactly once (from cli.NoSessionHint):\n%s",
+			strings.Count(stderr, cli.SessionCreateCommand), stderr)
+	}
+	if !strings.Contains(fallbackNoticeLine(t, stderr), "new tab") {
+		t.Errorf("the fallback notice itself is missing from:\n%s", stderr)
+	}
+}
+
+// stdout stays tab-id-only through a fallback: `TAB=$(pinchtab nav URL)` would
+// otherwise capture the notice.
+func TestFallbackNoticeStaysOffStdout(t *testing.T) {
+	t.Setenv("PINCHTAB_SESSION", "")
+	t.Setenv("PINCHTAB_AGENT_ID", "")
+	stdoutTerminal(t, false)
+
+	m := newMockServer()
+	m.setResponse(http.MethodPost, "/tabs/STALE123/navigate", http.StatusNotFound, `{"error":"tab not found"}`)
+	m.setResponse(http.MethodPost, "/navigate", http.StatusOK, `{"tabId":"NEW123","url":"https://pinchtab.com","status":"ok"}`)
+	defer m.close()
+
+	var out string
+	_ = captureStderr(t, func() {
+		out = captureStdout(t, func() {
+			Navigate(m.server.Client(), m.base(), "", "https://pinchtab.com", staleTabCmd(t, "STALE123"))
+		})
+	})
+
+	if strings.TrimSpace(out) != "NEW123" {
+		t.Fatalf("stdout = %q, want only the tab id", out)
+	}
+}
+
+// staleTabCmd builds the nav command shape the fallback needs: a tab id that came
+// from saved state rather than an explicit --tab, which is the only case the
+// retry is allowed to fire for.
+func staleTabCmd(t *testing.T, tabID string) *cobra.Command {
+	t.Helper()
+
+	cmd := newNavigateCmd()
+	cmd.Flags().Lookup("tab").DefValue = tabID
+	if err := cmd.Flags().Set("tab", tabID); err != nil {
+		t.Fatal(err)
+	}
+	cmd.Flags().Lookup("tab").Changed = false
+	return cmd
+}
+
+// fallbackNoticeLine returns the single HINT line about the vanished tab, failing
+// when there is none — so a test asserting on its content cannot pass against an
+// empty string.
+func fallbackNoticeLine(t *testing.T, stderr string) string {
+	t.Helper()
+
+	for _, line := range strings.Split(stderr, "\n") {
+		if strings.Contains(line, "no longer exists") {
+			return line
+		}
+	}
+	t.Fatalf("no fallback notice in stderr:\n%s", stderr)
+	return ""
+}
