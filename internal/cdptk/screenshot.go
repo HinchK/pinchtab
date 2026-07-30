@@ -141,27 +141,32 @@ func CaptureFromSurface(beyondViewport bool, clip *page.Viewport) bool {
 	return beyondViewport || clip != nil
 }
 
-// ClipViewport converts a ScreenshotClip into the page.Viewport CDP takes, and is the one
-// place the non-zero-scale rule is applied. A nil clip converts to nil, so callers keep
-// the nil-clip fast path CaptureFromSurface describes.
-//
-// Scale 0 means native — the contract ScreenshotOpts states and normalises. CDP does not:
-// it discards a scale-0 clip and returns the whole viewport, no error, exactly as it
-// discards a clip passed with fromSurface=false. Same symptom, same silence, so the two
-// rules belong to the same conversion rather than to whichever call site remembered.
+// NormalizedViewport owns the non-zero-scale rule for a clip already in CDP's own type.
+// Scale 0 means native. CDP does not agree: it discards a scale-0 clip and returns the
+// whole viewport, no error, exactly as it discards a clip passed with fromSurface=false.
+// Same symptom, same silence, so the rule is applied where the value meets CDP rather
+// than at whichever producer remembered. A nil viewport stays nil, keeping the nil-clip
+// fast path CaptureFromSurface describes.
+func NormalizedViewport(vp *page.Viewport) *page.Viewport {
+	if vp == nil || vp.Scale != 0 {
+		return vp
+	}
+	out := *vp
+	out.Scale = 1
+	return &out
+}
+
+// ClipViewport converts a ScreenshotClip into the page.Viewport CDP takes, routed
+// through NormalizedViewport so no conversion path can hand CDP a scale-0 clip.
 func ClipViewport(clip *ScreenshotClip) *page.Viewport {
 	if clip == nil {
 		return nil
 	}
-	scale := clip.Scale
-	if scale == 0 {
-		scale = 1
-	}
-	return &page.Viewport{
+	return NormalizedViewport(&page.Viewport{
 		X:      clip.X,
 		Y:      clip.Y,
 		Width:  clip.Width,
 		Height: clip.Height,
-		Scale:  scale,
-	}
+		Scale:  clip.Scale,
+	})
 }

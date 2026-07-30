@@ -9,6 +9,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/page"
+	"github.com/pinchtab/pinchtab/internal/cdptk"
 )
 
 type screenshotExecutor struct {
@@ -173,4 +174,39 @@ func TestScaledScreenshotClip(t *testing.T) {
 			t.Fatalf("expected nil clip, got %+v", clip)
 		}
 	})
+}
+
+// CDP discards a scale-0 clip and returns the whole viewport, no error. The chrome path
+// once shipped exactly that defect, so every path a clip takes to CDP must leave the
+// conversion with a non-zero Scale — including the no-rescale early return, which used to
+// hand the caller's clip through verbatim.
+func TestEveryCapturePathNormalisesAZeroScaleClip(t *testing.T) {
+	unset := func() *page.Viewport {
+		return &page.Viewport{X: 40, Y: 60, Width: 120, Height: 60}
+	}
+	for _, tc := range []struct {
+		name      string
+		clip      *page.Viewport
+		optsScale float64
+		wantScale float64
+	}{
+		{name: "no rescale requested", clip: unset(), optsScale: 0, wantScale: 1},
+		{name: "explicit native rescale", clip: unset(), optsScale: 1, wantScale: 1},
+		{name: "real rescale multiplies the native default", clip: unset(), optsScale: 2, wantScale: 2},
+		{name: "real rescale multiplies an explicit scale", clip: &page.Viewport{X: 40, Y: 60, Width: 120, Height: 60, Scale: 1.5}, optsScale: 2, wantScale: 3},
+		{name: "Bridge.CaptureScreenshot converts through cdptk first", clip: cdptk.ClipViewport(&cdptk.ScreenshotClip{X: 40, Y: 60, Width: 120, Height: 60}), optsScale: 0, wantScale: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scaledScreenshotClip(ScreenshotOpts{Clip: tc.clip, Scale: tc.optsScale}, 0, 0, 0, 0)
+			if got == nil {
+				t.Fatal("expected a clip")
+			}
+			if got.Scale != tc.wantScale {
+				t.Fatalf("scale = %v, want %v — a scale-0 clip reaching CDP is silently discarded", got.Scale, tc.wantScale)
+			}
+			if got.X != 40 || got.Y != 60 || got.Width != 120 || got.Height != 60 {
+				t.Fatalf("geometry changed: %+v", got)
+			}
+		})
+	}
 }

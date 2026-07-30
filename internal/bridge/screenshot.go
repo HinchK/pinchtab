@@ -110,13 +110,10 @@ type ScreenshotOpts struct {
 
 func scaledScreenshotClip(opts ScreenshotOpts, viewportWidth, viewportHeight, documentWidth, documentHeight float64) *page.Viewport {
 	if opts.Scale <= 0 || opts.Scale == 1 {
-		return opts.Clip
+		return cdptk.NormalizedViewport(opts.Clip)
 	}
 	if opts.Clip != nil {
-		clip := *opts.Clip
-		if clip.Scale == 0 {
-			clip.Scale = 1
-		}
+		clip := *cdptk.NormalizedViewport(opts.Clip)
 		clip.Scale *= opts.Scale
 		return &clip
 	}
@@ -172,22 +169,19 @@ func captureScreenshotWithoutActivation(ctx context.Context, shot *page.CaptureS
 // top-level capture call has no scale parameter outside of clip, so this is
 // the only way to apply a render-time rescale.
 func CaptureScreenshot(ctx context.Context, opts ScreenshotOpts) ([]byte, error) {
-	clip := opts.Clip
-	if opts.Scale > 0 && opts.Scale != 1 {
-		// Known issue: two back-to-back /capture?scale=<n!=1> on the same
-		// tab without nav between can hang on the second call. Workaround:
-		// nav between captures (see e2e cli/capture-basic.sh).
-		viewportWidth, viewportHeight := opts.ViewportWidth, opts.ViewportHeight
-		documentWidth, documentHeight := 0.0, 0.0
-		if clip == nil {
-			if opts.BeyondViewport {
-				documentWidth, documentHeight = fetchDocumentSize(ctx)
-			} else if viewportWidth == 0 || viewportHeight == 0 {
-				viewportWidth, viewportHeight = fetchViewportSize(ctx)
-			}
+	// Known issue: two back-to-back /capture?scale=<n!=1> on the same
+	// tab without nav between can hang on the second call. Workaround:
+	// nav between captures (see e2e cli/capture-basic.sh).
+	viewportWidth, viewportHeight := opts.ViewportWidth, opts.ViewportHeight
+	documentWidth, documentHeight := 0.0, 0.0
+	if opts.Scale > 0 && opts.Scale != 1 && opts.Clip == nil {
+		if opts.BeyondViewport {
+			documentWidth, documentHeight = fetchDocumentSize(ctx)
+		} else if viewportWidth == 0 || viewportHeight == 0 {
+			viewportWidth, viewportHeight = fetchViewportSize(ctx)
 		}
-		clip = scaledScreenshotClip(opts, viewportWidth, viewportHeight, documentWidth, documentHeight)
 	}
+	clip := scaledScreenshotClip(opts, viewportWidth, viewportHeight, documentWidth, documentHeight)
 
 	fromSurface := cdptk.CaptureFromSurface(opts.BeyondViewport, clip)
 
