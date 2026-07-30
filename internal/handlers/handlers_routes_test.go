@@ -1,10 +1,15 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/routes"
 )
 
@@ -116,5 +121,159 @@ func TestRegisteredRouteCount(t *testing.T) {
 	if len(rec.patterns) != len(expectedRoutes()) {
 		sort.Strings(rec.patterns)
 		t.Fatalf("registered %d routes, expected %d", len(rec.patterns), len(expectedRoutes()))
+	}
+}
+
+// gatedCatalogRoutes is the population this guard walks: every catalogue entry declaring a
+// capability. It is enumerated from routes.Core(), never restated here, so a gated route
+// added tomorrow is covered the day it lands rather than the day someone remembers.
+func gatedCatalogRoutes(t *testing.T) []routes.Endpoint {
+	t.Helper()
+
+	var gated []routes.Endpoint
+	seen := map[routes.Capability]bool{}
+	for _, ep := range routes.Core() {
+		if ep.Capability == routes.CapNone {
+			continue
+		}
+		// A gated route registered only in its /tabs/{id}/ form has no root form to drive,
+		// and there are none today. Failing here rather than skipping is deliberate: a
+		// silently excluded route is exactly the gap this guard exists to close, so the
+		// first one to appear forces the decision instead of vanishing from the population.
+		if tabOnlyRoutes[ep.Route()] {
+			t.Fatalf("%s is capability-gated and tab-only, so this guard cannot drive it; give it a root form or drive the tab form here — do not let it fall out of the population", ep.Route())
+		}
+		gated = append(gated, ep)
+		seen[ep.Capability] = true
+	}
+
+	// Vacuity floors, both derived. The count floor is the smaller of the two claims: it
+	// catches an enumeration that silently stopped matching. The capability cross-check comes
+	// from a DIFFERENT accessor, so a Core() that lost its capability field entirely cannot
+	// leave this passing on a shrunken set.
+	if len(gated) < 20 {
+		t.Fatalf("only %d capability-gated routes in the catalogue; the enumeration has stopped matching and this guard would pass over almost nothing", len(gated))
+	}
+	for capability := range routes.CapabilityEndpoints() {
+		if !seen[capability] {
+			t.Errorf("capability %q gates endpoints but no catalogue route carries it, so nothing here drives it", capability)
+		}
+	}
+	return gated
+}
+
+// driveBridgeRoute issues one request through the REAL bridge mux and returns what a client
+// would receive. reached=false means the handler ran past the gate and then failed on the
+// mock bridge, which is still an answer to "was it refused".
+//
+// The request runs under a deadline because an unguarded handler must FAIL this guard rather
+// than hang it: with no browser behind the mock, a route that blocks would otherwise stall
+// the suite instead of reporting the missing gate.
+func driveBridgeRoute(t *testing.T, cfg *config.RuntimeConfig, ep routes.Endpoint) (int, string, bool) {
+	t.Helper()
+
+	h := New(&mockBridge{}, cfg, nil, nil, nil)
+	mux := http.NewServeMux()
+	h.registerBridgeRoutes(mux)
+
+	method, path, _ := strings.Cut(ep.Route(), " ")
+	w := httptest.NewRecorder()
+	reached := true
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			if recover() != nil {
+				reached = false
+			}
+		}()
+		mux.ServeHTTP(w, httptest.NewRequest(method, concreteRoutePath(path), strings.NewReader("{}")))
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s did not answer within the deadline; a capability gate answers before any browser work, so this route is reaching for one", ep.Route())
+	}
+	return w.Code, w.Body.String(), reached
+}
+
+// concreteRoutePath substitutes a value for each wildcard segment, so the guard sends what a
+// client sends rather than a pattern that only matches by accident.
+func concreteRoutePath(pattern string) string {
+	segments := strings.Split(pattern, "/")
+	for i, segment := range segments {
+		if strings.HasPrefix(segment, "{") && strings.HasSuffix(segment, "}") {
+			segments[i] = "probe"
+		}
+	}
+	return strings.Join(segments, "/")
+}
+
+// The invariant this file already pins for route EXISTENCE, one catalogue field along.
+// registerBridgeRoutes walks routes.Core() and drops ep.Capability, so on the bridge front a
+// capability gate is whatever each handler happens to do — and the same seam produced the same
+// class of defect twice, most recently two of three sibling record routes serving with
+// security.allowScreencast off while the third refused. Enforcement stays per-handler by
+// decision; this is the mechanism that notices when one of them ships without its guard.
+func TestEveryCapabilityGatedRouteRefusesOnTheBridgeFrontWhenDisabled(t *testing.T) {
+	for _, ep := range gatedCatalogRoutes(t) {
+		t.Run(ep.Route(), func(t *testing.T) {
+			meta, ok := routes.Meta(ep.Capability)
+			if !ok {
+				t.Fatalf("capability %q has no metadata, so no refusal can name its setting", ep.Capability)
+			}
+
+			status, body, _ := driveBridgeRoute(t, &config.RuntimeConfig{}, ep)
+			if status != http.StatusForbidden {
+				t.Fatalf("status = %d, want 403 with %s off; the bridge front serves a route the catalogue declares gated (body=%s)",
+					status, meta.Setting, body)
+			}
+
+			var resp struct {
+				Code    string         `json:"code"`
+				Details map[string]any `json:"details"`
+			}
+			if err := json.Unmarshal([]byte(body), &resp); err != nil {
+				t.Fatalf("refusal is not the product's error envelope (%v): %s", err, body)
+			}
+			// Compared against the catalogue's own metadata rather than a literal, so the
+			// two fronts cannot answer one capability under two codes.
+			if resp.Code != meta.DisabledCode {
+				t.Errorf("code = %q, want %q", resp.Code, meta.DisabledCode)
+			}
+			if setting, _ := resp.Details["setting"].(string); setting != meta.Setting {
+				t.Errorf("details.setting = %q, want %q", setting, meta.Setting)
+			}
+		})
+	}
+}
+
+// The negative control: the gate has to be a gate, not a removal. With the capability on, no
+// route in the same population answers the capability refusal. A handler that panics on the
+// mock bridge counts as reached — it got past the gate, which is the whole claim here.
+func TestNoCapabilityGatedRouteRefusesWhenTheCapabilityIsEnabled(t *testing.T) {
+	enabled := &config.RuntimeConfig{
+		AllowEvaluate:         true,
+		AllowMacro:            true,
+		AllowScreencast:       true,
+		AllowDownload:         true,
+		AllowCookies:          true,
+		AllowNetworkIntercept: true,
+		AllowUpload:           true,
+		AllowStateExport:      true,
+	}
+
+	for _, ep := range gatedCatalogRoutes(t) {
+		t.Run(ep.Route(), func(t *testing.T) {
+			meta, _ := routes.Meta(ep.Capability)
+			status, body, reached := driveBridgeRoute(t, enabled, ep)
+			if !reached {
+				return
+			}
+			if status == http.StatusForbidden && strings.Contains(body, meta.DisabledCode) {
+				t.Fatalf("%s still answers %s with %s enabled, so the gate cannot be opened: %s",
+					ep.Route(), meta.DisabledCode, meta.Setting, body)
+			}
+		})
 	}
 }
