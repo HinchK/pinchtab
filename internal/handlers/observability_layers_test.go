@@ -2,10 +2,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -79,6 +81,49 @@ func TestBothModesExposeTheSameDiagnosticKeys(t *testing.T) {
 	if frontDoor["layer"] == instance["layer"] {
 		t.Error("both layers report the same label; a client cannot tell the two counter sets apart")
 	}
+}
+
+func TestEmptyDiagnosticsEnvelopeContainsNoNulls(t *testing.T) {
+	resetObservabilityForTests()
+	bridge.ResetCrashMonitoringForTests()
+	t.Cleanup(func() {
+		resetObservabilityForTests()
+		bridge.ResetCrashMonitoringForTests()
+	})
+
+	for _, layer := range []string{LayerFrontDoor, LayerInstance} {
+		raw, err := json.Marshal(DiagnosticsSnapshot(layer))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var envelope any
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		for _, path := range nullPaths(envelope, layer) {
+			t.Errorf("%s is null in the empty envelope; an empty collection must marshal as its own type ([] or {}), since empty is the steady state a monitor reads", path)
+		}
+	}
+}
+
+func nullPaths(value any, path string) []string {
+	switch v := value.(type) {
+	case nil:
+		return []string{path}
+	case map[string]any:
+		var paths []string
+		for key, child := range v {
+			paths = append(paths, nullPaths(child, path+"."+key)...)
+		}
+		return paths
+	case []any:
+		var paths []string
+		for i, child := range v {
+			paths = append(paths, nullPaths(child, fmt.Sprintf("%s[%d]", path, i))...)
+		}
+		return paths
+	}
+	return nil
 }
 
 // A bridge bug report has to be able to state which build produced it.

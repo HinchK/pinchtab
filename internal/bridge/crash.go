@@ -114,7 +114,8 @@ func CrashForBrowserContext(ctx context.Context) (CrashEvent, bool) {
 // CrashSnapshot returns recent crash diagnostics for /health and /metrics.
 func CrashSnapshot() map[string]any {
 	crashMu.Lock()
-	recent := append([]CrashEvent(nil), recentCrashEvents...)
+	recent := make([]CrashEvent, 0, len(recentCrashEvents))
+	recent = append(recent, recentCrashEvents...)
 	crashMu.Unlock()
 	return map[string]any{
 		"total":  atomic.LoadUint64(&crashEventsTotal),
