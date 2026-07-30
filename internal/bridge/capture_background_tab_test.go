@@ -3,7 +3,6 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
-	"os"
 	"testing"
 	"time"
 
@@ -23,11 +22,7 @@ import (
 // of whether a real tab is actually painting.
 func TestCaptureScreenshotOfBackgroundTabCompletesQuickly(t *testing.T) {
 	chromePath := testbrowser.Path(t)
-	profile, err := os.MkdirTemp("", "pinchtab-bg-capture-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(profile) })
+	profile := testbrowser.ProfileDir(t)
 
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],

@@ -15,10 +15,7 @@ import (
 
 func TestCheckUncheckARIACheckboxAndVerifyState(t *testing.T) {
 	chromePath := testbrowser.Path(t)
-	profile, err := os.MkdirTemp("", "pinchtab-aria-checkbox-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),

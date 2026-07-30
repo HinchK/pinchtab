@@ -23,11 +23,7 @@ func newUploadFixture(t *testing.T) context.Context {
 	// Chrome that is still flushing its cache directory as the test returns makes
 	// that removal error — a green assertion then reports red for a reason that
 	// has nothing to do with what was asserted. Best-effort removal instead.
-	userDataDir, err := os.MkdirTemp("", "pinchtab-upload-fixture-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(userDataDir) })
+	userDataDir := testbrowser.ProfileDir(t)
 
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],

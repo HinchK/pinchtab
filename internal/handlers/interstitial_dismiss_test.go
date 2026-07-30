@@ -35,10 +35,7 @@ func TestKnownInterstitialDismissalIsCatalogAndModalScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, err := os.MkdirTemp("", "pinchtab-interstitial-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),

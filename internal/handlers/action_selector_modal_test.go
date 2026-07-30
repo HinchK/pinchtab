@@ -19,10 +19,7 @@ import (
 
 func TestActionSelectorResolutionDefaultsToTopmostDialog(t *testing.T) {
 	chromePath := testbrowser.Path(t)
-	profile, err := os.MkdirTemp("", "pinchtab-handler-modal-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),

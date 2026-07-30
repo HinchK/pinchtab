@@ -44,10 +44,7 @@ func newDragFixture(t *testing.T) *dragFixture {
 	t.Helper()
 	chromePath := testbrowser.Path(t)
 
-	profile, err := os.MkdirTemp("", "pinchtab-drag-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),

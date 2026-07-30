@@ -35,10 +35,7 @@ func TestRotatedIdentitySendsClientHintsThatAgreeWithTheUserAgent(t *testing.T) 
 	}))
 	t.Cleanup(server.Close)
 
-	profile, err := os.MkdirTemp("", "pinchtab-ua-hints-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),

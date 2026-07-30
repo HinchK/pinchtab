@@ -32,7 +32,7 @@ func newClipFixture(t *testing.T) context.Context {
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
-		chromedp.UserDataDir(t.TempDir()),
+		chromedp.UserDataDir(testbrowser.ProfileDir(t)),
 		chromedp.Flag("headless", true),
 		chromedp.Flag("no-sandbox", true),
 	)...)

@@ -124,7 +124,7 @@ func TestTheSameNthSelectsTheSameOrdinalOnBothPaths(t *testing.T) {
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
-		chromedp.UserDataDir(t.TempDir()),
+		chromedp.UserDataDir(testbrowser.ProfileDir(t)),
 		chromedp.Flag("headless", true),
 		chromedp.Flag("no-sandbox", true),
 	)...)

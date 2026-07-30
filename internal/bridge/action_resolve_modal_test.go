@@ -16,10 +16,7 @@ import (
 
 func TestDialogScopeReproducesGlobalEscapeAndContainsActionsAndReads(t *testing.T) {
 	chromePath := testbrowser.Path(t)
-	profile, err := os.MkdirTemp("", "pinchtab-modal-scope-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
@@ -168,10 +165,7 @@ func TestDialogScopeReproducesGlobalEscapeAndContainsActionsAndReads(t *testing.
 
 func TestTopmostModalUsesBrowserPaintOrderAndRejectsFalseOwners(t *testing.T) {
 	chromePath := testbrowser.Path(t)
-	profile, err := os.MkdirTemp("", "pinchtab-modal-order-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
@@ -255,10 +249,7 @@ func TestTopmostModalUsesBrowserPaintOrderAndRejectsFalseOwners(t *testing.T) {
 
 func TestDialogScopeContainmentIncludesOpenShadowDescendants(t *testing.T) {
 	chromePath := testbrowser.Path(t)
-	profile, err := os.MkdirTemp("", "pinchtab-modal-shadow-containment-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
