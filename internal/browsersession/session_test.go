@@ -189,15 +189,34 @@ func TestValidateDebouncesLastSeenPersistence(t *testing.T) {
 	}
 }
 
+// No filesystem call may happen while the state lock is held — the property the two-lock
+// split exists to establish. Every writeSnapshot call site in session.go is driven here:
+// Create, withValidSession (through Elevate), Revoke and UpdateConfig.
+//
+// loadPersisted is the fifth site and is deliberately NOT driven, inspected rather than
+// pinned. The reason is a CONDITION, not a category: it has exactly one caller, inside
+// NewManager, which runs it after unlocking and before returning the manager — so no other
+// goroutine can hold a reference yet and a held lock has nothing to interact with. A second
+// caller of loadPersisted, or a call after the manager is published, retires that reasoning
+// and this site needs driving like the rest. Installing beforeWrite is impossible before
+// NewManager returns, so covering it would mean a production seam on a startup-only path.
 func TestPersistWritesWithStateLockReleased(t *testing.T) {
+	// Exact, not a floor. writeSnapshot returns before it ever calls beforeWrite when the
+	// job carries no path, and snapshotLocked yields an empty job whenever the manager
+	// stops persisting — so a site that quietly stopped writing would leave this guard
+	// driving fewer sites than it names while a non-zero check still passed. That is the
+	// same silent vacuity the guard exists to catch, so the count is the assertion.
+	const wantWrites = 4
+
 	path := filepath.Join(t.TempDir(), "sessions.json")
-	mgr := NewManager(Config{
+	cfg := Config{
 		IdleTimeout:     time.Hour,
 		MaxLifetime:     24 * time.Hour,
 		ElevationWindow: time.Minute,
 		Persist:         true,
 		PersistPath:     path,
-	})
+	}
+	mgr := NewManager(cfg)
 
 	writes := 0
 	available := 0
@@ -217,9 +236,13 @@ func TestPersistWritesWithStateLockReleased(t *testing.T) {
 		t.Fatal("Elevate() = false, want true")
 	}
 	mgr.Revoke(sessionID)
+	// The same config deliberately: Persist must stay true or this call contributes no
+	// observed write at all, and the path must stay the same or UpdateConfig also removes
+	// the old file, adding a filesystem side effect to a test about lock ordering.
+	mgr.UpdateConfig(cfg)
 
-	if writes == 0 {
-		t.Fatal("no persist write observed")
+	if writes != wantWrites {
+		t.Fatalf("observed %d persist writes, want %d — one per writeSnapshot site this test drives; a site that stopped writing is not covered by the lock assertion below", writes, wantWrites)
 	}
 	if available != writes {
 		t.Errorf("state lock was held during %d of %d writes, want 0", writes-available, writes)
