@@ -22,8 +22,37 @@ func readSkillFile(t *testing.T, parts ...string) string {
 // the name is matched with either a closing backtick or a following space — a mention
 // inside another command's prose does not count.
 func documentsNamespace(reference, name string) bool {
-	return strings.Contains(reference, "### `pinchtab "+name+"`") ||
+	return strings.Contains(reference, namespaceHeading(name)) ||
 		strings.Contains(reference, "### `pinchtab "+name+" ")
+}
+
+// namespaceHeading is what a reader has to add, so it is also what a failure message must
+// print — spelled once here rather than escaped into the message.
+func namespaceHeading(name string) string {
+	return "### `pinchtab " + name + "`"
+}
+
+// namespaceSection returns one namespace's section alone, so an assertion about a command
+// cannot be satisfied by an unrelated paragraph elsewhere in the file.
+func namespaceSection(t *testing.T, reference, name string) string {
+	t.Helper()
+
+	start := strings.Index(reference, namespaceHeading(name))
+	if start < 0 {
+		start = strings.Index(reference, "### `pinchtab "+name+" ")
+	}
+	if start < 0 {
+		t.Fatalf("the %s section is gone, so this guard is pinning nothing", name)
+	}
+	rest := reference[start+len("### "):]
+
+	end := len(rest)
+	for _, next := range []string{"\n### ", "\n## "} {
+		if at := strings.Index(rest, next); at >= 0 && at < end {
+			end = at
+		}
+	}
+	return rest[:end]
 }
 
 // The defect this guard is derived from is a CROSS-SURFACE asymmetry, not incompleteness:
@@ -76,8 +105,8 @@ func TestNoNamespaceIsDocumentedOnAnotherSurfaceButMissingFromTheCLIReference(t 
 			}
 			continue
 		}
-		t.Errorf("`pinchtab %s` is documented on the MCP or HTTP surface but has no `### `+\"`\"+`pinchtab %s`+\"`\"+` section in skills/pinchtab/references/commands.md, so an agent can discover the operation everywhere except on the surface the skill steers it toward. Add the section in the file's house style, or record it in knownCrossSurfaceGaps with the reason",
-			name, name)
+		t.Errorf("`pinchtab %s` is documented on the MCP or HTTP surface but has no %q section in skills/pinchtab/references/commands.md, so an agent can discover the operation everywhere except on the surface the skill steers it toward. Add the section in the file's house style, or record it in knownCrossSurfaceGaps with the reason",
+			name, namespaceHeading(name))
 	}
 	if namespaces < 8 {
 		t.Fatalf("only %d namespaces reached this guard; the command list is not being read and it would pass vacuously", namespaces)
@@ -102,18 +131,28 @@ func TestTheSkillRoutesCookieReadsAtTheCookiesCommand(t *testing.T) {
 // every site. The reference must not contradict the help it mirrors.
 func TestTheCookiesReferenceStatesTheBrowserWideClearEffect(t *testing.T) {
 	reference := readSkillFile(t, "references", "commands.md")
+
 	// storage is pinned DIRECTLY rather than by the cross-surface rule above, and the
 	// reason is measured: it has no MCP tool and no /storage HTTP route, so nothing on
 	// another surface documents it and the derived rule cannot reach it. Removing its
-	// section leaves that guard green — this assertion is what notices.
-	for _, name := range []string{"cookies", "storage"} {
-		if !documentsNamespace(reference, name) {
-			t.Fatalf("the %s section is gone, so this guard is pinning nothing", name)
+	// section leaves that guard green — these assertions are what notice.
+	cookies := namespaceSection(t, reference, "cookies")
+	storage := namespaceSection(t, reference, "storage")
+
+	for _, want := range []string{"all origins", "cannot be scoped"} {
+		if !strings.Contains(cookies, want) {
+			t.Errorf("the cookies section never says %q about `cookies clear`; its own --help does, and the doc must not read as narrower than the command is", want)
 		}
 	}
-	for _, want := range []string{"all origins", "cannot be scoped"} {
-		if !strings.Contains(reference, want) {
-			t.Errorf("the CLI reference never says %q about `cookies clear`; its own --help does, and the doc must not read as narrower than the command is", want)
+
+	// The same failure one verb over: `storage delete` with no --key runs storageObj.clear()
+	// through the identical handler `storage clear` reaches, so a doc describing --key as
+	// "a single item" reads narrower than a destructive command actually is. The last phrase
+	// pins the FLAG ROW as well as the prose: reverting only the row is the exact shape the
+	// defect had, and the sentence below the table does not stop it coming back.
+	for _, want := range []string{"no `--key`", "clears the whole store", "same call", "omit it and the whole store is cleared"} {
+		if !strings.Contains(storage, want) {
+			t.Errorf("the storage section never says %q; `storage delete` with no --key clears the whole store, and a reader told only about single-key removal will run it expecting one item to go", want)
 		}
 	}
 }

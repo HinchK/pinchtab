@@ -291,15 +291,18 @@ pinchtab storage get --key token          # a single item
 pinchtab storage set token abc123         # writes to localStorage by default
 pinchtab storage set token abc123 --type session
 pinchtab storage delete --key token       # remove one key
+pinchtab storage delete                   # no --key: clears the whole store
 pinchtab storage clear --all              # both stores in one call
 ```
 
 | Flag | Command | Description |
 |------|---------|-------------|
 | `--type <local\|session>` | `get`, `set`, `delete`, `clear` | Which store. `get` defaults to both; the write verbs default to `local` |
-| `--key <key>` | `get`, `delete` | A single item |
+| `--key <key>` | `get`, `delete` | `get`: return only this item. `delete`: the key to remove — omit it and the whole store is cleared |
 | `--all` | `clear` | Clear both stores in one call |
 | `--tab <id>` | all | Target a specific tab |
+
+`storage delete` with no `--key` clears the whole store `--type` selects — localStorage unless you pass `--type session` — for the tab's origin. It is the same call `storage clear` makes. `--all` is registered on `clear` only: `clear --all` empties both stores, while `delete --all` is refused as an unknown flag. `storage clear` without `--all` clears localStorage alone.
 
 ---
 
