@@ -189,7 +189,9 @@ func allTools() []mcp.Tool {
 			mcp.WithNumber("deltaY", mcp.Description("Vertical wheel delta for precise scrolling")),
 			mcp.WithString("direction", mcp.Description(
 				"Convenience direction: 'down', 'left', 'right' or 'up'. Moves "+scrollStepDescription+
-					" per step, the same distance as the CLI's `pinchtab scroll <direction>`; multiply it with 'steps' or override it with 'pixels'.")),
+					" per step, the same distance as the CLI's `pinchtab scroll <direction>`; multiply it with 'steps' or override it with 'pixels'. "+
+					"With a selector or nodeId it scrolls that far INSIDE the element (wheel semantics) rather than revealing it. "+
+					"It cannot be combined with deltaX/deltaY, which set their own magnitude.")),
 			mcp.WithNumber("steps", mcp.Description("Multiplier for direction-based scrolling (default 1), so steps=2 moves twice "+scrollStepDescription)),
 			mcp.WithNumber("x", mcp.Description("Optional X coordinate for wheel target")),
 			mcp.WithNumber("y", mcp.Description("Optional Y coordinate for wheel target")),

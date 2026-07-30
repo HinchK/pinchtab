@@ -876,6 +876,70 @@ func TestScrollDirectionAcceptsEveryOwnedKeyword(t *testing.T) {
 	}
 }
 
+// A direction aimed at an element must still land AT the element. Routing the keyword to
+// the page-scroll action put a selector in a body actionScroll short-circuits on, so it
+// revealed the element instead of scrolling inside it — the direction, the distance and
+// the SIGN all discarded, with scrolled:true in the response. The sign is asserted because
+// it is the half that survives a wrong-magnitude fix: 'up' reading as a reveal looks like
+// success from the outside.
+func TestScrollDirectionAtAnElementStaysOnTheWheel(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		target map[string]any
+	}{
+		{name: "selector", target: map[string]any{"selector": "#feed"}},
+		{name: "ref", target: map[string]any{"ref": "e5"}},
+		{name: "nodeId", target: map[string]any{"nodeId": float64(42)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := mockPinchTab()
+			defer srv.Close()
+
+			args := map[string]any{"direction": "up"}
+			for k, v := range tc.target {
+				args[k] = v
+			}
+			body, _ := resultJSON(t, callTool(t, "pinchtab_scroll", args, srv))["body"].(map[string]any)
+
+			if got, _ := body["kind"].(string); got != "mouse-wheel" {
+				t.Errorf("kind = %q, want mouse-wheel; a page scroll carrying an element target is reinterpreted as scroll-into-view and the direction is dropped", got)
+			}
+			want, _ := scroll.DirectionFor("up")
+			if got, _ := body[want.Axis].(float64); got != float64(want.Delta) {
+				t.Errorf("%s = %v, want %d — the keyword magnitude and its sign must reach the element", want.Axis, body[want.Axis], want.Delta)
+			}
+		})
+	}
+}
+
+// Both spellings carry a magnitude and nothing decides between them, so the request is
+// refused rather than resolved by whichever the handler happens to read first. It used to
+// drop the direction without a word.
+func TestScrollDirectionRefusesACompetingDelta(t *testing.T) {
+	for _, key := range []string{"deltaX", "deltaY"} {
+		t.Run(key, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("a scroll carrying two magnitudes was posted instead of refused")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+
+			res := callTool(t, "pinchtab_scroll", map[string]any{"direction": "down", key: float64(50)}, srv)
+
+			if !res.IsError {
+				t.Fatalf("accepted direction plus %s", key)
+			}
+			message := resultText(t, res)
+			for _, want := range []string{"direction", "deltaX/deltaY"} {
+				if !strings.Contains(message, want) {
+					t.Errorf("refusal %q does not name %q, so the caller cannot tell which two settings collided", message, want)
+				}
+			}
+		})
+	}
+}
+
 // The tool description is where an agent learns the distance — the whole reason `steps`
 // was unusable was that the magnitude appeared nowhere it reads.
 func TestScrollToolDescriptionStatesTheMagnitudeAndEveryDirection(t *testing.T) {

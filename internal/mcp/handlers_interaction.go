@@ -187,10 +187,18 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			// (down and up only, no horizontal) and its own bare 120 — a wheel notch,
 			// which is a device unit: "down" moved a sixth of what the CLI moved, took
 			// six round trips to bring the next content into view, and said so nowhere.
-			if direction != "" && !hasDeltaY && !hasDeltaX {
+			if direction != "" {
 				resolved, ok := scroll.DirectionFor(direction)
 				if !ok {
 					return mcp.NewToolResultError(fmt.Sprintf("direction must be one of %s", strings.Join(scroll.DirectionKeywords(), ", "))), nil
+				}
+				// Two magnitudes and no rule that picks between them. The keyword used to be
+				// dropped here without a word, which is the silent reinterpretation this tool
+				// is being fixed to stop — so it is refused instead, naming both spellings.
+				if hasDeltaX || hasDeltaY {
+					return mcp.NewToolResultError(fmt.Sprintf(
+						"direction and deltaX/deltaY each set a scroll magnitude; send one — direction for a %s step, or an explicit delta for a precise wheel move",
+						scrollStepDescription)), nil
 				}
 				distance := resolved.Delta * steps
 				if hasPixels && pixels != 0 {
@@ -203,6 +211,18 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 						distance = -distance
 					}
 				}
+				// An element target means the caller is aiming the keyword INSIDE something —
+				// an inner scrollable container — so it rides the wheel at that element, the
+				// same routing an explicit magnitude gets. Posting it as a page scroll instead
+				// reaches actionScroll, which short-circuits on a target into scroll-into-view
+				// and discards the direction, the distance and the sign while still answering
+				// scrolled:true. A coordinate target needs no such move: actionScroll honours
+				// x/y and the delta together.
+				if hasSelector || hasNodeID {
+					payload["kind"] = "mouse-wheel"
+				}
+				// scrollX/scrollY is the wheel's legacy spelling, so the axis mapping stays
+				// owned by the direction table on both routes.
 				payload[resolved.Axis] = distance
 				break
 			}
