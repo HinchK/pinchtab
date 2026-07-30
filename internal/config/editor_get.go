@@ -8,38 +8,13 @@ import (
 
 // GetConfigValue reads a dotted-path field from FileConfig and returns its string representation.
 // Pointer fields that are unset return an empty string. Slice fields are comma-separated.
+// The section vocabulary lives once, in configSections.
 func GetConfigValue(fc *FileConfig, path string) (string, error) {
-	parts := strings.SplitN(path, ".", 2)
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid path %q (expected section.field, e.g., server.port)", path)
+	section, field, err := lookupConfigSection(path)
+	if err != nil {
+		return "", err
 	}
-
-	section, field := parts[0], parts[1]
-
-	switch section {
-	case "server":
-		return getServerField(&fc.Server, field)
-	case "browser":
-		return getBrowserField(&fc.Browser, field)
-	case "browsers":
-		return getBrowsersField(&fc.Browsers, field)
-	case "instanceDefaults":
-		return getInstanceDefaultsField(&fc.InstanceDefaults, field)
-	case "security":
-		return getSecurityField(&fc.Security, field)
-	case "profiles":
-		return getProfilesField(&fc.Profiles, field)
-	case "multiInstance":
-		return getMultiInstanceField(&fc.MultiInstance, field)
-	case "timeouts":
-		return getTimeoutsField(&fc.Timeouts, field)
-	case "observability":
-		return getObservabilityField(&fc.Observability, field)
-	case "sessions":
-		return getSessionsField(&fc.Sessions, field)
-	default:
-		return "", fmt.Errorf("unknown section %q (valid: server, browser, browsers, instanceDefaults, security, profiles, multiInstance, timeouts, observability, sessions)", section)
-	}
+	return section.get(fc, field)
 }
 
 func getServerField(s *ServerConfig, field string) (string, error) {
@@ -476,4 +451,105 @@ func formatIntPtr(n *int) string {
 		return ""
 	}
 	return strconv.Itoa(*n)
+}
+
+func getSchedulerField(s *SchedulerFileConfig, field string) (string, error) {
+	switch field {
+	case "enabled":
+		return formatBoolPtr(s.Enabled), nil
+	case "strategy":
+		return s.Strategy, nil
+	case "maxQueueSize":
+		return formatIntPtr(s.MaxQueueSize), nil
+	case "maxPerAgent":
+		return formatIntPtr(s.MaxPerAgent), nil
+	case "maxInflight":
+		return formatIntPtr(s.MaxInflight), nil
+	case "maxPerAgentInflight":
+		return formatIntPtr(s.MaxPerAgentFlight), nil
+	case "resultTTLSec":
+		return formatIntPtr(s.ResultTTLSec), nil
+	case "workerCount":
+		return formatIntPtr(s.WorkerCount), nil
+	default:
+		return "", fmt.Errorf("unknown field scheduler.%s", field)
+	}
+}
+
+func getAutoSolverField(a *AutoSolverFileConfig, field string) (string, error) {
+	if rest, ok := strings.CutPrefix(field, "external."); ok {
+		return getAutoSolverExternalField(&a.External, rest)
+	}
+	if rest, ok := strings.CutPrefix(field, "credentials."); ok {
+		return getAutoSolverCredentialsField(&a.Credentials, rest)
+	}
+
+	switch field {
+	case "enabled":
+		return formatBoolPtr(a.Enabled), nil
+	case "autoTrigger":
+		return formatBoolPtr(a.AutoTrigger), nil
+	case "triggerOnNavigate":
+		return formatBoolPtr(a.TriggerOnNavigate), nil
+	case "triggerOnAction":
+		return formatBoolPtr(a.TriggerOnAction), nil
+	case "llmFallback":
+		return formatBoolPtr(a.LLMFallback), nil
+	case "maxAttempts":
+		return formatIntPtr(a.MaxAttempts), nil
+	case "solverTimeoutSec":
+		return formatIntPtr(a.SolverTimeoutSec), nil
+	case "retryBaseDelayMs":
+		return formatIntPtr(a.RetryBaseDelayMs), nil
+	case "retryMaxDelayMs":
+		return formatIntPtr(a.RetryMaxDelayMs), nil
+	case "llmProvider":
+		return a.LLMProvider, nil
+	case "solvers":
+		return strings.Join(a.Solvers, ","), nil
+	default:
+		return "", fmt.Errorf("unknown field autoSolver.%s", field)
+	}
+}
+
+func getAutoSolverExternalField(e *AutoSolverExtConf, field string) (string, error) {
+	switch field {
+	case "capsolverKey":
+		return e.CapsolverKey, nil
+	case "twoCaptchaKey":
+		return e.TwoCaptchaKey, nil
+	default:
+		return "", fmt.Errorf("unknown field autoSolver.external.%s", field)
+	}
+}
+
+func getAutoSolverCredentialsField(c *AutoSolverCredentialsConf, field string) (string, error) {
+	switch {
+	case strings.HasPrefix(field, "login."):
+		switch strings.TrimPrefix(field, "login.") {
+		case "user":
+			return c.Login.User, nil
+		case "password":
+			return c.Login.Password, nil
+		}
+	case strings.HasPrefix(field, "signup."):
+		switch strings.TrimPrefix(field, "signup.") {
+		case "name":
+			return c.Signup.Name, nil
+		case "email":
+			return c.Signup.Email, nil
+		case "password":
+			return c.Signup.Password, nil
+		}
+	case strings.HasPrefix(field, "form."):
+		switch strings.TrimPrefix(field, "form.") {
+		case "field1":
+			return c.Form.Field1, nil
+		case "field2":
+			return c.Form.Field2, nil
+		case "email":
+			return c.Form.Email, nil
+		}
+	}
+	return "", fmt.Errorf("unknown field autoSolver.credentials.%s", field)
 }
