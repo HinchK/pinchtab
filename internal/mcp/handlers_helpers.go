@@ -168,21 +168,58 @@ func hasASCIIAlpha(v string) bool {
 	return false
 }
 
+// firstSelectorString is firstNonEmptyString for the selector aliases, except that a key
+// which was SENT under a non-string type is reported by name instead of being collapsed
+// into not-given. A later alias that yields a usable string still wins — the caller's
+// intent is unambiguous there — so wrongKey only survives when NO key produced a selector.
+// A supplied empty string keeps collapsing deliberately: empty carries no selector meaning
+// on any verb, so it falls through exactly as before.
+func firstSelectorString(r mcp.CallToolRequest, keys ...string) (value, wrongKey, wrongType string) {
+	args := r.GetArguments()
+	for _, key := range keys {
+		raw, ok := args[key]
+		if !ok {
+			continue
+		}
+		if v, isString := raw.(string); isString {
+			if v = strings.TrimSpace(v); v != "" {
+				return v, "", ""
+			}
+			continue
+		}
+		if wrongKey == "" {
+			wrongKey, wrongType = key, jsonTypeName(raw)
+		}
+	}
+	return "", wrongKey, wrongType
+}
+
 // actionSelectorArg resolves common selector aliases used by MCP clients.
 // If only "query" is provided, natural language input is normalized to
 // semantic selector form (find:...).
-func actionSelectorArg(r mcp.CallToolRequest) string {
-	if sel := firstNonEmptyString(r, "selector", "ref", "element", "target"); sel != "" {
-		return sel
+//
+// A wrong-typed alias REFUSES rather than falling through — the fall-through would act on
+// a different argument (query) or a different target (nodeId) while the caller's mistyped
+// selector is silently ignored, which is worse than refusing. The caller of this function
+// turns wrongKey/wrongType into the refusal, naming the key that was actually sent.
+func actionSelectorArg(r mcp.CallToolRequest) (sel, wrongKey, wrongType string) {
+	sel, wrongKey, wrongType = firstSelectorString(r, "selector", "ref", "element", "target")
+	if sel != "" || wrongType != "" {
+		return sel, wrongKey, wrongType
+	}
+	if raw, ok := r.GetArguments()["query"]; ok {
+		if _, isString := raw.(string); !isString {
+			return "", "query", jsonTypeName(raw)
+		}
 	}
 	query := optTrimmedString(r, "query")
 	if query == "" {
-		return ""
+		return "", "", ""
 	}
 	if selector.HasKnownPrefix(query) || selector.IsRef(query) || looksLikeStructuredSelector(query) {
-		return query
+		return query, "", ""
 	}
-	return "find:" + query
+	return "find:" + query, "", ""
 }
 
 func resolveXY(r mcp.CallToolRequest) (float64, float64, bool) {

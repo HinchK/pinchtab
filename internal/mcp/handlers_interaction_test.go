@@ -1046,3 +1046,90 @@ func TestScrollHandlerCarriesNoOwnDirectionVocabularyOrMagnitude(t *testing.T) {
 		t.Error("the handler no longer reads the owner, so this guard is pinning nothing")
 	}
 }
+
+// The selector aliases had this card's defect one argument over: a wrong-typed selector,
+// ref, element, target or query collapsed into "required parameter 'selector' is missing",
+// telling the caller an argument it sent is absent — on the key every action tool requires.
+// The refusal must name the KEY the caller actually used, not always "selector".
+func TestActionToolsNameAWrongTypedSelectorKeyInsteadOfCallingItMissing(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		tool     string
+		args     map[string]any
+		wantSays string
+	}{
+		{name: "fill selector number", tool: "pinchtab_fill", args: map[string]any{"selector": float64(123), "value": "x"}, wantSays: "fill's 'selector' must be a string, got number"},
+		{name: "fill ref number", tool: "pinchtab_fill", args: map[string]any{"ref": float64(5), "value": "x"}, wantSays: "fill's 'ref' must be a string, got number"},
+		{name: "click target boolean", tool: "pinchtab_click", args: map[string]any{"target": true}, wantSays: "click's 'target' must be a string, got boolean"},
+		{name: "click element array", tool: "pinchtab_click", args: map[string]any{"element": []any{"e5"}}, wantSays: "click's 'element' must be a string, got array"},
+		{name: "click query number", tool: "pinchtab_click", args: map[string]any{"query": float64(5)}, wantSays: "click's 'query' must be a string, got number"},
+		{name: "genuinely absent keeps its own message", tool: "pinchtab_click", args: map[string]any{}, wantSays: "required parameter 'selector' is missing"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("the tool posted a request for an unusable selector instead of refusing it")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+
+			res := callTool(t, tc.tool, tc.args, srv)
+
+			if !res.IsError {
+				t.Fatalf("accepted %v", tc.args)
+			}
+			text := resultText(t, res)
+			if !strings.Contains(text, tc.wantSays) {
+				t.Errorf("error = %q, want it to say %q so the caller knows which key to fix", text, tc.wantSays)
+			}
+			assertNamesTheRemedy(t, text, tc.wantSays)
+		})
+	}
+}
+
+// The contract call, recorded as an assertion: a wrong-typed selector refuses OUTRIGHT
+// even when another target could satisfy the action. Acting on nodeId or falling through
+// to query while a mistyped ref is silently discarded is the wrong-target hazard — the
+// caller meant SOMETHING by the key it sent.
+func TestAWrongTypedSelectorRefusesInsteadOfActingOnAnotherTarget(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "nodeId would have satisfied click", args: map[string]any{"nodeId": float64(3), "ref": float64(5)}},
+		{name: "query would have satisfied click", args: map[string]any{"query": "the save button", "ref": float64(5)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				t.Error("the tool acted on another target while discarding the mistyped selector")
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{}`))
+			}))
+			defer srv.Close()
+
+			res := callTool(t, "pinchtab_click", tc.args, srv)
+			if !res.IsError {
+				t.Fatalf("accepted %v", tc.args)
+			}
+			if text := resultText(t, res); !strings.Contains(text, "click's 'ref' must be a string, got number") {
+				t.Errorf("error = %q, want the mistyped ref named", text)
+			}
+		})
+	}
+}
+
+// A later alias that yields a usable string still wins: the caller's intent is
+// unambiguous, so a mistyped earlier key does not veto a valid one.
+func TestAValidLaterSelectorAliasStillWinsOverAMistypedEarlierOne(t *testing.T) {
+	srv := mockPinchTab()
+	defer srv.Close()
+
+	r := callTool(t, "pinchtab_fill", map[string]any{"selector": float64(9), "ref": "e5", "value": "x"}, srv)
+	if r.IsError {
+		t.Fatalf("refused despite a usable ref: %s", resultText(t, r))
+	}
+	body, _ := resultJSON(t, r)["body"].(map[string]any)
+	if got, _ := body["selector"].(string); got != "e5" {
+		t.Errorf("posted selector = %q, want the valid alias e5", got)
+	}
+}

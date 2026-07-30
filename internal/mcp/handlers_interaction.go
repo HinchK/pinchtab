@@ -36,17 +36,24 @@ func suppliedStringArg(r mcp.CallToolRequest, verb, arg, emptyMeans string, keys
 		return value, nil
 	}
 	if wrongType != "" {
-		message := fmt.Sprintf("%s's '%s' must be a string, got %s; quote it", verb, arg, wrongType)
-		if emptyMeans != "" {
-			message += ", or " + emptyMeans
-		}
-		return "", mcp.NewToolResultError(message)
+		return "", wrongTypeRefusal(verb, arg, wrongType, emptyMeans)
 	}
 	message := fmt.Sprintf("%s needs a '%s' argument", verb, arg)
 	if emptyMeans != "" {
 		message += "; " + emptyMeans
 	}
 	return "", mcp.NewToolResultError(message)
+}
+
+// wrongTypeRefusal is the one builder for the supplied-under-the-wrong-type refusal, shared
+// by the value/text arguments and the selector aliases so the verbs cannot drift on the
+// message or lose the remedy. arg names the key the caller actually sent.
+func wrongTypeRefusal(verb, arg, gotType, emptyMeans string) *mcp.CallToolResult {
+	message := fmt.Sprintf("%s's '%s' must be a string, got %s; quote it", verb, arg, gotType)
+	if emptyMeans != "" {
+		message += ", or " + emptyMeans
+	}
+	return mcp.NewToolResultError(message)
 }
 
 func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -73,14 +80,20 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			payload["nodeId"] = nodeID
 		}
 
-		resolveSelector := func(required bool) (bool, error) {
-			sel := actionSelectorArg(r)
+		resolveSelector := func(required bool) (bool, *mcp.CallToolResult) {
+			sel, wrongKey, wrongType := actionSelectorArg(r)
+			if wrongType != "" {
+				// Refused even when a selector is not required: acting on nodeId or
+				// query while silently discarding a mistyped ref the caller sent is
+				// the wrong-target hazard, not a convenience.
+				return false, wrongTypeRefusal(kind, wrongKey, wrongType, "")
+			}
 			if sel != "" {
 				payload["selector"] = sel
 				return true, nil
 			}
 			if required {
-				return false, fmt.Errorf("required parameter 'selector' is missing")
+				return false, mcp.NewToolResultError("required parameter 'selector' is missing")
 			}
 			return false, nil
 		}
@@ -91,8 +104,8 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			if kind == "click" || kind == "hover" {
 				requiresSelector = requiresSelector && !hasXY
 			}
-			if _, err := resolveSelector(requiresSelector); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if _, refusal := resolveSelector(requiresSelector); refusal != nil {
+				return refusal, nil
 			}
 			// Forwarded only when the caller actually sent it, so an omitted
 			// humanize inherits the instance default instead of overriding it for
@@ -131,8 +144,8 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			}
 
 		case "type":
-			if _, err := resolveSelector(!hasNodeID); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if _, refusal := resolveSelector(!hasNodeID); refusal != nil {
+				return refusal, nil
 			}
 			// Typing nothing is meaningless, so type keeps collapsing empty with absent —
 			// but only after a wrong-typed argument has been named as one, rather than
@@ -154,8 +167,8 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			payload["key"] = key
 
 		case "select":
-			if _, err := resolveSelector(!hasNodeID); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if _, refusal := resolveSelector(!hasNodeID); refusal != nil {
+				return refusal, nil
 			}
 			// `<option value="">` is the standard placeholder, so an empty value is a real
 			// selection — the one that resets a dropdown — and the bridge tells it apart
@@ -167,9 +180,9 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			payload["value"] = value
 
 		case "scroll":
-			hasSelector, err := resolveSelector(false)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			hasSelector, refusal := resolveSelector(false)
+			if refusal != nil {
+				return refusal, nil
 			}
 			pixels, hasPixels := optInt(r, "pixels")
 			deltaX, hasDeltaX := optInt(r, "deltaX")
@@ -243,13 +256,13 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			}
 
 		case "scrollintoview":
-			if _, err := resolveSelector(!hasNodeID); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if _, refusal := resolveSelector(!hasNodeID); refusal != nil {
+				return refusal, nil
 			}
 
 		case "fill":
-			if _, err := resolveSelector(!hasNodeID); err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
+			if _, refusal := resolveSelector(!hasNodeID); refusal != nil {
+				return refusal, nil
 			}
 			// Presence, not emptiness: an empty value is how a caller clears a field,
 			// so refusing it made the one documented clear idiom inexpressible here

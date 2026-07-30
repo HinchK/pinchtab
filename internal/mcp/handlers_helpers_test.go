@@ -54,12 +54,12 @@ func TestActionSelectorArgUsesTheGrammarsPrefixVocabulary(t *testing.T) {
 	// them, so only the grammar's prefix vocabulary passes them through.
 	for _, in := range []string{"css:#a", "CSS:#a", "Find:submit", "NTH:2:div", "  text:hello", "find: login button", "Role: Save"} {
 		want := strings.TrimSpace(in)
-		if got := actionSelectorArg(queryRequest(in)); got != want {
+		if got, _, _ := actionSelectorArg(queryRequest(in)); got != want {
 			t.Errorf("actionSelectorArg(%q) = %q, want %q passed through as a selector", in, got, want)
 		}
 	}
 	for _, in := range []string{"submit", "unknownprefix value"} {
-		if got := actionSelectorArg(queryRequest(in)); got != "find:"+in {
+		if got, _, _ := actionSelectorArg(queryRequest(in)); got != "find:"+in {
 			t.Errorf("actionSelectorArg(%q) = %q, want it wrapped as find:", in, got)
 		}
 	}
@@ -90,7 +90,7 @@ func TestActionSelectorArgRoutesSpaceSeparatedProseToFind(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := mcp.CallToolRequest{}
 			req.Params.Arguments = map[string]any{"query": tt.query}
-			if got := actionSelectorArg(req); got != tt.want {
+			if got, _, _ := actionSelectorArg(req); got != tt.want {
 				t.Errorf("actionSelectorArg(%q) = %q, want %q", tt.query, got, tt.want)
 			}
 		})
