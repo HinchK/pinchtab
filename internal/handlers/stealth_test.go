@@ -929,6 +929,37 @@ func TestAnUnknownOSStillRefusesRatherThanFallingBackToTheHost(t *testing.T) {
 	}
 }
 
+// The refusal is only actionable if it names the os in the words the caller used.
+// Resolving translates the spelling before the pair lookup, so a miss reported after
+// the translation quotes an internal key the caller never sent — and a caller who
+// named no os at all would be quoted an empty string.
+func TestTheRefusalNamesTheOSTheCallerSent(t *testing.T) {
+	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
+
+	for _, spelling := range []string{stealth.PlatformMacOS, stealth.FingerprintOSMac} {
+		t.Run(spelling, func(t *testing.T) {
+			_, err := h.generateFingerprint(fingerprintRequest{OS: spelling, Browser: "edge"})
+			if err == nil {
+				t.Fatalf("os=%q browser=edge was accepted", spelling)
+			}
+			if !strings.Contains(err.Error(), `os "`+spelling+`"`) {
+				t.Errorf("error %q does not name the os the caller sent (%q)", err, spelling)
+			}
+		})
+	}
+
+	_, err := h.generateFingerprint(fingerprintRequest{Browser: "firefox"})
+	if err == nil {
+		t.Fatal("browser=firefox was accepted with no os")
+	}
+	if strings.Contains(err.Error(), `os ""`) {
+		t.Errorf("error %q quotes an empty os to a caller who named none", err)
+	}
+	if !strings.Contains(err.Error(), `the host os "`+stealth.HostFingerprintOS()+`"`) {
+		t.Errorf("error %q does not say the host os was used, nor name it", err)
+	}
+}
+
 // The two vocabularies must stay in step: every platform internal/stealth knows maps
 // to a key the matrix holds, and every os key the matrix holds is one internal/stealth
 // owns. Derived from both sides, so adding a row to either without the other reds.
@@ -936,8 +967,13 @@ func TestThePlatformAndMatrixVocabulariesAgree(t *testing.T) {
 	h := Handlers{Config: &config.RuntimeConfig{BrowserVersion: "144.0.7559.133"}}
 	matrix := h.fingerprintMatrix()
 
+	platforms := stealth.FingerprintPlatforms()
+	if len(platforms) < len(matrix) {
+		t.Fatalf("FingerprintPlatforms() returned %d platforms for a matrix of %d rows; the census cannot cover the vocabulary", len(platforms), len(matrix))
+	}
+
 	owned := map[string]bool{}
-	for _, platform := range []string{stealth.PlatformWindows, stealth.PlatformMacOS, stealth.PlatformLinux} {
+	for _, platform := range platforms {
 		key, ok := stealth.FingerprintOSKey(platform)
 		if !ok {
 			t.Fatalf("internal/stealth knows platform %q but maps it to no fingerprint os key", platform)

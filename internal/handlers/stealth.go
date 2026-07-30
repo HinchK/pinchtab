@@ -306,6 +306,18 @@ func resolveRandomFingerprintOS(matrix map[string]map[string]fingerprint, browse
 	return picked, true
 }
 
+// fingerprintOSSubject names the os a refusal is about the way the caller can act on
+// it: the spelling they sent, or — when they named none and the host's own key was
+// used — that key, said as the host's. Reporting the resolved key to a caller who
+// sent "macOS" hands back a word they have never seen, and reporting an empty string
+// to a caller who named nothing hands back no word at all.
+func fingerprintOSSubject(requested, resolved string) string {
+	if trimmed := strings.TrimSpace(requested); trimmed != "" {
+		return fmt.Sprintf("os %q", trimmed)
+	}
+	return fmt.Sprintf("the host os %q", resolved)
+}
+
 // generateFingerprint refuses an os/browser pair the matrix does not hold instead
 // of returning the zero identity. An empty userAgent delivered as a success is
 // worse than a refusal: the endpoint exists to hand back an identity to apply, and
@@ -354,8 +366,8 @@ func (h *Handlers) generateFingerprint(req fingerprintRequest) (fingerprint, err
 	// request was honoured.
 	browserConfig, ok := osConfigs[os][browser]
 	if !ok {
-		return fingerprint{}, fmt.Errorf("no fingerprint for os %q with browser %q; available pairs: %s",
-			os, browser, strings.Join(availableFingerprintPairs(osConfigs), ", "))
+		return fingerprint{}, fmt.Errorf("no fingerprint for %s with browser %q; available pairs: %s",
+			fingerprintOSSubject(req.OS, os), browser, strings.Join(availableFingerprintPairs(osConfigs), ", "))
 	}
 	fp.UserAgent = browserConfig.UserAgent
 	fp.Platform = browserConfig.Platform

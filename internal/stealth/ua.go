@@ -2,6 +2,7 @@ package stealth
 
 import (
 	goruntime "runtime"
+	"sort"
 	"strings"
 	"sync"
 
@@ -119,6 +120,18 @@ var fingerprintOSKeys = map[string]string{
 func FingerprintOSKey(platform string) (string, bool) {
 	key, ok := fingerprintOSKeys[platform]
 	return key, ok
+}
+
+// FingerprintPlatforms is every persona platform the endpoint's os keys are derived
+// from, sorted. A census over the vocabulary reads this rather than restating the
+// platforms, so a row added to fingerprintOSKeys is visited without an edit.
+func FingerprintPlatforms() []string {
+	platforms := make([]string, 0, len(fingerprintOSKeys))
+	for platform := range fingerprintOSKeys {
+		platforms = append(platforms, platform)
+	}
+	sort.Strings(platforms)
+	return platforms
 }
 
 // HostFingerprintOS is the endpoint's os key for the machine this process runs on,
