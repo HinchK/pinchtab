@@ -125,7 +125,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			if !ghostRoute {
 				modalNodeID, modalOpen, modalErr = bridge.TopmostModalNodeID(tCtx, frameScope)
 				if modalErr != nil {
-					httpx.Error(w, selectorResolutionHTTPStatus(modalErr), fmt.Errorf("resolve topmost dialog: %w", modalErr))
+					httpx.Error(w, selectorResolutionHTTPStatus(modalErr), modalErr)
 					return
 				}
 			}

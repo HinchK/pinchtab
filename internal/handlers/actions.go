@@ -82,8 +82,6 @@ func rejectMultiStepSubmitClicks(w http.ResponseWriter, actions []bridge.ActionR
 	return true
 }
 
-const dialogActionHint = "use --dialog-action accept or --dialog-action dismiss"
-
 const navigationChangedHint = "The action navigated the page, which the guard reports unless the request declares it: set waitNav true to wait for the navigation, or submit true when the click submits a form."
 
 const navigationChangedRemedy = "pinchtab click <ref> --wait-nav (use --submit instead when the click submits a form)"
@@ -111,36 +109,21 @@ func navigatedToURL(err error) string {
 	return strings.TrimSpace(message[idx+len(" -> "):])
 }
 
-type dialogBlockingError struct {
-	message    string
-	dialogType string
-	dialogText string
-}
-
-func (h *Handlers) mapDialogBlockingError(err error, kind, tabID string) (dialogBlockingError, bool) {
+func (h *Handlers) mapDialogBlockingError(err error, kind, tabID string) (string, *bridge.DialogState, bool) {
 	var dialogErr *bridge.ErrDialogBlocking
 	if errors.As(err, &dialogErr) {
-		return dialogBlockingError{
-			message:    err.Error(),
-			dialogType: dialogErr.DialogType,
-			dialogText: dialogErr.DialogMessage,
-		}, true
+		return err.Error(), &bridge.DialogState{Type: dialogErr.DialogType, Message: dialogErr.DialogMessage}, true
 	}
-	if isClickTimeoutWithPendingDialog(err, kind, tabID, h.Bridge) {
-		if ds := h.Bridge.GetDialogManager().GetPending(tabID); ds != nil {
-			return dialogBlockingError{
-				message:    fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q) — %s", kind, ds.Type, ds.Message, dialogActionHint),
-				dialogType: ds.Type,
-				dialogText: ds.Message,
-			}, true
-		}
+	if isTimeoutWithPendingDialog(err, tabID, h.Bridge) {
+		dialog := pendingTabDialog(h.Bridge, tabID)
+		return fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q)", kind, dialog.Type, dialog.Message), dialog, true
 	}
-	return dialogBlockingError{}, false
+	return "", nil, false
 }
 
 func (h *Handlers) dialogAwareActionError(err error, kind, tabID, fallback string) string {
-	if db, ok := h.mapDialogBlockingError(err, kind, tabID); ok {
-		return db.message
+	if message, _, ok := h.mapDialogBlockingError(err, kind, tabID); ok {
+		return message
 	}
 	return fallback
 }
@@ -311,6 +294,9 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			httpx.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
 			return
 		}
+		if h.refuseIfDialogBlocked(w, resolvedTabID) {
+			return
+		}
 		if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
 			return
 		}
@@ -385,7 +371,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, actionBackend, recoveryResult, actionErr := h.executeActionResilient(tCtx, &req, effectiveCfg, resolvedTabID, refMissing)
-	submitTimeoutWithDialog := submitClick && isClickTimeoutWithPendingDialog(actionErr, req.Kind, resolvedTabID, h.Bridge)
+	submitTimeoutWithDialog := submitClick && isTimeoutWithPendingDialog(actionErr, resolvedTabID, h.Bridge)
 	if submitClick && !submitTimeoutWithDialog && (actionErr == nil || errors.Is(actionErr, context.DeadlineExceeded)) {
 		actionTimedOut := errors.Is(actionErr, context.DeadlineExceeded)
 		dispatch := "acknowledged"
@@ -429,12 +415,8 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			httpx.ErrorCode(w, http.StatusForbidden, "idpi_blocked", actionErr.Error(), false, nil)
 			return
 		}
-		if db, ok := h.mapDialogBlockingError(actionErr, req.Kind, resolvedTabID); ok {
-			httpx.ErrorCode(w, 500, "dialog_blocking", db.message, false, map[string]any{
-				"suggestion":     dialogActionHint,
-				"dialog_type":    db.dialogType,
-				"dialog_message": db.dialogText,
-			})
+		if message, dialog, ok := h.mapDialogBlockingError(actionErr, req.Kind, resolvedTabID); ok {
+			writeDialogBlocked(w, resolvedTabID, dialog, message)
 			return
 		}
 		retryable := !submitClick

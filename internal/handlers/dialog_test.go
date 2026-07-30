@@ -145,14 +145,13 @@ func TestDialogManagerFromMockBridge(t *testing.T) {
 	}
 }
 
-func TestIsClickTimeoutWithPendingDialog(t *testing.T) {
+func TestIsTimeoutWithPendingDialog(t *testing.T) {
 	mb := &mockBridge{}
 	dm := mb.GetDialogManager()
 
 	tests := []struct {
 		name     string
 		err      error
-		kind     string
 		tabID    string
 		pending  *bridge.DialogState
 		expected bool
@@ -160,52 +159,31 @@ func TestIsClickTimeoutWithPendingDialog(t *testing.T) {
 		{
 			name:     "nil error",
 			err:      nil,
-			kind:     "click",
 			tabID:    "tab1",
 			expected: false,
 		},
 		{
 			name:     "non-timeout error",
 			err:      fmt.Errorf("some other error"),
-			kind:     "click",
 			tabID:    "tab1",
 			expected: false,
 		},
 		{
 			name:     "timeout but no pending dialog",
 			err:      context.DeadlineExceeded,
-			kind:     "click",
 			tabID:    "tab1",
 			expected: false,
 		},
 		{
-			name:     "timeout with pending dialog on click",
+			name:     "timeout with pending dialog",
 			err:      context.DeadlineExceeded,
-			kind:     "click",
 			tabID:    "tab1",
 			pending:  &bridge.DialogState{Type: "alert", Message: "Hello"},
 			expected: true,
-		},
-		{
-			name:     "timeout with pending dialog on doubleclick",
-			err:      context.DeadlineExceeded,
-			kind:     "dblclick",
-			tabID:    "tab1",
-			pending:  &bridge.DialogState{Type: "confirm", Message: "Are you sure?"},
-			expected: true,
-		},
-		{
-			name:     "timeout with pending dialog on type action",
-			err:      context.DeadlineExceeded,
-			kind:     "type",
-			tabID:    "tab1",
-			pending:  &bridge.DialogState{Type: "alert", Message: "Hello"},
-			expected: false,
 		},
 		{
 			name:     "timeout with empty tab ID",
 			err:      context.DeadlineExceeded,
-			kind:     "click",
 			tabID:    "",
 			pending:  &bridge.DialogState{Type: "alert", Message: "Hello"},
 			expected: false,
@@ -219,9 +197,9 @@ func TestIsClickTimeoutWithPendingDialog(t *testing.T) {
 				dm.SetPending(tc.tabID, tc.pending)
 			}
 
-			got := isClickTimeoutWithPendingDialog(tc.err, tc.kind, tc.tabID, mb)
+			got := isTimeoutWithPendingDialog(tc.err, tc.tabID, mb)
 			if got != tc.expected {
-				t.Errorf("isClickTimeoutWithPendingDialog() = %v, want %v", got, tc.expected)
+				t.Errorf("isTimeoutWithPendingDialog() = %v, want %v", got, tc.expected)
 			}
 		})
 	}

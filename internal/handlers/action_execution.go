@@ -288,20 +288,12 @@ func (h *Handlers) refreshRefCache(ctx context.Context, tabID string) {
 	})
 }
 
-func isClickTimeoutWithPendingDialog(err error, kind, tabID string, b bridge.BridgeAPI) bool {
-	if err == nil || tabID == "" {
+func isTimeoutWithPendingDialog(err error, tabID string, b bridge.BridgeAPI) bool {
+	if err == nil {
 		return false
 	}
 	if !errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	kind = bridge.CanonicalActionKind(kind)
-	if kind != bridge.ActionClick && kind != bridge.ActionDoubleClick {
-		return false
-	}
-	dm := b.GetDialogManager()
-	if dm == nil {
-		return false
-	}
-	return dm.GetPending(tabID) != nil
+	return pendingTabDialog(b, tabID) != nil
 }

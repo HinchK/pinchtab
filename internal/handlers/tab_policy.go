@@ -50,6 +50,9 @@ func (h *Handlers) enforceCurrentTabDomainPolicy(w http.ResponseWriter, r *http.
 	currentURL, err := h.Bridge.CurrentURL(lookupCtx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			if h.refuseIfDialogBlocked(w, tabID) {
+				return "", false
+			}
 			httpx.ErrorCode(
 				w,
 				http.StatusServiceUnavailable,

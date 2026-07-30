@@ -63,7 +63,7 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 		if !ghostRoute {
 			modalNodeID, modalOpen, err = bridge.TopmostModalNodeID(tCtx, targetFrameID)
 			if err != nil {
-				httpx.Error(w, selectorResolutionHTTPStatus(err), fmt.Errorf("resolve topmost dialog: %w", err))
+				httpx.Error(w, selectorResolutionHTTPStatus(err), err)
 				return
 			}
 		}
