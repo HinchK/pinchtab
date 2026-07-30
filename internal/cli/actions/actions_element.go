@@ -3,6 +3,7 @@ package actions
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -209,21 +210,43 @@ func setPointBody(body map[string]any, x, y float64) {
 	body["y"] = y
 }
 
+type scrollDirection struct {
+	axis  string
+	delta int
+}
+
+// scrollDirections is the whole vocabulary `scroll <direction>` accepts, and the single
+// place the help and the docs are checked against by ScrollDirectionKeywords.
+var scrollDirections = map[string]scrollDirection{
+	"down":  {"scrollY", 800},
+	"up":    {"scrollY", -800},
+	"right": {"scrollX", 800},
+	"left":  {"scrollX", -800},
+}
+
+// ScrollDirectionKeywords returns the accepted direction keywords, sorted. Any prose that
+// enumerates them is asserted against this rather than against a hand-kept list.
+func ScrollDirectionKeywords() []string {
+	keywords := make([]string, 0, len(scrollDirections))
+	for keyword := range scrollDirections {
+		keywords = append(keywords, keyword)
+	}
+	sort.Strings(keywords)
+	return keywords
+}
+
 // applyScrollTarget fills a scroll body from --dy/--dx, or from the single positional by
 // precedence: integer pixels, then direction keyword, then unified selector. Pixels and
-// directions are short, low-cardinality inputs that would otherwise parse as CSS tag
-// selectors ("up", "down"), so they are intercepted before setSelectorBody.
+// directions would otherwise parse as CSS tag selectors ("up", "down"), so they are
+// intercepted before setSelectorBody.
 //
-// The flags are how a NEGATIVE count is reachable at all: cobra reads a leading minus on a
-// positional as shorthand flags, so `scroll -300` — an example in this command's own help —
-// never parsed, and `scroll -- -300` was the only workaround. scrollArgs in cmd/pinchtab
-// rejects the combinations this cannot express, so an empty args slice here means the flags
-// carry the request.
+// A negative count is only reachable through the flags: cobra reads a leading minus on a
+// positional as bundled shorthand flags.
 func applyScrollTarget(body map[string]any, args []string, cmd *cobra.Command) {
-	if deltaY, ok := readWheelDelta(cmd, "dy"); ok {
+	if deltaY, ok := readIntFlag(cmd, "dy"); ok {
 		body["scrollY"] = deltaY
 	}
-	if deltaX, ok := readWheelDelta(cmd, "dx"); ok {
+	if deltaX, ok := readIntFlag(cmd, "dx"); ok {
 		body["scrollX"] = deltaX
 	}
 	if len(args) == 0 {
@@ -233,23 +256,14 @@ func applyScrollTarget(body map[string]any, args []string, cmd *cobra.Command) {
 		body["scrollY"] = px
 		return
 	}
-	switch strings.ToLower(args[0]) {
-	case "down":
-		body["scrollY"] = 800
-	case "up":
-		body["scrollY"] = -800
-	case "right":
-		body["scrollX"] = 800
-	case "left":
-		body["scrollX"] = -800
-	default:
-		// Refs ("e5"), CSS ("#footer"), XPath ("//..."), text: and semantic selectors all
-		// work here — the same contract as click, fill and hover.
-		setSelectorBody(body, args[0])
+	if direction, ok := scrollDirections[strings.ToLower(args[0])]; ok {
+		body[direction.axis] = direction.delta
+		return
 	}
+	setSelectorBody(body, args[0])
 }
 
-func readWheelDelta(cmd *cobra.Command, primary string) (int, bool) {
+func readIntFlag(cmd *cobra.Command, primary string) (int, bool) {
 	if cmd.Flags().Changed(primary) {
 		if value, err := cmd.Flags().GetInt(primary); err == nil {
 			return value, true
@@ -333,10 +347,10 @@ func MouseAction(client *http.Client, base, token, kind string, args []string, c
 				setSelectorBody(body, args[0])
 			}
 		}
-		if deltaX, ok := readWheelDelta(cmd, "dx"); ok {
+		if deltaX, ok := readIntFlag(cmd, "dx"); ok {
 			body["deltaX"] = deltaX
 		}
-		if deltaY, ok := readWheelDelta(cmd, "dy"); ok {
+		if deltaY, ok := readIntFlag(cmd, "dy"); ok {
 			if _, fromArg := body["deltaY"]; fromArg {
 				cli.Fatal("Usage: pinchtab mouse wheel <dy> [--dx <n>] or pinchtab mouse wheel [selector]")
 			}

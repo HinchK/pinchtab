@@ -267,16 +267,15 @@ func uploadFileName(names []string, i int) string {
 func stagedUploadName(name string, i int, ext string) string {
 	generated := fmt.Sprintf("upload-%d%s", i, ext)
 
-	// filepath.Base already guarantees the result carries no separator, so the
-	// only rejections left are the values Base returns that are not usable
-	// filenames: the empty input, the two relative markers, the root itself, and
-	// a NUL, which Base passes through and the filesystem then refuses.
-	base := filepath.Base(filepath.FromSlash(strings.TrimSpace(name)))
+	// Reduce on BOTH separators whatever the host is. filepath.Base cannot: on a
+	// Linux server its separator is "/", so a Windows caller's "C:\dir\data.csv"
+	// contains no separator at all and survives whole. The cost is that a literal
+	// backslash in a genuine POSIX filename is treated as a separator too, which is
+	// the same trade a browser makes — it sends the final component and nothing else.
+	trimmed := strings.TrimSpace(name)
+	base := trimmed[strings.LastIndexAny(trimmed, `/\`)+1:]
 	switch {
-	case strings.TrimSpace(name) == "",
-		base == ".", base == "..",
-		base == string(filepath.Separator),
-		strings.ContainsRune(base, 0):
+	case base == "", base == ".", base == "..", strings.ContainsRune(base, 0):
 		return generated
 	}
 	return base

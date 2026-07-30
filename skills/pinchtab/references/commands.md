@@ -143,7 +143,7 @@ Scroll the page or a specific element. Give either `--dy`/`--dx` or one position
 pinchtab scroll 800            # scroll page down 800px
 pinchtab scroll --dy -300      # scroll page up 300px
 pinchtab scroll --dx -120      # scroll page left 120px
-pinchtab scroll down           # named direction (also up, top, bottom)
+pinchtab scroll down           # named direction: down, left, right, up
 pinchtab scroll '#footer'      # scroll a CSS selector into view
 pinchtab scroll e20            # scroll an element ref into view
 pinchtab scroll 800 --snap-diff

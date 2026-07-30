@@ -3,8 +3,11 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+
+	browseractions "github.com/pinchtab/pinchtab/internal/cli/actions"
 )
 
 func resetScrollFlags(t *testing.T) {
@@ -111,6 +114,64 @@ func TestScrollRegistersThePixelFlags(t *testing.T) {
 		}
 		if flag.Value.Type() != "int" {
 			t.Errorf("--%s is %s, want int: a signed count must be accepted as a flag VALUE", name, flag.Value.Type())
+		}
+	}
+}
+
+// directionsEnumeratedAfter extracts the keyword list a line presents after marker, so the
+// prose can keep its own separators and order while the SET is what gets compared.
+func directionsEnumeratedAfter(text, marker string) ([]string, bool) {
+	for _, line := range strings.Split(text, "\n") {
+		idx := strings.Index(line, marker)
+		if idx < 0 {
+			continue
+		}
+		list := line[idx+len(marker):]
+		if cut := strings.Index(list, "("); cut >= 0 {
+			list = list[:cut]
+		}
+		var found []string
+		for _, token := range strings.FieldsFunc(list, func(r rune) bool {
+			return r < 'a' || r > 'z'
+		}) {
+			if len(token) > 1 {
+				found = append(found, token)
+			}
+		}
+		sort.Strings(found)
+		return found, true
+	}
+	return nil, false
+}
+
+// Every prose enumeration of the direction keywords is asserted against the code's own
+// vocabulary, in BOTH directions: the agent-facing reference had invented "top" and
+// "bottom", which fall through to CSS selectors and match nothing, while omitting "left"
+// and "right", which work. A guard pinning one known-bad example would not have caught
+// either half — only comparing the whole set does.
+func TestDocumentedScrollDirectionsAreExactlyTheSupportedOnes(t *testing.T) {
+	want := browseractions.ScrollDirectionKeywords()
+
+	commands, err := os.ReadFile(filepath.Join("..", "..", "skills", "pinchtab", "references", "commands.md"))
+	if err != nil {
+		t.Fatalf("cannot read the agent-facing reference, so this guard would not cover it: %v", err)
+	}
+
+	for _, site := range []struct {
+		name   string
+		text   string
+		marker string
+	}{
+		{name: "scroll --help", text: scrollCmd.Long, marker: "Direction keyword:"},
+		{name: "skills/pinchtab/references/commands.md", text: string(commands), marker: "named direction:"},
+	} {
+		got, ok := directionsEnumeratedAfter(site.text, site.marker)
+		if !ok {
+			t.Errorf("%s no longer enumerates the directions after %q, so drift there is now unguarded", site.name, site.marker)
+			continue
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("%s documents directions %v, want exactly %v — a keyword it invents falls through to a CSS selector and matches nothing, and one it omits is invisible to the reader", site.name, got, want)
 		}
 	}
 }

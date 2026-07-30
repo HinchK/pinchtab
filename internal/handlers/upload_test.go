@@ -688,6 +688,13 @@ func TestStagedUploadNameIsAlwaysOneSafeElement(t *testing.T) {
 		{"  spaced.csv  ", "spaced.csv"},
 		{"../escape.txt", "escape.txt"},
 		{"a/b/c.json", "c.json"},
+		// A Windows caller reaches a POSIX server with no '/' in its name at all, so
+		// reduction cannot be delegated to the host's separator.
+		{`C:\Users\me\data.csv`, "data.csv"},
+		{`..\..\etc\passwd`, "passwd"},
+		{`sub\dir\nested.txt`, "nested.txt"},
+		{`trailing\`, "upload-3.bin"},
+		{"trailing/", "upload-3.bin"},
 		{"", "upload-3.bin"},
 		{"   ", "upload-3.bin"},
 		{".", "upload-3.bin"},
@@ -699,7 +706,7 @@ func TestStagedUploadNameIsAlwaysOneSafeElement(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("stagedUploadName(%q) = %q, want %q", tc.name, got, tc.want)
 		}
-		if got == "" || got == "." || got == ".." || strings.ContainsRune(got, filepath.Separator) || strings.ContainsRune(got, '/') {
+		if got == "" || got == "." || got == ".." || strings.ContainsAny(got, `/\`) || strings.ContainsRune(got, filepath.Separator) {
 			t.Errorf("stagedUploadName(%q) = %q, which is not a single safe path element", tc.name, got)
 		}
 	}
