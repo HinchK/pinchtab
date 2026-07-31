@@ -107,10 +107,16 @@ func TestTheEditorAddressesAgentSessionKeysAndTheySurviveASave(t *testing.T) {
 	}
 }
 
-// The fix changes the marshal path that preservation depends on, so the thing most worth
-// re-asserting is that it did not start destroying what it used to keep: a hand-written
-// agent block is how every operator enabled this before the fix, and it must survive an
-// unrelated set.
+// A hand-written agent block is how every operator enabled this before the fix, so it must
+// survive an unrelated set.
+//
+// WHAT THIS ACTUALLY GUARDS, measured rather than assumed. Preservation does NOT come from
+// the marshal carrying the value: the save PATCHES the file key by key, so a field the
+// marshal drops (nil under omitempty) leaves the existing key untouched and the old value
+// survives anyway. A mutation that makes the marshal forget the value therefore leaves this
+// test GREEN. What it catches is the marshal emitting an explicit OVERWRITING value — a
+// zeroed *bool rather than a nil one — which patches false over the operator's true. That is
+// the destruction shape, and it is the one the new Agent block could have introduced.
 func TestAHandWrittenAgentBlockSurvivesAnUnrelatedSet(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
