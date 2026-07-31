@@ -161,15 +161,19 @@ type QuarantineRemoval struct {
 const KeepAllQuarantinedProfiles = 0
 
 // PruneQuarantinedProfiles keeps the newest `keep` quarantined siblings of one profile
-// and removes the rest, returning what it reclaimed.
+// and removes the rest, returning what it reclaimed. It carries the AUTOMATIC retention
+// policy — a keep count of zero or less means keep everything — which is why the
+// on-demand reclaim below does not go through it: there is no keep value that means
+// "remove them all", so remove-all is expressed by asking removeQuarantinedProfiles for
+// an unranked selection rather than by a sentinel keep count. Both end at the same
+// deleter.
 //
-// It is the only deleter that applies the quarantine PREDICATE and the sibling SCOPE,
-// which is the property a user-invoked reclaim needs from it. It is not the only code
-// that can remove a quarantine directory: DELETE /profiles/{id} resolves an id through
-// the profile listing — where a quarantine appears under its own id — and calls
-// ProfileManager.Delete, which removes the directory by name with neither guard. That
-// route is authenticated and audit-logged and is arguably the reclaim a user wants, so
-// the distinction to preserve is which deleter is scoped, not which one exists.
+// It is not the only code that can remove a quarantine directory: DELETE /profiles/{id}
+// resolves an id through the profile listing — where a quarantine appears under its own
+// id — and calls ProfileManager.Delete, which removes the directory by name with neither
+// guard. That route is authenticated and audit-logged and is arguably the reclaim a user
+// wants, so the distinction to preserve is which deleter is scoped, not which one exists.
+// TestOnlyOneFunctionRemovesADirectoryUnderTheProfilesBase is the census of that set.
 //
 // A user who names a profile exactly "<other profile>.quarantine-<digits>" is
 // indistinguishable on disk from a real quarantine; nothing here can tell them apart,
@@ -192,6 +196,13 @@ func PruneQuarantinedProfiles(profileDir, justCreated string, keep int) ([]Quara
 	if err != nil {
 		return nil, err
 	}
+	return removeQuarantinedProfiles(siblingsBeyondKeep(siblings, justCreated, keep)), nil
+}
+
+// siblingsBeyondKeep ranks one profile's quarantined siblings newest first and names the
+// ones the keep count does not cover. Ranking is separated from the deletion so the
+// on-demand reclaim can reach the same deleter with no ranking at all.
+func siblingsBeyondKeep(siblings []quarantinedSibling, justCreated string, keep int) []string {
 	sort.Slice(siblings, func(i, j int) bool { return siblings[i].stamp > siblings[j].stamp })
 
 	// justCreated reserves a slot rather than being ranked, which is what makes the
@@ -204,7 +215,7 @@ func PruneQuarantinedProfiles(profileDir, justCreated string, keep int) ([]Quara
 		}
 	}
 
-	var removals []QuarantineRemoval
+	var doomed []string
 	for _, sibling := range siblings {
 		if sibling.path == justCreated {
 			continue
@@ -213,14 +224,100 @@ func PruneQuarantinedProfiles(profileDir, justCreated string, keep int) ([]Quara
 			budget--
 			continue
 		}
-		reclaimed := dirBytes(sibling.path)
-		if err := os.RemoveAll(sibling.path); err != nil {
-			slog.Warn("could not prune quarantined profile", "profile", sibling.path, "err", err)
+		doomed = append(doomed, sibling.path)
+	}
+	return doomed
+}
+
+// removeQuarantinedProfiles is the one function that deletes a quarantined profile
+// directory. It re-applies IsQuarantinedProfileDir to every path it is handed rather
+// than trusting its caller to have filtered: the callers differ in how they select
+// (ranked siblings of one profile, or every quarantine under the base), and a live
+// profile must be unreachable however the selection is shaped, so the guard belongs
+// where the deletion is.
+func removeQuarantinedProfiles(paths []string) []QuarantineRemoval {
+	var removals []QuarantineRemoval
+	for _, path := range paths {
+		if !IsQuarantinedProfileDir(filepath.Base(path)) {
+			slog.Warn("refused to remove a profile that is not quarantined", "profile", path)
 			continue
 		}
-		removals = append(removals, QuarantineRemoval{Path: sibling.path, Bytes: reclaimed})
+		reclaimed := dirBytes(path)
+		if err := os.RemoveAll(path); err != nil {
+			slog.Warn("could not remove quarantined profile", "profile", path, "err", err)
+			continue
+		}
+		slog.Info("removed quarantined profile", "profile", path, "bytes", reclaimed)
+		removals = append(removals, QuarantineRemoval{Path: path, Bytes: reclaimed})
 	}
-	return removals, nil
+	return removals
+}
+
+// ReclaimableQuarantinedProfiles reports what a reclaim would remove and what it would
+// free, removing nothing. It is the dry run the bare command depends on.
+func ReclaimableQuarantinedProfiles(baseDir, only string) ([]QuarantineRemoval, error) {
+	paths, err := quarantinedProfileSelection(baseDir, only)
+	if err != nil {
+		return nil, err
+	}
+	reclaimable := make([]QuarantineRemoval, 0, len(paths))
+	for _, path := range paths {
+		reclaimable = append(reclaimable, QuarantineRemoval{Path: path, Bytes: dirBytes(path)})
+	}
+	return reclaimable, nil
+}
+
+// ReclaimQuarantinedProfiles removes the quarantined directories a reclaim selects,
+// on demand and with no retention policy: this is the half PruneQuarantinedProfiles
+// cannot express, and it stays reachable when quarantineKeep is set to keep everything.
+func ReclaimQuarantinedProfiles(baseDir, only string) ([]QuarantineRemoval, error) {
+	paths, err := quarantinedProfileSelection(baseDir, only)
+	if err != nil {
+		return nil, err
+	}
+	return removeQuarantinedProfiles(paths), nil
+}
+
+// quarantinedProfileSelection names the quarantined directories directly under baseDir,
+// optionally narrowed to one of them.
+//
+// `only` is matched against the names of directories already enumerated and already
+// found quarantined; it is never joined onto baseDir. That is what makes a traversal
+// impossible rather than merely refused — caller text cannot become a path component
+// here, so no amount of "../" reaches outside the profile root. The explicit refusal
+// below exists so a caller that sends a path gets told that, instead of a bare not-found.
+func quarantinedProfileSelection(baseDir, only string) ([]string, error) {
+	baseDir = strings.TrimSpace(baseDir)
+	if baseDir == "" {
+		return nil, fmt.Errorf("no profiles directory configured")
+	}
+	only = strings.TrimSpace(only)
+	if only != "" && only != filepath.Base(only) {
+		return nil, fmt.Errorf("%q is a path, not a quarantined profile name", only)
+	}
+
+	entries, err := os.ReadDir(baseDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read profiles dir: %w", err)
+	}
+
+	var paths []string
+	for _, entry := range entries {
+		if !entry.IsDir() || !IsQuarantinedProfileDir(entry.Name()) {
+			continue
+		}
+		if only != "" && entry.Name() != only {
+			continue
+		}
+		paths = append(paths, filepath.Join(baseDir, entry.Name()))
+	}
+	if only != "" && len(paths) == 0 {
+		return nil, fmt.Errorf("no quarantined profile named %q", only)
+	}
+	return paths, nil
 }
 
 type quarantinedSibling struct {

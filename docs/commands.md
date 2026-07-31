@@ -327,10 +327,54 @@ pinchtab instance stop <id>             # Stop an instance
 pinchtab instance logs <id>             # Show instance logs
 pinchtab instance navigate <id> <url>   # Open a tab in an instance and navigate it
 pinchtab profiles                       # List profiles
+pinchtab profiles prune                 # List reclaimable quarantined profiles (removes nothing)
+pinchtab profiles prune --confirm       # Remove them and report the disk freed
+pinchtab profiles prune --profile <dir> # Reclaim just one quarantined directory
 pinchtab activity                       # List recorded activity events
 pinchtab activity tab <tab-id>          # Filter activity by tab
 pinchtab health                         # Check server health
 ```
+
+### Reclaiming quarantined profiles
+
+When a profile's browser data becomes unreadable, PinchTab renames the directory to
+`<profile>.quarantine-<timestamp>` and starts the profile again from an empty one. Those
+directories are never read afterwards, so they are pure disk cost.
+
+Two things remove them, and they answer different questions:
+
+- The **automatic prune** bounds accumulation *per profile, at quarantine time*. Each time a
+  profile is quarantined, older quarantined copies **of that same profile** are removed,
+  keeping `profiles.quarantineKeep` of them (default 1). It only ever runs as a side effect
+  of a new quarantine, so a profile that is quarantined once and never again keeps its copy
+  indefinitely, and `profiles.quarantineKeep: 0` — the documented way to keep everything —
+  switches it off entirely.
+- **`pinchtab profiles prune`** reclaims *on demand, across all profiles*. It is the answer
+  to "give me the disk back now", including for quarantines the automatic prune will never
+  revisit. It ignores `quarantineKeep` completely, so keeping everything automatically still
+  leaves an explicit way to reclaim.
+
+Nothing is scheduled and nothing runs at startup; the on-demand path only runs when you ask.
+
+The bare command is a dry run — it prints what it would remove and the total it would free,
+and deletes nothing, so it is safe for an agent to run:
+
+```bash
+$ pinchtab profiles prune
+default.quarantine-1748100001	412.6 MB
+work.quarantine-1748100002	1.1 GB
+
+2 quarantined profile(s), 1.5 GB reclaimable. Nothing was removed; re-run with --confirm.
+```
+
+Only quarantined directories are eligible: live profiles are never removed, whatever you
+pass. `--profile` names a quarantined directory, never a filesystem path — a path is
+refused. To delete a live profile, use the profile delete route instead; this command
+cannot reach one.
+
+Over HTTP the same operation is `POST /profiles/prune`, with `{"confirm": true}` to remove
+and an optional `"profile"` to narrow it. Every removal is logged with its path and the
+bytes it freed.
 
 ## Configuration And Security
 

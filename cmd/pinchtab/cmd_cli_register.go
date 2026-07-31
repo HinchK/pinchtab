@@ -56,6 +56,7 @@ func registerManagementCommands() {
 
 	instanceCmd.AddCommand(startInstanceCmd, instanceNavigateCmd, instanceStopCmd, instanceRestartCmd, instanceLogsCmd)
 	activityCmd.AddCommand(activityTabCmd)
+	profilesCmd.AddCommand(profilesPruneCmd)
 
 	configureManagementFlags()
 
@@ -425,6 +426,10 @@ func configureManagementFlags() {
 
 	instancesCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
 	profilesCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
+
+	profilesPruneCmd.Flags().Bool("confirm", false, "Actually remove the quarantined profiles (without it, nothing is deleted)")
+	profilesPruneCmd.Flags().String("profile", "", "Reclaim only this quarantined profile directory (default: all of them)")
+	profilesPruneCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
 }
 
 func setCommandGroup(groupID string, cmds ...*cobra.Command) {
