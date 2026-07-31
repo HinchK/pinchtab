@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -63,6 +65,47 @@ func TestEveryButtonFlagRefusesAnUnknownNameLocally(t *testing.T) {
 
 		if err := cmd.Flags().Set("button", bridgecdpops.DefaultMouseButton); err != nil {
 			t.Fatal(err)
+		}
+	}
+}
+
+func buttonContractBlock(text string) (string, bool) {
+	for _, block := range strings.Split(text, "\n\n") {
+		if strings.Contains(block, "`button`") && strings.Contains(block, "400") {
+			return block, true
+		}
+	}
+	return "", false
+}
+
+func TestButtonContractIsDocumentedWhereAnAPICallerReads(t *testing.T) {
+	want := bridgecdpops.MouseButtons()
+	if len(want) < 3 {
+		t.Fatalf("MouseButtons() returned %v, so this guard would pass vacuously", want)
+	}
+
+	for _, rel := range []string{
+		filepath.Join("..", "..", "docs", "endpoints.md"),
+		filepath.Join("..", "..", "docs", "reference", "mouse.md"),
+	} {
+		raw, err := os.ReadFile(rel)
+		if err != nil {
+			t.Fatalf("cannot read %s, so a renamed doc would be a silent skip: %v", rel, err)
+		}
+
+		block, ok := buttonContractBlock(string(raw))
+		if !ok {
+			t.Errorf("%s no longer documents the button field's 400 contract, so drift there is now unguarded", rel)
+			continue
+		}
+
+		for _, name := range want {
+			if !strings.Contains(block, name) {
+				t.Errorf("%s button paragraph omits %q, so an accepted button is missing from the reference", rel, name)
+			}
+		}
+		if !strings.Contains(strings.ToLower(block), "omit") {
+			t.Errorf("%s button paragraph does not state what omitting the field means, so left-as-default reads as forgiveness for an unknown name", rel)
 		}
 	}
 }

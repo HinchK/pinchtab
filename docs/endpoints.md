@@ -214,6 +214,13 @@ dropdown, and a `select` carrying neither key is rejected. Every surface express
 `POST /action` with `"value": ""`, `pinchtab select <ref> ""`, and the `pinchtab_select` MCP
 tool with `value: ""`.
 
+`button` accepts `left`, `right`, and `middle` — the same vocabulary the CLI's `--button`
+help lists, tolerating case and surrounding whitespace, so `RIGHT` and ` middle ` are the
+buttons they name. Any other value is refused with `400` `invalid_mouse_button` naming the
+three, on any action body carrying the field: `primary`, `secondary` and `0` used to be
+reinterpreted as `left` and reported as success. Omitting `button` means `left`, which is a
+default rather than forgiveness for a name the server does not know.
+
 `humanize` is a per-action override for input style. When omitted, actions use `instanceDefaults.humanize`, which defaults to `false`. Use `kind:"click"` or `kind:"type"` with `humanize:true` when a page needs the slower human-like pointer or typing path.
 
 Pointer fallback behavior:
