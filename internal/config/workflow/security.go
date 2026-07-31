@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"slices"
 	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/routes"
 )
 
 func ApplyRecommendedSecurityDefaults(fc *config.FileConfig) {
@@ -44,39 +44,6 @@ func RestoreSecurityDefaults() (string, bool, error) {
 	return configPath, true, nil
 }
 
-func UpdateSensitiveEndpoints(value string) (*config.RuntimeConfig, bool, error) {
-	change, err := prepareChange(func(fc *config.FileConfig) error {
-		selected := map[string]bool{}
-		for _, item := range splitCommaList(value) {
-			selected[item] = true
-		}
-		for endpoint, path := range map[string]string{
-			"evaluate":         "security.allowEvaluate",
-			"macro":            "security.allowMacro",
-			"screencast":       "security.allowScreencast",
-			"download":         "security.allowDownload",
-			"cookies":          "security.allowCookies",
-			"upload":           "security.allowUpload",
-			"networkIntercept": "security.allowNetworkIntercept",
-		} {
-			if err := config.SetConfigValue(fc, path, fmt.Sprintf("%t", selected[endpoint])); err != nil {
-				return fmt.Errorf("set %s: %w", endpoint, err)
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, false, err
-	}
-	if len(change.ValidationErrors) > 0 {
-		return nil, false, change.ValidationErrors[0]
-	}
-	if err := SavePreparedChange(change); err != nil {
-		return nil, false, err
-	}
-	return config.Load(), true, nil
-}
-
 func UpdateContentGuard(mode string) (*config.RuntimeConfig, bool, error) {
 	change, err := prepareChange(func(fc *config.FileConfig) error {
 		scan := mode == "both" || mode == "scan"
@@ -106,6 +73,13 @@ func UpdateContentGuard(mode string) (*config.RuntimeConfig, bool, error) {
 	return config.Load(), true, nil
 }
 
+// guardsDownExcludedCapability is the one capability the guards-down preset does not
+// bulk-enable: stateExport writes cookies and browser storage to disk, and enabling
+// disk export as a side effect of "turn the guards off for local dev" is a surprise
+// no other capability carries. The census in this package's tests holds this exclusion
+// so a ninth capability is enabled by default while this one stays a deliberate opt-out.
+const guardsDownExcludedCapability = routes.CapStateExport
+
 // BuildGuardsDownConfig mutates fc in memory to apply the guards-down preset.
 // It does not persist anything. Returns whether fc was modified.
 func BuildGuardsDownConfig(fc *config.FileConfig) (bool, error) {
@@ -131,18 +105,24 @@ func BuildGuardsDownConfig(fc *config.FileConfig) (bool, error) {
 		}
 	}
 
+	for cap := range routes.CapabilityEndpoints() {
+		if cap == guardsDownExcludedCapability {
+			continue
+		}
+		meta, ok := routes.Meta(cap)
+		if !ok {
+			return false, fmt.Errorf("capability %q gates routes but routes.Meta does not describe it", cap)
+		}
+		if err := config.SetConfigValue(fc, meta.Setting, "true"); err != nil {
+			return false, fmt.Errorf("set %s: %w", meta.Setting, err)
+		}
+	}
+
 	for _, item := range []struct {
 		path  string
 		value string
 	}{
 		{path: "server.bind", value: "127.0.0.1"},
-		{path: "security.allowEvaluate", value: "true"},
-		{path: "security.allowMacro", value: "true"},
-		{path: "security.allowScreencast", value: "true"},
-		{path: "security.allowDownload", value: "true"},
-		{path: "security.allowCookies", value: "true"},
-		{path: "security.allowUpload", value: "true"},
-		{path: "security.allowNetworkIntercept", value: "true"},
 		{path: "security.attach.enabled", value: "true"},
 		{path: "security.attach.allowHosts", value: "127.0.0.1,localhost,::1"},
 		{path: "security.attach.allowSchemes", value: "ws,wss"},
@@ -191,19 +171,6 @@ func formatFileConfigJSON(fc *config.FileConfig) (string, error) {
 		return "", fmt.Errorf("marshal config: %w", err)
 	}
 	return string(data), nil
-}
-
-func splitCommaList(value string) []string {
-	parts := strings.Split(value, ",")
-	items := make([]string, 0, len(parts))
-	for _, part := range parts {
-		trimmed := strings.TrimSpace(strings.ToLower(part))
-		if trimmed != "" {
-			items = append(items, trimmed)
-		}
-	}
-	slices.Sort(items)
-	return slices.Compact(items)
 }
 
 type securityDefaultsState struct {
