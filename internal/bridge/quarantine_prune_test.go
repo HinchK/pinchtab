@@ -243,6 +243,35 @@ func TestPruneKeepAllRemovesNothing(t *testing.T) {
 	}
 }
 
+// A keep below zero must mean keep-everything, not delete-everything, and that is a
+// REACHABLE input rather than a defensive nicety: `config set` refuses a negative, but a
+// hand-edited config.json carrying "quarantineKeep": -1 loads without error, reads back as
+// -1 through `config get` and raises no doctor warning, so it arrives here intact. The
+// deleter's `keep <= KeepAllQuarantinedProfiles` is the only thing between that value and
+// the removal of every older sibling; narrowing it to an equality check passes every other
+// test in this file. PruneQuarantinedProfiles is also exported for a second caller to pass
+// its own count, which is the other way an out-of-range value gets here.
+func TestPruneTreatsANegativeKeepAsKeepEverything(t *testing.T) {
+	root := t.TempDir()
+	profileDir := filepath.Join(root, "default")
+	writeProfileDir(t, profileDir, 0)
+	for _, stamp := range []int64{1700000001, 1700000002, 1700000003} {
+		writeProfileDir(t, quarantinePathAt(profileDir, stamp), 8)
+	}
+	before := dirNames(t, root)
+
+	removals, err := PruneQuarantinedProfiles(profileDir, "", -1)
+	if err != nil {
+		t.Fatalf("PruneQuarantinedProfiles() error = %v", err)
+	}
+	if len(removals) != 0 {
+		t.Fatalf("removals = %v, want none: a negative keep must fail safe like %d, not delete every sibling", removals, KeepAllQuarantinedProfiles)
+	}
+	if got := dirNames(t, root); strings.Join(got, ",") != strings.Join(before, ",") {
+		t.Errorf("profiles dir = %v, want it unchanged at %v", got, before)
+	}
+}
+
 // The whole point is that pruning happens when a new quarantine is created, not on a
 // sweep — so it has to be reachable through the quarantine path itself.
 func TestQuarantineCorruptedProfilePrunesOlderSiblings(t *testing.T) {
