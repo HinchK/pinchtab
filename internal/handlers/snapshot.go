@@ -108,7 +108,6 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var flat []bridge.A11yNode
-	var refs map[string]int64
 	var url, title string
 	var scopeNodeID int64
 
@@ -156,7 +155,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		flat, refs = bridge.BuildSnapshot(rawNodes, filter, maxDepth)
+		flat, _ = bridge.BuildSnapshot(rawNodes, filter, maxDepth)
 		_ = bridge.EnrichA11yNodesWithDOMMetadata(tCtx, flat)
 		url, _ = h.Bridge.CurrentURL(tCtx)
 		title, _ = h.Bridge.CurrentTitle(tCtx)
@@ -170,7 +169,6 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		flat = result.Nodes
-		refs = result.Refs
 		url = result.URL
 		title = result.Title
 		if result.Route != nil {
@@ -213,21 +211,15 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		flat, truncated = bridge.TruncateToTokens(flat, maxTokens, format)
 	}
 
+	prev := h.Bridge.GetRefCache(resolvedTabID)
 	var prevNodes []bridge.A11yNode
-	if doDiff {
-		if prev := h.Bridge.GetRefCache(resolvedTabID); prev != nil {
-			prevNodes = prev.Nodes
-		}
+	if doDiff && prev != nil {
+		prevNodes = prev.Nodes
 	}
 
-	vocab := bridge.MintVocabToken()
-	h.Bridge.SetRefCache(resolvedTabID, &bridge.RefCache{
-		Refs:     refs,
-		Targets:  bridge.RefTargetsFromNodes(flat),
-		Nodes:    flat,
-		DomEpoch: vocab,
-	})
-	w.Header().Set(vocabHeader, vocab)
+	cache := bridge.EpochRefs(prev, flat)
+	h.Bridge.SetRefCache(resolvedTabID, cache)
+	w.Header().Set(vocabHeader, cache.DomEpoch)
 
 	h.recordResolvedURL(r, url)
 
@@ -452,7 +444,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			"route":           snapChromeRoute,
 			"nodes":           flat,
 			"count":           len(flat),
-			"vocabularyToken": vocab,
+			"vocabularyToken": cache.DomEpoch,
 		})
 		if truncated {
 			resp["truncated"] = true

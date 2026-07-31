@@ -172,13 +172,9 @@ func (h *Handlers) HandleCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.Bridge.SetRefCache(resolvedTabID, &bridge.RefCache{
-		Refs:     result.Refs,
-		Targets:  bridge.RefTargetsFromNodes(result.Nodes),
-		Nodes:    result.Nodes,
-		DomEpoch: result.DomEpoch,
-	})
-	w.Header().Set(vocabHeader, result.DomEpoch)
+	cache := bridge.EpochRefs(h.Bridge.GetRefCache(resolvedTabID), result.Nodes)
+	h.Bridge.SetRefCache(resolvedTabID, cache)
+	w.Header().Set(vocabHeader, cache.DomEpoch)
 
 	imageInfo := map[string]any{
 		"format":           result.ImageFormat,
@@ -231,7 +227,7 @@ func (h *Handlers) HandleCapture(w http.ResponseWriter, r *http.Request) {
 		"epoch": map[string]any{
 			"frameId":  result.FrameID,
 			"loaderId": result.LoaderID,
-			"domEpoch": result.DomEpoch,
+			"domEpoch": cache.DomEpoch,
 		},
 		"pairing": map[string]any{
 			"navigated":         result.Navigated,

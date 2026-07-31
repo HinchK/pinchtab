@@ -454,14 +454,9 @@ func (h *Handlers) refreshRefCache(ctx context.Context, tabID string) {
 	if err != nil {
 		return
 	}
-	flat, refs := bridge.BuildSnapshot(nodes, bridge.FilterInteractive, -1)
+	flat, _ := bridge.BuildSnapshot(nodes, bridge.FilterInteractive, -1)
 	_ = bridge.EnrichA11yNodesWithDOMMetadata(ctx, flat)
-	h.Bridge.SetRefCache(tabID, &bridge.RefCache{
-		Refs:     refs,
-		Targets:  bridge.RefTargetsFromNodes(flat),
-		Nodes:    flat,
-		DomEpoch: bridge.MintVocabToken(),
-	})
+	h.Bridge.SetRefCache(tabID, bridge.EpochRefs(h.Bridge.GetRefCache(tabID), flat))
 }
 
 func isTimeoutWithPendingDialog(err error, tabID string, b bridge.BridgeAPI) bool {

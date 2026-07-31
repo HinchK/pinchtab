@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strconv"
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/browserops"
@@ -43,6 +44,150 @@ type RefCache struct {
 	Targets  map[string]RefTarget
 	Nodes    []A11yNode
 	DomEpoch string
+	Book     *RefBook
+}
+
+// RefBook gives each backend DOM node a stable ref within a DOM epoch: a node
+// keeps the ref it was first assigned, and an unseen node gets the next number.
+// This is what makes a ref denote a node rather than a row index, so the same
+// node keeps its ref across a change of filter, depth, selector, token budget or
+// republish. Refs are therefore sparse in a filtered view. A node with a zero
+// backend id carries no identity: alongside resolvable nodes it gets a fresh ref
+// every read and is never resolvable, so its instability is harmless; a snapshot
+// made entirely of such nodes is a statically fetched page whose refs are kept
+// stable per element by the static browser itself and are preserved untouched.
+type RefBook struct {
+	byNode map[int64]string
+	next   int
+}
+
+func NewRefBook() *RefBook {
+	return &RefBook{byNode: make(map[int64]string)}
+}
+
+func (b *RefBook) assign(backendNodeID int64) string {
+	if backendNodeID != 0 {
+		if ref, ok := b.byNode[backendNodeID]; ok {
+			return ref
+		}
+	}
+	ref := fmt.Sprintf("e%d", b.next)
+	b.next++
+	if backendNodeID != 0 {
+		b.byNode[backendNodeID] = ref
+	}
+	return ref
+}
+
+// Rebind stamps each node with its stable ref and returns the ref→backend-node
+// map for the resolvable nodes. A snapshot carrying no resolvable node is a
+// statically fetched page: the static browser already keeps each ref stable per
+// element, so its refs are left untouched — renumbering them against this book's
+// counter would put them out of step with the static browser's own ref→element
+// map and resolve a later action to the wrong element.
+func (b *RefBook) Rebind(nodes []A11yNode) map[string]int64 {
+	if !anyResolvable(nodes) {
+		return map[string]int64{}
+	}
+	refs := make(map[string]int64, len(nodes))
+	for i := range nodes {
+		ref := b.assign(nodes[i].NodeID)
+		nodes[i].Ref = ref
+		if nodes[i].NodeID != 0 {
+			refs[ref] = nodes[i].NodeID
+		}
+	}
+	return refs
+}
+
+func anyResolvable(nodes []A11yNode) bool {
+	for i := range nodes {
+		if nodes[i].NodeID != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (b *RefBook) sharesNode(nodes []A11yNode) bool {
+	for i := range nodes {
+		if nodes[i].NodeID == 0 {
+			continue
+		}
+		if _, ok := b.byNode[nodes[i].NodeID]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// bookFromCache returns a fresh copy of the epoch's ref book, so each publish
+// grows its own copy rather than mutating one shared across concurrent reads. A
+// cache published before the book existed — the ghost-chrome escalation seam
+// carries only Refs — is seeded from those refs, so the refs already handed out
+// survive the transition to Chrome.
+func (c *RefCache) bookFromCache() *RefBook {
+	book := NewRefBook()
+	if c == nil {
+		return book
+	}
+	if c.Book != nil {
+		for id, ref := range c.Book.byNode {
+			book.byNode[id] = ref
+		}
+		book.next = c.Book.next
+		return book
+	}
+	for ref, id := range c.Refs {
+		if id == 0 {
+			continue
+		}
+		book.byNode[id] = ref
+		if n, ok := refNumber(ref); ok && n >= book.next {
+			book.next = n + 1
+		}
+	}
+	return book
+}
+
+func refNumber(ref string) (int, bool) {
+	if len(ref) < 2 || ref[0] != 'e' {
+		return 0, false
+	}
+	n, err := strconv.Atoi(ref[1:])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// EpochRefs rebinds nodes against the tab's DOM-epoch ref book and returns the
+// RefCache to publish. When the nodes share a backend node with the prior epoch
+// it carries that epoch's book and vocab token, so a node keeps its ref across
+// filter, depth, selector and republish reads and the superseded-vocabulary
+// guard does not fire. When they share none — a fresh document — it starts a new
+// epoch: a book numbering from e0 and a fresh vocab token.
+func EpochRefs(prev *RefCache, nodes []A11yNode) *RefCache {
+	book := prev.bookFromCache()
+	vocab := ""
+	if prev != nil {
+		vocab = prev.DomEpoch
+	}
+	if !book.sharesNode(nodes) {
+		book = NewRefBook()
+		vocab = ""
+	}
+	if vocab == "" {
+		vocab = MintVocabToken()
+	}
+	refs := book.Rebind(nodes)
+	return &RefCache{
+		Refs:     refs,
+		Targets:  RefTargetsFromNodes(nodes),
+		Nodes:    nodes,
+		DomEpoch: vocab,
+		Book:     book,
+	}
 }
 
 // Lookup answers whether a ref names a node that can be acted on. A zero backend

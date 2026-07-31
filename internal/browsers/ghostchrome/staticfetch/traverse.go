@@ -1,7 +1,6 @@
 package staticfetch
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/gost-dom/browser/dom"
@@ -46,8 +45,7 @@ func (l *Browser) walkDOMInto(acc *[]browserops.SnapshotNode, tab *liteTab, node
 		return
 	}
 
-	ref := fmt.Sprintf("e%d", len(tab.refMap))
-	tab.refMap[ref] = el
+	ref := tab.assignRef(el)
 
 	sn := browserops.SnapshotNode{
 		Ref:         ref,

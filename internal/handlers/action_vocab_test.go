@@ -149,9 +149,11 @@ func TestTheGETFormCarriesAndEnforcesTheToken(t *testing.T) {
 	}
 }
 
-// Every publish mints a fresh token, so any renumbering publish supersedes the previous one —
-// this is why a same-options republish (the stale-ref retry re-runs the interactive filter)
-// still supersedes, which a hash-of-options token would not.
+// A new epoch mints a fresh token, so a publish that renumbers a tab's refs (a new document)
+// supersedes the previous one. A same-document republish does NOT mint a fresh token — EpochRefs
+// carries the prior epoch's token — which is what stops the annotate and stale-ref-retry paths
+// from superseding a ref the agent still holds. This test only pins that the mint, when it does
+// happen, yields a distinct non-empty token.
 func TestEachMintedTokenIsDistinctAndNonEmpty(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 64; i++ {
@@ -166,24 +168,27 @@ func TestEachMintedTokenIsDistinctAndNonEmpty(t *testing.T) {
 	}
 }
 
-// Wiring census: the guard above only refuses when the tab's cached token differs from the
-// request's, so it is inert unless every ref-publishing site actually MINTS and stores a fresh
-// token. This is the browserless proof of criteria one and four — that /snapshot publishes a
-// token and that the annotate and stale-ref-retry paths supersede — since those handlers reach
-// live CDP and cannot be driven by the package mock. Dropping the mint at any site reddens here
-// while leaving the behavioural gate tests green, so this census is load-bearing.
-func TestEveryRefPublishSiteMintsAVocabularyToken(t *testing.T) {
+// Wiring census: the epoch ref book is what makes a ref denote a node across reads, and it also
+// owns the vocabulary token — carrying it across a same-document republish and minting a fresh one
+// only for a new document. Every ref-publishing site must route through bridge.EpochRefs, or that
+// site reverts to a bare cache: a hand-rolled cache would either mint a fresh token on every
+// republish (superseding refs the agent still holds — the exact regression criteria three and five
+// forbid) or renumber refs positionally. This is the browserless proof for those criteria, since
+// the handlers reach live CDP and cannot be driven by the package mock. Dropping the EpochRefs call
+// at any site reddens here while leaving the behavioural gate tests green, so this census is
+// load-bearing.
+func TestEveryRefPublishSiteRoutesThroughTheEpochRefBook(t *testing.T) {
 	for _, tc := range []struct {
 		file string
-		want string
 		why  string
 	}{
-		{"snapshot.go", "MintVocabToken", "the /snapshot response is the primary vocabulary a client reads and echoes"},
-		{"screenshot_annotate.go", "MintVocabToken", "the annotate path republishes with a hardcoded interactive filter and must supersede"},
-		{"action_execution.go", "MintVocabToken", "the stale-ref retry refreshes the cache and must supersede a ref minted before it"},
+		{"snapshot.go", "the /snapshot response is the primary vocabulary a client reads and echoes"},
+		{"capture.go", "the /capture response publishes the same tab vocabulary as /snapshot"},
+		{"screenshot_annotate.go", "the annotate path republishes with a hardcoded interactive filter and must not supersede an existing ref"},
+		{"action_execution.go", "the stale-ref retry refreshes the cache and must not supersede a ref minted before it"},
 	} {
-		if !fileCallsSelector(t, tc.file, tc.want) {
-			t.Errorf("%s does not call bridge.%s, so this publish site stores no token and the guard is inert for it — %s", tc.file, tc.want, tc.why)
+		if !fileCallsSelector(t, tc.file, "EpochRefs") {
+			t.Errorf("%s does not call bridge.EpochRefs, so this publish site does not route through the epoch ref book — %s", tc.file, tc.why)
 		}
 	}
 
