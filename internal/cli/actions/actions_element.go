@@ -121,6 +121,12 @@ func postActionWithHeaders(client *http.Client, base, token string, cmd *cobra.C
 		path = "/tabs/" + tabID + "/action"
 	}
 
+	if _, ok := body["vocab"]; !ok {
+		if tok := apiclient.VocabTokenFor(base, tabID); tok != "" {
+			body["vocab"] = tok
+		}
+	}
+
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	if jsonOutput {
 		apiclient.DoPostWithHeaders(client, base, token, path, body, headers)
