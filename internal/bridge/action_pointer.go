@@ -599,12 +599,19 @@ func resolveScrollDelta(x, y int, explicit bool, spelling string) (int, int, err
 	return 0, defaultScrollNotch, nil
 }
 
-func wheelDelta(req ActionRequest) (int, int, error) {
-	deltaX, deltaY := req.DeltaX, req.DeltaY
-	if deltaX == 0 && deltaY == 0 {
-		deltaX, deltaY = req.ScrollX, req.ScrollY
+func scrollDeltaFromRequest(primaryX, primaryY, fallbackX, fallbackY int, explicit bool, spelling string) (int, int, error) {
+	if primaryX == 0 && primaryY == 0 {
+		primaryX, primaryY = fallbackX, fallbackY
 	}
-	return resolveScrollDelta(deltaX, deltaY, req.HasDelta || req.HasScroll, "deltaX/deltaY")
+	return resolveScrollDelta(primaryX, primaryY, explicit, spelling)
+}
+
+func wheelDelta(req ActionRequest) (int, int, error) {
+	return scrollDeltaFromRequest(req.DeltaX, req.DeltaY, req.ScrollX, req.ScrollY, req.HasDelta || req.HasScroll, "deltaX/deltaY")
+}
+
+func scrollDelta(req ActionRequest) (int, int, error) {
+	return scrollDeltaFromRequest(req.ScrollX, req.ScrollY, req.DeltaX, req.DeltaY, req.HasScroll || req.HasDelta, "scrollX/scrollY, or a selector to scroll into view")
 }
 
 func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[string]any, error) {
@@ -620,7 +627,7 @@ func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[strin
 		return map[string]any{"scrolled": true}, ScrollByNodeID(ctx, int64(node.BackendNodeID))
 	}
 
-	scrollX, scrollY, err := resolveScrollDelta(req.ScrollX, req.ScrollY, req.HasScroll, "scrollX/scrollY, or a selector to scroll into view")
+	scrollX, scrollY, err := scrollDelta(req)
 	if err != nil {
 		return nil, err
 	}

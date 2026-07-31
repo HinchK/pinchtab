@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 func decodeScrollRequest(t *testing.T, body string) ActionRequest {
@@ -264,5 +266,154 @@ func TestWheelDeltaRefusesAnExplicitZeroInEitherSpelling(t *testing.T) {
 		if gotX != tc.wantX || gotY != tc.wantY {
 			t.Errorf("%s: delta = (%d,%d), want (%d,%d); %s", tc.body, gotX, gotY, tc.wantX, tc.wantY, tc.whyNotOK)
 		}
+	}
+}
+
+// The two scrolling kinds accept each other's spelling, and they must accept it the same
+// way: the wheel already fell back to scrollX/scrollY, while a scroll discarded a supplied
+// deltaX/deltaY and substituted the notch — a caller was answered success for a 120px move
+// it never asked for, on every surface, with no error to learn from. Every row is asserted
+// for BOTH kinds so a fix to one cannot leave the other behind.
+func TestBothScrollKindsAcceptEitherSpelling(t *testing.T) {
+	const (
+		notch   = defaultScrollNotch
+		refused = -1
+	)
+
+	for _, tc := range []struct {
+		name        string
+		req         ActionRequest
+		wantScrollY int
+		wantWheelY  int
+	}{
+		{
+			name:        "own spelling",
+			req:         ActionRequest{ScrollY: 400, HasScroll: true},
+			wantScrollY: 400,
+			wantWheelY:  400,
+		},
+		{
+			name:        "the other spelling",
+			req:         ActionRequest{DeltaY: 400, HasDelta: true},
+			wantScrollY: 400,
+			wantWheelY:  400,
+		},
+		{
+			name:        "an explicit zero in the scroll spelling",
+			req:         ActionRequest{ScrollY: 0, HasScroll: true},
+			wantScrollY: refused,
+			wantWheelY:  refused,
+		},
+		{
+			name:        "an explicit zero in the wheel spelling",
+			req:         ActionRequest{DeltaY: 0, HasDelta: true},
+			wantScrollY: refused,
+			wantWheelY:  refused,
+		},
+		{
+			name:        "no delta at all keeps the notch",
+			req:         ActionRequest{},
+			wantScrollY: notch,
+			wantWheelY:  notch,
+		},
+		{
+			name:        "a horizontal delta in the other spelling",
+			req:         ActionRequest{DeltaX: -250, HasDelta: true},
+			wantScrollY: 0,
+			wantWheelY:  0,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sx, sy, sErr := scrollDelta(tc.req)
+			assertDeltaY(t, "scroll", tc.wantScrollY, sx, sy, sErr)
+
+			wx, wy, wErr := wheelDelta(tc.req)
+			assertDeltaY(t, "mouse-wheel", tc.wantWheelY, wx, wy, wErr)
+		})
+	}
+}
+
+// Tolerating both spellings raises a question neither kind answered before: which one wins
+// when both arrive with different non-zero values. The answer is the kind's own spelling,
+// and it is pinned here rather than left to fall out of the fallback's argument order.
+func TestEachScrollKindPrefersItsOwnSpelling(t *testing.T) {
+	req := ActionRequest{ScrollY: 400, DeltaY: 200, HasScroll: true, HasDelta: true}
+
+	if _, y, err := scrollDelta(req); err != nil || y != 400 {
+		t.Errorf("scroll resolved to %d (err %v), want the scroll spelling's 400", y, err)
+	}
+	if _, y, err := wheelDelta(req); err != nil || y != 200 {
+		t.Errorf("mouse-wheel resolved to %d (err %v), want the wheel spelling's 200", y, err)
+	}
+}
+
+// A horizontal-only delta must not be read as "nothing supplied": the fallback triggers on
+// both components being zero, so a row that only sets Y cannot see a bug in that condition.
+func TestAHorizontalOnlyDeltaIsNotTreatedAsAbsent(t *testing.T) {
+	x, y, err := scrollDelta(ActionRequest{DeltaX: -250, HasDelta: true})
+
+	if err != nil {
+		t.Fatalf("refused a horizontal scroll: %v", err)
+	}
+	if x != -250 || y != 0 {
+		t.Errorf("resolved to x=%d y=%d, want x=-250 y=0 — the notch was substituted for a supplied horizontal delta", x, y)
+	}
+}
+
+func assertDeltaY(t *testing.T, kind string, want int, x, y int, err error) {
+	t.Helper()
+
+	if want == -1 {
+		if err == nil {
+			t.Errorf("%s: an explicit zero resolved to x=%d y=%d instead of being refused; a caller is told a scroll happened", kind, x, y)
+			return
+		}
+		if !strings.Contains(err.Error(), "a zero delta is not a scroll") {
+			t.Errorf("%s: refusal is %q, want the zero-delta rule's own message", kind, err)
+		}
+		return
+	}
+	if err != nil {
+		t.Fatalf("%s: resolve failed: %v", kind, err)
+	}
+	if y != want {
+		t.Errorf("%s: resolved deltaY = %d, want %d", kind, y, want)
+	}
+}
+
+// The defect was never in the zero rule — three cards have now closed that at its owner.
+// It was a CALLER dropping the value before the owner saw it, so the guard that matters is
+// on the wiring: each kind's action must resolve through its own named helper, and neither
+// may reach resolveScrollDelta directly and rebuild the tolerance on the way.
+func TestEachScrollActionResolvesThroughItsOwnHelper(t *testing.T) {
+	pkg := srccensus.Load(t, ".", 20)
+
+	for _, tc := range []struct{ action, helper string }{
+		{"actionScroll", "scrollDelta"},
+		{"actionMouseWheel", "wheelDelta"},
+	} {
+		fn, ok := pkg.Func(tc.action)
+		if !ok {
+			t.Fatalf("%s not found; this census is reading the wrong package", tc.action)
+		}
+
+		found := false
+		for _, site := range pkg.CallsAllowingNone(tc.helper) {
+			if pkg.Contains(fn, site) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s does not call %s, so it resolves its delta some other way and the spelling tolerance is not shared", tc.action, tc.helper)
+		}
+		for _, site := range pkg.CallsAllowingNone("resolveScrollDelta") {
+			if pkg.Contains(fn, site) {
+				t.Errorf("%s calls resolveScrollDelta directly at %s — that bypasses the spelling fallback, which is exactly how one kind came to ignore the other's spelling", tc.action, site)
+			}
+		}
+	}
+
+	if len(pkg.Calls(t, "scrollDeltaFromRequest")) < 2 {
+		t.Error("fewer than two callers reach the shared tolerance, so it is no longer shared by both kinds")
 	}
 }
