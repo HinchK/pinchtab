@@ -30,6 +30,8 @@ func (h *Handlers) handoffController() (tabHandoffController, bool) {
 // the agent must yield control to a human operator.
 const handoffHintMessage = "return control to the user and ask them to manually solve the challenge in the browser window, then call POST /tabs/{id}/resume to continue"
 
+const handoffPausedCode = "tab_paused_handoff"
+
 // handoffErrorDetails builds the details payload attached to 409 responses
 // when an action hits a tab that is paused for handoff. Always includes the
 // agent hint; when known, also includes the current reason and pausedAt.
@@ -68,21 +70,27 @@ func (h *Handlers) enforceTabNotPausedForHandoff(tabID string) error {
 
 // enforceTabNotPausedForHandoffOrRespond is the single writer of the RESPONSE-LEVEL
 // paused-tab refusal: an endpoint that answers with one status calls it, so a client
-// sees the same 409, code and remedy hint whichever it hit. Reports ok=false once the
-// 409 has been written.
-//
-// It is NOT every page-mutating endpoint. POST /actions and POST /macro answer 200 with
-// a result list, so a status written from inside their loop would describe the wrong
-// thing; they call the raw predicate above and carry the condition as a per-item result,
-// which today is a bare message with no code and no hint. Giving that shape its own
-// writer beside this one is PIN-179.
+// sees the same 409, code and remedy hint whichever it hit. POST /actions and POST /macro
+// answer 200 with a result list instead, so they carry the same condition per item through
+// handoffPausedActionResult — the two writers are siblings, same code and hint, different
+// envelope. Reports ok=false once the 409 has been written.
 func (h *Handlers) enforceTabNotPausedForHandoffOrRespond(w http.ResponseWriter, tabID string) bool {
 	err := h.enforceTabNotPausedForHandoff(tabID)
 	if err == nil {
 		return true
 	}
-	httpx.ErrorCode(w, http.StatusConflict, "tab_paused_handoff", err.Error(), false, h.handoffErrorDetails(tabID))
+	httpx.ErrorCode(w, http.StatusConflict, handoffPausedCode, err.Error(), false, h.handoffErrorDetails(tabID))
 	return false
+}
+
+func (h *Handlers) handoffPausedActionResult(index int, tabID string, err error) actionResult {
+	return actionResult{
+		Index:   index,
+		Success: false,
+		Error:   err.Error(),
+		Code:    handoffPausedCode,
+		Details: h.handoffErrorDetails(tabID),
+	}
 }
 
 // pauseTabForHandoff marks a tab as paused for human handoff and broadcasts

@@ -839,7 +839,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 			return
 		}
 		if err := h.enforceTabNotPausedForHandoff(resolvedTabID); err != nil {
-			results = append(results, actionResult{Index: i, Success: false, Error: err.Error()})
+			results = append(results, h.handoffPausedActionResult(i, resolvedTabID, err))
 			if req.StopOnError {
 				break
 			}
@@ -1059,7 +1059,7 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.enforceTabNotPausedForHandoff(resolvedTabID); err != nil {
-			results = append(results, actionResult{Index: i, Success: false, Error: err.Error()})
+			results = append(results, h.handoffPausedActionResult(i, resolvedTabID, err))
 			if req.StopOnError {
 				break
 			}

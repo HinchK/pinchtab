@@ -117,11 +117,11 @@ Notes:
 - a paused-handoff tab blocks the action-execution routes, but the two envelopes differ.
   `POST /action` returns `409` with code `tab_paused_handoff` and a `details.hint` naming
   `/resume`. `POST /actions` and `POST /macro` return **200** — they answer with a result
-  list — and refuse per item: the entry for each step against the paused tab has
-  `success: false` and a message naming the pause, with no code of its own yet. With
-  `stopOnError` false (the default) the remaining steps still run, so each step aimed at the
-  paused tab is refused the same way while steps naming another tab execute normally.
-  `/resume` clears the state for all of them.
+  list — and carry the same refusal per item: the entry for each step against the paused tab
+  has `success: false`, `code: "tab_paused_handoff"` and the same `details`. Match on the
+  code, not on the message. With `stopOnError` false (the default) the remaining steps still
+  run, so each step aimed at the paused tab is refused the same way while steps naming another
+  tab execute normally. `/resume` clears the state for all of them.
 - treat the handoff record as coordination state, not as a security boundary — non-action endpoints (snapshots, screenshots, network logs, evals subject to their own gates) remain reachable
 - CLI wrappers exist: `pinchtab handoff`, `pinchtab resume`, `pinchtab handoff-status`, plus the `pinchtab tab handoff|resume|handoff-status` aliases
 
