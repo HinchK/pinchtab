@@ -3,8 +3,6 @@ package config
 import (
 	"strconv"
 	"strings"
-
-	"github.com/pinchtab/pinchtab/internal/browserprobe"
 )
 
 // CurrentConfigVersion is bumped when config schema changes require migration or wizard re-run.
@@ -167,7 +165,9 @@ func DefaultFileConfig() FileConfig {
 			StateDir: userConfigDir(),
 		},
 		Browser: BrowserConfig{
-			BrowserVersion: browserprobe.FallbackChromeVersion,
+			// BrowserVersion is left unset so the persona probes the launched binary
+			// for its real version; a default here would pin it and the probe would
+			// never fire. TestTheConfigDefaultsLeaveBrowserVersionUnset guards this.
 			ExtensionPaths: []string{defaultExtensionsDir(userConfigDir())},
 		},
 		Browsers: BrowsersConfig{

@@ -93,14 +93,13 @@ func TestNoPackageKeepsItsOwnCopyOfTheFallbackBrowserVersion(t *testing.T) {
 	}
 }
 
-// The other direction: the packages that lost their literal must actually READ the owner,
-// or the census above passes because the default went missing rather than because it is
-// shared. Each site is named with the default it supplies.
-func TestTheVersionDefaultsReadTheOneOwner(t *testing.T) {
-	// The two config defaults are asserted at the VALUE POSITION of the BrowserVersion
-	// field, not merely somewhere in the file: a file that reads the constant for some
-	// other purpose while its default comes from elsewhere is exactly the drift this
-	// census exists to catch, and a file-level check passes on it.
+// The probe only fires when browser.version is unset, so the config defaults must NOT
+// pin it — not to a literal (the census above bans those) and not to the fallback
+// constant either. A default here would make every fresh config advertise the frozen
+// version and the launched-binary probe would never run, which is the defect. So this
+// asserts neither config default supplies a BrowserVersion field at all, and that the
+// fallback survives only where it belongs: the persona layer, reading the one owner.
+func TestTheConfigDefaultsLeaveBrowserVersionUnset(t *testing.T) {
 	for _, tc := range []struct{ dir, file, what string }{
 		{"../config", "config_file.go", "the file-config default written into a new config"},
 		{"../config", "config_load.go", "the RuntimeConfig default used when no file config applies"},
@@ -118,18 +117,13 @@ func TestTheVersionDefaultsReadTheOneOwner(t *testing.T) {
 			t.Fatalf("%s is not in %s; this census is reading the wrong package", tc.file, tc.dir)
 		}
 
-		assigned, ok := browserVersionFieldValue(t, tc.dir+"/"+tc.file)
-		if !ok {
-			t.Errorf("%s no longer sets a BrowserVersion field, so %s is gone rather than shared", tc.file, tc.what)
-			continue
-		}
-		if !assigned {
-			t.Errorf("%s sets BrowserVersion from something other than browserprobe.FallbackChromeVersion, so %s can drift from the owner again", tc.file, tc.what)
+		if _, found := browserVersionFieldValue(t, tc.dir+"/"+tc.file); found {
+			t.Errorf("%s sets a BrowserVersion default, so %s pins the version and the launched-binary probe never fires", tc.file, tc.what)
 		}
 	}
 
-	// The UA builder's fallback is an assignment inside ReducedBrowserVersion rather than
-	// a struct field, so it is pinned to that function's body.
+	// The fallback lives at the persona layer instead: ReducedBrowserVersion reads the
+	// one owner, so the literal is applied only when the probe cannot answer.
 	if !funcReferencesFallbackConstant(t, "ua.go", "ReducedBrowserVersion") {
 		t.Error("ReducedBrowserVersion no longer reads browserprobe.FallbackChromeVersion, so the UA fallback comes from somewhere else and the value can drift again")
 	}

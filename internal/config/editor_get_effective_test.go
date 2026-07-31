@@ -127,6 +127,8 @@ var defaultLivesAtItsConsumer = map[string]string{
 	"server.cookieSecure": "there is no single value: the cookie layer decides per request from that request's scheme, so any printed answer would be wrong for half the requests",
 
 	"server.networkBufferSize": "the per-tab buffer default is DefaultNetworkBufferSize in the network buffer itself, applied when the configured size is zero; the config layer never settles it, so reporting a number here would be this package's own guess",
+
+	"browser.version": "left unset by default so the persona probes the launched binary for its real version (stealth.ResolveBrowserVersion); until the operator pins browser.version explicitly there is no single settled value at the config layer, and printing the fallback literal here would advertise a version the running browser may not be",
 }
 
 // TestEveryAddressableConfigKeyAnswersOrIsAccountedFor is the standing census behind
