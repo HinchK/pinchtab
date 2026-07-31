@@ -21,7 +21,7 @@ Use MCP tools to control a browser through the PinchTab HTTP API. The MCP server
 3. **Interact**: `pinchtab_click(selector="e5")` — use refs from the snapshot.
 4. **Verify**: `pinchtab_get_text()` or re-snapshot to confirm the action succeeded.
 
-**Critical rule**: Element refs (`e5`, `e12`) are ephemeral. They expire after navigation or DOM updates. Always re-call `pinchtab_snapshot` after a page load before using refs.
+**Critical rule**: Element refs (`e5`, `e12`) are ephemeral. They expire after navigation or DOM updates. Always re-call `pinchtab_snapshot` after a page load before using refs. Refs are also renumbered — with no navigation and no DOM change — by any snapshot taken with different options (`interactive` vs full, a `selector`, a `depth` limit), so never use a ref from one snapshot after a differently-optioned one; take the ref from the most recent snapshot. Responses carry a vocabulary token (`X-PinchTab-Vocab`); echo it on the action and a ref from a superseded snapshot is refused with `vocab_superseded` rather than acting on the wrong element.
 
 ---
 
@@ -344,7 +344,7 @@ For these, use the pinchtab CLI or HTTP API directly.
 
 ## Element Ref Best Practices
 
-1. **Never cache refs across navigations.** Always re-snapshot after `pinchtab_navigate` or `pinchtab_click(waitNav=true)`.
+1. **Never cache refs across navigations or across differently-optioned snapshots.** Always re-snapshot after `pinchtab_navigate` or `pinchtab_click(waitNav=true)`, and never carry a ref from a full snapshot into an `interactive`/`selector`/`depth` one — the numbering differs. Echo the response's `X-PinchTab-Vocab` token on the action to turn a stale ref into a `vocab_superseded` refusal instead of a wrong-element click.
 2. **Use `diff=true` after interactions.** Shows only changed elements, saving tokens.
 3. **Prefer refs over CSS selectors.** Refs resolve by backend node IDs, more reliable than CSS.
 4. **Refs work across iframes.** Same-origin iframe content is flattened into the main tree — refs are clickable without frame hops.

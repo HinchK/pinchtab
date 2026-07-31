@@ -125,6 +125,8 @@ All tool names are prefixed with `pinchtab_`.
 
 **Important:** Refs are ephemeral. They expire after navigation or significant DOM updates. Always re-call `pinchtab_snapshot` after a page load before using refs in interactions.
 
+A ref is numbered by its position in one snapshot response, so it can also be superseded **without any navigation or DOM change**: a snapshot taken with different options (`interactive`, a `selector`, a `depth` limit), an annotated screenshot, an internal stale-ref recovery, or another client sharing the tab all renumber the refs — the same `e1` then denotes a different live element. Each snapshot and capture response carries a vocabulary token (the `X-PinchTab-Vocab` response header, also `vocabularyToken` in the JSON snapshot body). Echo that token back on the action — the `vocab` field, or the same header — and an action whose ref was minted under a superseded vocabulary is refused with `409` `vocab_superseded` and re-snapshot advice, instead of silently clicking the wrong node. The token is optional: an action that omits it keeps the previous behaviour, so a caller that does not echo it stays exposed to the silent rebind until it opts in.
+
 ---
 
 ## What MCP Cannot Do
