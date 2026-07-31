@@ -90,7 +90,7 @@ func NewBundle(cfg *config.RuntimeConfig, seed int64) *Bundle {
 	disablePinchTabStealth := config.PinchTabStealthDefaultsDisabled(cfg)
 	personaJSON := "{}"
 	if cfg != nil {
-		if encoded, err := json.Marshal(BuildPersona(cfg.UserAgent, cfg.BrowserVersion)); err == nil {
+		if encoded, err := json.Marshal(BuildPersona(cfg.UserAgent, ResolveBrowserVersion(cfg))); err == nil {
 			personaJSON = string(encoded)
 		}
 	}

@@ -137,7 +137,7 @@ func (h *Handlers) fingerprintMatrix() map[string]map[string]fingerprint {
 	// navigator.userAgent to <major>.0.0.0. Using h.Config.BrowserVersion
 	// verbatim here would emit the full build where the launch path pins the
 	// reduced form — a page/post-rotate version drift.
-	reducedBrowserVersion := stealth.ReducedBrowserVersion(h.Config.BrowserVersion)
+	reducedBrowserVersion := stealth.ReducedBrowserVersion(stealth.ResolveBrowserVersion(h.Config))
 
 	// The Chrome UA strings come from stealth.ChromeUserAgent, the same template the
 	// launch persona uses, so the frozen OS tokens are spelled out once. mac/safari

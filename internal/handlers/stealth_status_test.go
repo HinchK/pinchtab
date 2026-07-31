@@ -74,6 +74,24 @@ func TestStealthStatusReportsAgreementWhenTheVersionsMatch(t *testing.T) {
 	}
 }
 
+// With browser.version unset, the advertised version is the one the persona now
+// actually presents — the probed binary version — so page and status agree. This
+// is the wiring the fix adds: before it, advertised was the frozen fallback while
+// the binary reported something newer.
+func TestStealthStatusAdvertisesTheProbedVersionWhenConfigIsUnset(t *testing.T) {
+	resp := stealthStatusBody(t, &config.RuntimeConfig{
+		BrowserBinary: fakeBrowserBinary(t, "150.0.7871.187"),
+	})
+
+	if got := resp["advertisedBrowserVersion"]; got != "150.0.7871.187" {
+		t.Errorf("advertisedBrowserVersion = %v, want the probed binary version when browser.version is unset", got)
+	}
+	if resp["advertisedBrowserVersion"] != resp["browserBinaryVersion"] {
+		t.Errorf("advertised %v vs binary %v; with no explicit version the persona must advertise the probed one",
+			resp["advertisedBrowserVersion"], resp["browserBinaryVersion"])
+	}
+}
+
 // An unprobeable binary must read as unknown rather than as a disagreement,
 // or every sandboxed deployment looks like the defect.
 func TestStealthStatusOmitsTheBinaryVersionWhenTheProbeFails(t *testing.T) {

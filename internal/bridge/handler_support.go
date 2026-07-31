@@ -10,6 +10,7 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+	"github.com/pinchtab/pinchtab/internal/stealth"
 )
 
 func (b *Bridge) EnableFetchWithAuth(ctx context.Context) error {
@@ -195,10 +196,7 @@ func (b *Bridge) SetUserAgentOverride(ctx context.Context, params UserAgentOverr
 }
 
 func (b *Bridge) browserVersion() string {
-	if b.Config == nil {
-		return ""
-	}
-	return b.Config.BrowserVersion
+	return stealth.ResolveBrowserVersion(b.Config)
 }
 
 func (b *Bridge) SetLocaleOverride(ctx context.Context, locale string) error {

@@ -71,6 +71,7 @@ func InitBrowser(cfg *config.RuntimeConfig, bundle *stealth.Bundle, hooks Hooks)
 		}
 	}
 
+	stealth.WarnBrowserVersionMismatch(launchCfg)
 	bundle = ensureStealthBundle(launchCfg, bundle)
 	geoAlignment, err := resolveLaunchGeoAlignment(context.Background(), launchCfg)
 	if err != nil {
