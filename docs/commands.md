@@ -367,10 +367,13 @@ work.quarantine-1748100002	1.1 GB
 2 quarantined profile(s), 1.5 GB reclaimable. Nothing was removed; re-run with --confirm.
 ```
 
-Only quarantined directories are eligible: live profiles are never removed, whatever you
-pass. `--profile` names a quarantined directory, never a filesystem path — a path is
-refused. To delete a live profile, use the profile delete route instead; this command
-cannot reach one.
+Eligibility is the quarantine name pattern `<profile>.quarantine-<timestamp>`, not a record
+of what PinchTab actually quarantined — so a profile you created under a name of that shape
+is eligible too, and it is listed as quarantined everywhere else as well. The bare dry run
+is where you see that before anything is removed. Nothing outside the pattern is removed,
+whatever you pass. `--profile` names a quarantined directory, never a filesystem path — a
+path is refused. To delete an ordinary profile, use the profile delete route instead; this
+command cannot reach one.
 
 Over HTTP the same operation is `POST /profiles/prune`, with `{"confirm": true}` to remove
 and an optional `"profile"` to narrow it. Every removal is logged with its path and the
