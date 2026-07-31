@@ -99,9 +99,14 @@ func TestButtonContractIsDocumentedWhereAnAPICallerReads(t *testing.T) {
 			continue
 		}
 
+		// Matched as the backticked token rather than anywhere in the block: both pages
+		// also spell a name inside a whitespace-tolerance example (` middle `), which a
+		// bare substring search counts as documentation. Dropping "middle" from the
+		// accepted list while that example survives left the block claiming the API takes
+		// only left and right, with this guard green.
 		for _, name := range want {
-			if !strings.Contains(block, name) {
-				t.Errorf("%s button paragraph omits %q, so an accepted button is missing from the reference", rel, name)
+			if !strings.Contains(block, "`"+name+"`") {
+				t.Errorf("%s button paragraph does not list %q as an accepted name, so an accepted button is missing from the reference", rel, name)
 			}
 		}
 		if !strings.Contains(strings.ToLower(block), "omit") {
