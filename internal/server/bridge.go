@@ -99,7 +99,7 @@ func RunBridgeServer(cfg *config.RuntimeConfig, version string) {
 		MaxHeaderBytes:    maxHeaderBytes,
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
+		WriteTimeout:      135 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 

@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"time"
 	"fmt"
 	"net/http"
 	"os"
@@ -80,6 +81,12 @@ func landedURL(result map[string]any) string {
 func Navigate(client *http.Client, base, token string, url string, cmd *cobra.Command) string {
 	req := buildNavigateRequest(url, cmd)
 
+	// A per-request timeout can exceed the shared client budget; mirror the
+	// longClient pattern used by scrape/audit so the HTTP client outlives it.
+	if v, err := cmd.Flags().GetFloat64("timeout"); err == nil && v > 0 {
+		client = &http.Client{Transport: client.Transport, Timeout: time.Duration((v + 15) * float64(time.Second))}
+	}
+
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	if jsonOutput {
 		result, usedFallback := postNavigate(client, base, token, req, true)
@@ -147,6 +154,9 @@ func buildNavigateRequest(url string, cmd *cobra.Command) navigateRequest {
 	newTab, _ := cmd.Flags().GetBool("new-tab")
 	if newTab {
 		body["newTab"] = true
+	}
+	if v, err := cmd.Flags().GetFloat64("timeout"); err == nil && v > 0 {
+		body["timeout"] = v
 	}
 	if v, _ := cmd.Flags().GetBool("block-images"); v {
 		body["blockImages"] = true
