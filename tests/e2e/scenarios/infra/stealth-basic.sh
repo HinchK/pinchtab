@@ -443,15 +443,24 @@ pt_post /navigate "{\"url\":\"${FIXTURES_URL}/index.html\"}"
 assert_ok "navigate"
 VERSION_TAB_ID=$(get_tab_id)
 
-pt_post "/tabs/${VERSION_TAB_ID}/evaluate" '{"expression":"(function(){var m=navigator.userAgent.match(/Chrome\\/(\\d+)/);var b=(navigator.userAgentData&&navigator.userAgentData.brands||[]).filter(function(x){return x.brand===\"Google Chrome\"||x.brand===\"Chromium\"}).map(function(x){return x.version});return JSON.stringify({ua:m?m[1]:\"\",brands:b})})()"}'
+pt_post "/tabs/${VERSION_TAB_ID}/evaluate" '{"expression":"(function(){var m=navigator.userAgent.match(/Chrome\\/(\\d+)/);var d=navigator.userAgentData;var b=(d&&d.brands||[]).filter(function(x){return x.brand===\"Google Chrome\"||x.brand===\"Chromium\"}).map(function(x){return x.version});return JSON.stringify({ua:m?m[1]:\"\",hasUAData:!!d,brands:b})})()"}'
 assert_ok "read advertised version surfaces"
 VERSION_SURFACES=$(echo "$RESULT" | jq -r '.result // "{}"')
 UA_MAJOR=$(echo "$VERSION_SURFACES" | jq -r '.ua // ""')
+HAS_UADATA=$(echo "$VERSION_SURFACES" | jq -r '.hasUAData // false')
 BRAND_MAJORS=$(echo "$VERSION_SURFACES" | jq -r '(.brands // []) | unique | join(",")')
 
 if [ -z "$UA_MAJOR" ]; then
   echo -e "  ${RED}✗${NC} could not read a Chrome major from navigator.userAgent"
   ((ASSERTIONS_FAILED++)) || true
+elif [ "$HAS_UADATA" != "true" ]; then
+  # navigator.userAgentData is exposed only in a secure context; the e2e fixtures
+  # are served over plain http, so the brands surface does not exist here and
+  # cannot be compared. Report unrun rather than a false disagreement — the same
+  # rule the binary-probe check below uses when its ground truth is missing. The
+  # userAgent/Sec-CH-UA cross-surface consistency is pinned in the unit test
+  # TestProbedVersionReachesPersonaAndSecCHUA.
+  echo -e "  ${YELLOW}!${NC} navigator.userAgentData is unavailable over http (insecure context), so the userAgent/brands cross-surface check did NOT run"
 elif [ "$BRAND_MAJORS" = "$UA_MAJOR" ]; then
   echo -e "  ${GREEN}✓${NC} userAgent and userAgentData.brands both report major ${UA_MAJOR}"
   ((ASSERTIONS_PASSED++)) || true
