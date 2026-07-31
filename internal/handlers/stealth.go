@@ -135,8 +135,8 @@ type fingerprint struct {
 func (h *Handlers) fingerprintMatrix() map[string]map[string]fingerprint {
 	// Match the launch-pinned UA: real Chrome (UA reduction, v100+) freezes
 	// navigator.userAgent to <major>.0.0.0. Using h.Config.BrowserVersion
-	// verbatim here would emit Chrome/144.0.7559.133 while the launch path
-	// pins Chrome/144.0.0.0 — a page/post-rotate version drift.
+	// verbatim here would emit the full build where the launch path pins the
+	// reduced form — a page/post-rotate version drift.
 	reducedBrowserVersion := stealth.ReducedBrowserVersion(h.Config.BrowserVersion)
 
 	// The Chrome UA strings come from stealth.ChromeUserAgent, the same template the
