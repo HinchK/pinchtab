@@ -223,7 +223,34 @@ func getSessionsField(s *SessionsFileConfig, field string) (string, error) {
 	if strings.HasPrefix(field, "dashboard.") {
 		return getDashboardSessionField(&s.Dashboard, strings.TrimPrefix(field, "dashboard."))
 	}
+	if strings.HasPrefix(field, "agent.") {
+		return getAgentSessionField(&s.Agent, strings.TrimPrefix(field, "agent."))
+	}
 	return "", fmt.Errorf("unknown field sessions.%s", field)
+}
+
+// getAgentSessionField addresses the switch behind the whole agent-session flow. It was
+// unreachable here while the schema declared it and the loader honoured it, so the only
+// way to turn agent sessions on was to hand-edit JSON — and the editor answered "unknown
+// field", which claims the key is wrong rather than that it is not settable here.
+//
+// The cases mirror AgentSessionFileConfig's declared fields, and
+// TestTheSessionsEditorAddressesEveryDeclaredField walks that struct rather than this
+// list: a hand-listed switch is how a field goes missing from a section that otherwise
+// looks complete.
+func getAgentSessionField(s *AgentSessionFileConfig, field string) (string, error) {
+	switch field {
+	case "enabled":
+		return formatBoolPtr(s.Enabled), nil
+	case "mode":
+		return s.Mode, nil
+	case "idleTimeoutSec":
+		return formatIntPtr(s.IdleTimeoutSec), nil
+	case "maxLifetimeSec":
+		return formatIntPtr(s.MaxLifetimeSec), nil
+	default:
+		return "", fmt.Errorf("unknown field sessions.agent.%s", field)
+	}
 }
 
 func getDashboardSessionField(s *DashboardSessionFileConfig, field string) (string, error) {

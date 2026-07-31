@@ -68,6 +68,15 @@ var censusCandidates = []string{"census-value", "17", "false", "true", "/tmp/cen
 // behaviour: a key `config set` accepts and writes to the file, and that the value in
 // effect never reflects, changes nothing and says so nowhere. Adding such a key fails here
 // until the value arrives or the product refuses it with a reason.
+//
+// ITS SCOPE IS THE ADDRESSABLE SET, which is narrower than the declared one. It walks the
+// keys `config set` can address, so a section the editor cannot address at all is invisible
+// to it — no candidate is ever tried, and nothing reds. sessions.agent was exactly that: the
+// schema declared it, the loader honoured it, `config patch` accepted and discarded it, and
+// this census could not see any of that because `config set sessions.agent.enabled` answered
+// "unknown field". The class of defect this cannot detect is therefore an UNADDRESSABLE key,
+// and the guard for that one is TestTheWireTwinCarriesEveryDeclaredField, which walks the
+// declared types instead. The two are complements; neither subsumes the other.
 func TestEverySettableConfigKeyReachesTheRuntime(t *testing.T) {
 	paths := addressableConfigPaths(t)
 	if len(paths) < 100 {

@@ -309,6 +309,12 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 				PersistElevationAcrossRestart: fc.Sessions.Dashboard.PersistElevationAcrossRestart,
 				RequireElevation:              fc.Sessions.Dashboard.RequireElevation,
 			},
+			Agent: agentSessionConfigJSON{
+				Enabled:        fc.Sessions.Agent.Enabled,
+				Mode:           fc.Sessions.Agent.Mode,
+				IdleTimeoutSec: fc.Sessions.Agent.IdleTimeoutSec,
+				MaxLifetimeSec: fc.Sessions.Agent.MaxLifetimeSec,
+			},
 		},
 		AutoSolver: autoSolverFileConfigJSON{
 			Enabled:           fc.AutoSolver.Enabled,
@@ -414,6 +420,9 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 	dashboardSessionElevationWindowSec := int(cfg.Sessions.Dashboard.ElevationWindow / time.Second)
 	dashboardSessionPersistElevationAcrossRestart := cfg.Sessions.Dashboard.PersistElevationAcrossRestart
 	dashboardSessionRequireElevation := cfg.Sessions.Dashboard.RequireElevation
+	agentSessionEnabled := cfg.Sessions.Agent.Enabled
+	agentSessionIdleSec := int(cfg.Sessions.Agent.IdleTimeout / time.Second)
+	agentSessionMaxLifetimeSec := int(cfg.Sessions.Agent.MaxLifetime / time.Second)
 	autoSolverEnabled := cfg.AutoSolver.Enabled
 	autoSolverAutoTrigger := cfg.AutoSolver.AutoTrigger
 	autoSolverTriggerOnNavigate := cfg.AutoSolver.TriggerOnNavigate
@@ -576,6 +585,12 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 				ElevationWindowSec:            &dashboardSessionElevationWindowSec,
 				PersistElevationAcrossRestart: &dashboardSessionPersistElevationAcrossRestart,
 				RequireElevation:              &dashboardSessionRequireElevation,
+			},
+			Agent: AgentSessionFileConfig{
+				Enabled:        &agentSessionEnabled,
+				Mode:           cfg.Sessions.Agent.Mode,
+				IdleTimeoutSec: &agentSessionIdleSec,
+				MaxLifetimeSec: &agentSessionMaxLifetimeSec,
 			},
 		},
 		AutoSolver: AutoSolverFileConfig{

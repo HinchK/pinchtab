@@ -163,11 +163,6 @@ var unreachableConfigLeaves = map[string]string{
 	"server.engine": "removed setting, parsed only so an old config gets a validation error; making it settable would offer an operator a value nothing honours",
 
 	"instanceDefaults.headless": "superseded by instanceDefaults.mode, which is the spelling the file writer renders; setting both is a validation error, and a settable headless would be dropped by MarshalJSON and read as accepted-then-discarded",
-
-	"sessions.agent.enabled":        "owned by the agent-session editor card, which also has to teach MarshalJSON the agent block — the editor half alone would report success and write nothing",
-	"sessions.agent.mode":           "owned by the agent-session editor card (see sessions.agent.enabled)",
-	"sessions.agent.idleTimeoutSec": "owned by the agent-session editor card (see sessions.agent.enabled)",
-	"sessions.agent.maxLifetimeSec": "owned by the agent-session editor card (see sessions.agent.enabled)",
 }
 
 // unreachableConfigSubtrees are whole blocks excluded by one reason, so the table does not

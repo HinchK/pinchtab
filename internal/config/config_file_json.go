@@ -184,6 +184,19 @@ type activityEventsConfigJSON struct {
 
 type sessionsFileConfigJSON struct {
 	Dashboard dashboardSessionConfigJSON `json:"dashboard"`
+	Agent     agentSessionConfigJSON     `json:"agent,omitempty"`
+}
+
+// agentSessionConfigJSON mirrors AgentSessionFileConfig. Its absence is why
+// `config patch {"sessions":{"agent":{"enabled":true}}}` answered success and wrote
+// nothing: the update path patches the existing file object with the marshalled map, so
+// a key in neither could not appear. TestTheWireTwinCarriesEveryDeclaredField is what
+// keeps this hand-maintained twin from falling behind again.
+type agentSessionConfigJSON struct {
+	Enabled        *bool  `json:"enabled,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	IdleTimeoutSec *int   `json:"idleTimeoutSec,omitempty"`
+	MaxLifetimeSec *int   `json:"maxLifetimeSec,omitempty"`
 }
 
 type dashboardSessionConfigJSON struct {

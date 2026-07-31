@@ -304,7 +304,41 @@ func setSessionsField(s *SessionsFileConfig, field, value string) error {
 	if strings.HasPrefix(field, "dashboard.") {
 		return setDashboardSessionField(&s.Dashboard, strings.TrimPrefix(field, "dashboard."), value)
 	}
+	if strings.HasPrefix(field, "agent.") {
+		return setAgentSessionField(&s.Agent, strings.TrimPrefix(field, "agent."), value)
+	}
 	return fmt.Errorf("unknown field sessions.%s", field)
+}
+
+// setAgentSessionField is the write half of getAgentSessionField. mode is stored as given
+// and left to ValidateFileConfig, which is where every other enumerated string in this
+// editor is checked — a second vocabulary here would be a copy of the validator's.
+func setAgentSessionField(s *AgentSessionFileConfig, field, value string) error {
+	switch field {
+	case "enabled":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("sessions.agent.enabled: %w", err)
+		}
+		s.Enabled = &b
+	case "mode":
+		s.Mode = value
+	case "idleTimeoutSec":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("sessions.agent.idleTimeoutSec must be a number: %w", err)
+		}
+		s.IdleTimeoutSec = &n
+	case "maxLifetimeSec":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("sessions.agent.maxLifetimeSec must be a number: %w", err)
+		}
+		s.MaxLifetimeSec = &n
+	default:
+		return fmt.Errorf("unknown field sessions.agent.%s", field)
+	}
+	return nil
 }
 
 func setDashboardSessionField(s *DashboardSessionFileConfig, field, value string) error {
