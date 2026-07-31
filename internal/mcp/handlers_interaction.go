@@ -285,6 +285,10 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			payload["text"] = value
 		}
 
+		if tok := c.VocabToken(optString(r, "tabId")); tok != "" {
+			payload["vocab"] = tok
+		}
+
 		body, code, err := c.Post(ctx, routedPathWithBody(r, "/action", payload), payload)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
@@ -302,7 +306,7 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 				if tabID := optString(r, "tabId"); tabID != "" {
 					q.Set("tabId", tabID)
 				}
-				snapBody, _, snapErr := c.Get(ctx, "/snapshot", q)
+				snapBody, _, snapErr := c.GetCapturingVocab(ctx, "/snapshot", q, optString(r, "tabId"))
 				if snapErr == nil {
 					return mcp.NewToolResultText(string(body) + "\n" + string(snapBody)), nil
 				}

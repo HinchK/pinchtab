@@ -134,7 +134,7 @@ func handleSnapshot(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 		if v, ok := optBool(r, "noAnimations"); ok && v {
 			q.Set("noAnimations", "true")
 		}
-		body, code, err := c.Get(ctx, "/snapshot", routedQuery(r, q))
+		body, code, err := c.GetCapturingVocab(ctx, "/snapshot", routedQuery(r, q), optString(r, "tabId"))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

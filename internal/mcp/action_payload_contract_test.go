@@ -26,6 +26,7 @@ var consumedElsewhere = map[string]string{
 	"waitNav":      "the handler waits for navigation around the action",
 	"dialogAction": "the handler arms the dialog watcher around the action",
 	"dialogText":   "the handler arms the dialog watcher around the action",
+	"vocab":        "the handler's vocabulary-supersession gate reads it before dispatch; no action reads it",
 }
 
 // A payload key that is a real ActionRequest field but not one the target action READS is
