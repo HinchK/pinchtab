@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/autosolver"
+	"github.com/pinchtab/pinchtab/internal/browserprobe"
 	"github.com/pinchtab/pinchtab/internal/browsers"
 )
 
@@ -224,7 +225,7 @@ func LoadConfig() (*RuntimeConfig, []LoadDiagnostic, error) {
 		ProfilesBaseDir:        "",
 		DefaultProfile:         "default",
 		ProfileQuarantineKeep:  DefaultProfileQuarantineKeep,
-		BrowserVersion:         "144.0.7559.133",
+		BrowserVersion:         browserprobe.FallbackChromeVersion,
 		Timezone:               "",
 		BlockImages:            false,
 		BlockMedia:             false,

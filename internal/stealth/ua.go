@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/shirou/gopsutil/v4/host"
+
+	"github.com/pinchtab/pinchtab/internal/browserprobe"
 )
 
 type BrandVersion struct {
@@ -41,12 +43,12 @@ type BrowserPersona struct {
 // lives in the high-entropy UA Client Hints. Falls back to the default major
 // when chromeVersion is empty so all callers agree on a single value.
 func ReducedBrowserVersion(chromeVersion string) string {
+	if chromeVersion == "" {
+		chromeVersion = browserprobe.FallbackChromeVersion
+	}
 	major := chromeVersion
 	if i := strings.Index(chromeVersion, "."); i > 0 {
 		major = chromeVersion[:i]
-	}
-	if major == "" {
-		major = "144"
 	}
 	return major + ".0.0.0"
 }
@@ -387,5 +389,5 @@ func chromeVersionOrFallback(chromeVersion string) string {
 	if chromeVersion != "" {
 		return chromeVersion
 	}
-	return "144.0.0.0"
+	return ReducedBrowserVersion("")
 }

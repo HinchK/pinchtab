@@ -3,6 +3,8 @@ package config
 import (
 	"strconv"
 	"strings"
+
+	"github.com/pinchtab/pinchtab/internal/browserprobe"
 )
 
 // CurrentConfigVersion is bumped when config schema changes require migration or wizard re-run.
@@ -165,7 +167,7 @@ func DefaultFileConfig() FileConfig {
 			StateDir: userConfigDir(),
 		},
 		Browser: BrowserConfig{
-			BrowserVersion: "144.0.7559.133",
+			BrowserVersion: browserprobe.FallbackChromeVersion,
 			ExtensionPaths: []string{defaultExtensionsDir(userConfigDir())},
 		},
 		Browsers: BrowsersConfig{

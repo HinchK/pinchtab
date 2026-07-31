@@ -7,6 +7,20 @@ import (
 	"time"
 )
 
+// FallbackChromeVersion is the Chrome version advertised when the real one is not
+// known — no browser.version in config and no successful probe of the launched binary.
+//
+// It lives here, beside RunVersion, because this package is the only leaf all three
+// consumers can import: internal/stealth imports internal/config, so config can never
+// read a constant owned by stealth, and internal/handlers reads both. Before it had one
+// owner the same digits were written out in config's file default, config's runtime
+// default and two fallbacks in stealth's UA builder, so a Chrome release meant four
+// edits in lockstep across three packages and nothing failed when they drifted.
+//
+// Bumping it is a stopgap, not the fix: the version a page sees should come from the
+// binary RunVersion probes, and this is what is left when that cannot be answered.
+const FallbackChromeVersion = "144.0.7559.133"
+
 func RunVersion(ctx context.Context, binary string) (string, error) {
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

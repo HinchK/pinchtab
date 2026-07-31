@@ -10,8 +10,8 @@ import (
 )
 
 // BuildUserAgentOverride creates a SetUserAgentOverride action with persona-backed
-// metadata. chromeVersion should be the full version (for example
-// "144.0.7559.133"). If chromeVersion is empty, returns nil.
+// metadata. chromeVersion should be the full four-part build, the shape
+// browserprobe.FallbackChromeVersion has. If chromeVersion is empty, returns nil.
 func BuildUserAgentOverride(userAgent, chromeVersion string) *emulation.SetUserAgentOverrideParams {
 	if chromeVersion == "" {
 		return nil
