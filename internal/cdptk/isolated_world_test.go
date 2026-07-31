@@ -21,6 +21,25 @@ type worldSite struct {
 	value string
 }
 
+// worldNameExemptions are isolated worlds that are deliberately NOT the scope world,
+// keyed by the constant that names them with the reason each cannot participate in the
+// hazard this census guards.
+//
+// The rule the gate stated was "one world per frame". Measured against the tree that is
+// not the rule that holds, and stating it absolutely while an exception stands would be
+// dishonest: the rule is one world per frame AMONG HANDLE-PRODUCING RESOLVERS. The hazard
+// is a Runtime.callFunctionOn given handles from two worlds, so a world whose execution
+// context id never becomes an object handle cannot reach it, whatever frame it is in.
+// TestAnExemptWorldCannotProduceObjectHandles checks that condition rather than trusting
+// this note, because an exemption whose reason is only prose is one that outlives its
+// reason.
+var worldNameExemptions = map[string]struct{ file, why string }{
+	"ScreencastRepaintWorldName": {
+		file: "internal/cdptk/screencast.go",
+		why:  "a repaint-forcing world with its own start/stop lifecycle inside the screencast loop. Its context id is consumed only by runtime.Evaluate().WithContextID, never as a callFunctionOn object handle, so no handle from it can meet a scope-world handle. It is NOT routed through IsolatedContextID on purpose: sharing the scope world would put the repaint loop's injected JS state beside selector resolution's, coupling two lifecycles to remove a hazard it cannot reach",
+	},
+}
+
 // Two isolated world names existed for one rule — a node scope here and a frame
 // scope in the bridge — and nobody noticed the second arrive, which is the whole
 // reason this census exists rather than a comment asking for one world.
@@ -28,6 +47,13 @@ type worldSite struct {
 // The rule is one world name in the whole module, named by a constant rather than
 // spelled inline at the call, so a third cannot be added quietly: an inline
 // literal at a second call site is exactly how the second one appeared.
+//
+// BOTH spellings are counted. The first version of this census read only the raw
+// "Page.createIsolatedWorld" string passed to Target.Execute and a map key "worldName",
+// and was blind to the chromedp BUILDER form — page.CreateIsolatedWorld(f).WithWorldName(n)
+// — which is the spelling the module's other world already used. A guard whose stated
+// purpose is to make the next world impossible to add quietly could not see the one that
+// was already there.
 func TestOnlyOneIsolatedWorldNameExists(t *testing.T) {
 	var creates, names []worldSite
 
@@ -49,35 +75,99 @@ func TestOnlyOneIsolatedWorldNameExists(t *testing.T) {
 				if !ok || key.Kind != token.STRING || strings.Trim(key.Value, `"`) != "worldName" {
 					return true
 				}
-				site := worldSite{file: file.Name, line: fset.Position(n.Pos()).Line}
-				if lit, inline := n.Value.(*ast.BasicLit); inline {
-					site.value = "inline literal " + lit.Value
-				} else if ident, named := n.Value.(*ast.Ident); named {
-					site.value = ident.Name
-				} else {
-					site.value = "a computed expression"
+				names = append(names, worldNameSite(file.Name, fset.Position(n.Pos()).Line, n.Value))
+			case *ast.CallExpr:
+				sel, ok := n.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
 				}
-				names = append(names, site)
+				// page.CreateIsolatedWorld(frame) — the chromedp builder that mints it.
+				if sel.Sel.Name == "CreateIsolatedWorld" {
+					creates = append(creates, worldSite{file: file.Name, line: fset.Position(n.Pos()).Line})
+				}
+				// .WithWorldName(name) — the builder that names it.
+				if sel.Sel.Name == "WithWorldName" && len(n.Args) == 1 {
+					names = append(names, worldNameSite(file.Name, fset.Position(n.Pos()).Line, n.Args[0]))
+				}
 			}
 			return true
 		})
 	}
 
 	if len(creates) == 0 || len(names) == 0 {
-		t.Fatalf("found %d Page.createIsolatedWorld call(s) and %d worldName argument(s) in the whole module; the census has nothing to guard and would pass vacuously — re-point it at whatever mints the isolated world now rather than deleting it", len(creates), len(names))
+		t.Fatalf("found %d isolated-world creation(s) and %d world-name argument(s) in the whole module; the census has nothing to guard and would pass vacuously — re-point it at whatever mints the isolated world now rather than deleting it", len(creates), len(names))
 	}
 
-	const why = "One world per frame is the rule: Page.createIsolatedWorld keys on frame and name, so a second name means two worlds in the same frame, and a handle from one is not usable in a Runtime.callFunctionOn with a handle from the other. Nothing in the code says which world a handle came from, and the failure is silent. Mint every isolated context through cdptk.IsolatedContextID, which takes the frame as a parameter."
+	const why = "One world per frame is the rule among handle-producing resolvers: Page.createIsolatedWorld keys on frame and name, so a second name means two worlds in the same frame, and a handle from one is not usable in a Runtime.callFunctionOn with a handle from the other. Nothing in the code says which world a handle came from, and the failure is silent. Mint every isolated context through cdptk.IsolatedContextID, which takes the frame as a parameter — or, if the new world genuinely never yields an object handle, add it to worldNameExemptions with that reason."
 
-	if len(creates) != 1 {
-		t.Errorf("Page.createIsolatedWorld is called at %d sites (%v), want exactly one. %s", len(creates), describeWorldSites(creates), why)
+	exempt := map[string]bool{}
+	for _, site := range names {
+		if _, ok := worldNameExemptions[site.value]; ok {
+			exempt[site.value] = true
+		}
 	}
-	if len(names) != 1 {
-		t.Errorf("worldName is passed at %d sites (%v), want exactly one. %s", len(names), describeWorldSites(names), why)
+
+	if got := len(creates) - len(exempt); got != 1 {
+		t.Errorf("isolated worlds are created at %d site(s) (%v) with %d exempt, want exactly one unexempted. %s", len(creates), describeWorldSites(creates), len(exempt), why)
 	}
 	for _, site := range names {
+		if _, ok := worldNameExemptions[site.value]; ok {
+			continue
+		}
 		if site.value != "isolatedWorldName" {
-			t.Errorf("%s:%d passes worldName as %s rather than the isolatedWorldName constant; a name spelled at the call site is how the second world arrived. %s", site.file, site.line, site.value, why)
+			t.Errorf("%s:%d names an isolated world %s rather than the isolatedWorldName constant; a name spelled at the call site is how the second world arrived. %s", site.file, site.line, site.value, why)
+		}
+	}
+
+	// Both directions on the exemption table: a stale entry naming a world that no longer
+	// exists must fail too, or the reason outlives the thing it excused.
+	for name, exemption := range worldNameExemptions {
+		if !exempt[name] {
+			t.Errorf("%s is exempted (%s) but no longer names an isolated world anywhere; drop the entry rather than leaving a reason with nothing to excuse", name, exemption.file)
+		}
+	}
+}
+
+func worldNameSite(file string, line int, value ast.Expr) worldSite {
+	site := worldSite{file: file, line: line}
+	switch v := value.(type) {
+	case *ast.BasicLit:
+		site.value = "inline literal " + v.Value
+	case *ast.Ident:
+		site.value = v.Name
+	case *ast.SelectorExpr:
+		site.value = v.Sel.Name
+	default:
+		site.value = "a computed expression"
+	}
+	return site
+}
+
+// The condition every exemption rests on, checked rather than promised: an exempt world
+// is excused because its context id never becomes a callFunctionOn object handle, so the
+// file that mints it must not produce one. If a repaint loop ever starts resolving nodes,
+// the exemption's reason stops being true and this reds before the silent cross-world
+// call can be written.
+func TestAnExemptWorldCannotProduceObjectHandles(t *testing.T) {
+	if len(worldNameExemptions) == 0 {
+		t.Skip("no exemptions to check")
+	}
+
+	for name, exemption := range worldNameExemptions {
+		found := false
+		for _, file := range srccensus.Tree(t, filepath.Join("..", ".."), moduleGoFileFloor) {
+			if filepath.ToSlash(file.Name) != exemption.file {
+				continue
+			}
+			found = true
+			for _, banned := range []string{"CallFunctionOn", "callFunctionOn"} {
+				if strings.Contains(file.Text, banned) {
+					t.Errorf("%s mints the exempt world %s and also calls %s; the exemption's whole reason is that its context id never becomes an object handle, so either stop producing handles there or route it through cdptk.IsolatedContextID", exemption.file, name, banned)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("%s is exempted at %s but that file is not in the module walk; fix the path or drop the exemption, since an entry pointing nowhere checks nothing", name, exemption.file)
 		}
 	}
 }

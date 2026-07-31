@@ -8,12 +8,20 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
-// isolatedWorldName is the ONE name every PinchTab isolated world is created
-// under. Page.createIsolatedWorld keys on frame and name, so repeat calls for a
-// frame return the same context rather than minting one per resolution — and one
-// name means a frame has ONE PinchTab world instead of two, which makes handles
-// resolved there interchangeable in a single Runtime.callFunctionOn by
-// construction rather than by a rule nobody can check.
+// isolatedWorldName is the ONE name every PinchTab isolated world that yields an
+// object handle is created under. Page.createIsolatedWorld keys on frame and
+// name, so repeat calls for a frame return the same context rather than minting
+// one per resolution — and one name means a frame has ONE PinchTab world instead
+// of two, which makes handles resolved there interchangeable in a single
+// Runtime.callFunctionOn by construction rather than by a rule nobody can check.
+//
+// "Every isolated world" would be the stronger claim and it is not the true one:
+// the screencast repaint loop mints its own world in the top frame. It is exempt
+// because the hazard is a callFunctionOn given handles from two worlds, and its
+// context id is only ever an argument to runtime.Evaluate — it never becomes an
+// object handle, so it cannot reach the hazard whatever frame it sits in. The
+// exemption and the condition it rests on are both checked, in
+// worldNameExemptions and TestAnExemptWorldCannotProduceObjectHandles.
 //
 // There were two names for this one rule: a node scope here and a frame scope in
 // the bridge. Neither frame policy was wrong. A bare backend node id does not
