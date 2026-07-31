@@ -32,6 +32,19 @@ type Options struct {
 	OnResponse func(origReq *http.Request, body []byte)
 }
 
+// strippedProxyRequestHeaders never reach the instance by being COPIED. Every member is
+// dropped from the blind copy; x-request-id is then re-added deliberately by
+// httpx.ForwardRequestID, which is what makes one proxied request traceable in both the
+// outer and the instance log instead of only the outer one.
+//
+// It stays on this list rather than being deleted from it because the two are different
+// permissions: pass-through would forward whatever arrived under that name from anywhere,
+// while the re-add forwards the one value the outer chain resolved for this request.
+// RequestIDMiddleware stamps that value onto the request, so what is forwarded is the id
+// the outer server logs — including when the caller supplied it, which that middleware
+// honours by design. The rest of this list protects genuinely different things and is
+// untouched: cookie carries the session secret, and the forwarding trio plus x-real-ip
+// carry client network identity the instance has no business learning.
 var strippedProxyRequestHeaders = map[string]struct{}{
 	"cookie":            {},
 	"forwarded":         {},
@@ -77,6 +90,7 @@ func Forward(w http.ResponseWriter, r *http.Request, targetURL *url.URL, opts Op
 		return
 	}
 	copyRequestHeaders(outReq.Header, proxyReq.Header)
+	httpx.ForwardRequestID(outReq.Header, proxyReq.Header)
 
 	resp, err := client.Do(outReq)
 	if err != nil {

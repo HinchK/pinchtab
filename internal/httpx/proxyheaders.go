@@ -60,6 +60,27 @@ func containsFold(names []string, key string) bool {
 	return false
 }
 
+// ForwardRequestID is the one mechanism that decides the request id an instance is told,
+// and it is the request-side companion to CopyProxiedResponseHeaders below.
+//
+// A hop that tells the instance nothing is the reason a phantom id existed: the instance
+// found no inbound id, minted its own, and returned it on a response that already carried
+// the outer chain's, so a caller could be handed a string that appears in no log on disk.
+// Forwarding the outer chain's resolved value instead makes ONE proxied request findable
+// by ONE id in both logs.
+//
+// It is deliberately narrow — this header and no other. A hop that fixed traceability by
+// widening into a wholesale request copy would carry the caller's cookie and network
+// identity to the instance along with it, which is what the per-hop strip lists exist to
+// prevent. Callers that strip this header from their blind copy call this AFTER the strip:
+// the two are different permissions, since a copy forwards whatever arrived under that
+// name while this forwards the one value the outer chain resolved for this request.
+func ForwardRequestID(dst, src http.Header) {
+	if rid := strings.TrimSpace(src.Get(HeaderRequestID)); rid != "" {
+		dst.Set(HeaderRequestID, rid)
+	}
+}
+
 // CopyProxiedResponseHeaders is the one response-header copy every proxy hop uses. The
 // outer middleware chain has already set its own X-Request-Id and security headers on this
 // response, so appending the upstream copies makes them multi-valued: a caller then sees

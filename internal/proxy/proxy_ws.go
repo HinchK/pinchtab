@@ -104,6 +104,11 @@ func filterProxyWSHeaders(headers http.Header) http.Header {
 		copied := append([]string(nil), values...)
 		filtered[textproto.CanonicalMIMEHeaderKey(name)] = copied
 	}
+	// Deliberately after the allow-list rather than inside it: a WebSocket hop is traced
+	// like any other, and the id forwarded is the outer chain's resolved value rather than
+	// whatever arrived under that name. Same owner as the HTTP hop, so the two cannot
+	// disagree about what an instance is told.
+	httpx.ForwardRequestID(filtered, headers)
 	return filtered
 }
 

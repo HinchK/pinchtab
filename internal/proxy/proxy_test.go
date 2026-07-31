@@ -127,10 +127,21 @@ func TestHTTP_StripsSensitiveRequestHeaders(t *testing.T) {
 	if resp["authorization"] != "Bearer user-token" {
 		t.Fatalf("authorization = %v, want preserved bearer token", resp["authorization"])
 	}
-	for _, field := range []string{"cookie", "xForwardedFor", "xForwardedHost", "xForwardedProto", "forwarded", "xRealIP", "xRequestID"} {
+	for _, field := range []string{"cookie", "xForwardedFor", "xForwardedHost", "xForwardedProto", "forwarded", "xRealIP"} {
 		if got := resp[field]; got != "" {
 			t.Fatalf("%s should have been stripped, got %v", field, got)
 		}
+	}
+
+	// X-Request-Id is the deliberate exception to this strip list, and it is asserted in
+	// the same test as the members that stay stripped so the two cannot drift apart.
+	// Forwarding it is what makes one proxied request findable in the instance log as well
+	// as the outer one; without it the instance mints an id of its own that appears in no
+	// log a caller could be pointed at. The value is client-influenced here on purpose —
+	// RequestIDMiddleware honours an inbound id by design and the outer server already
+	// logs it, so the instance learns nothing the outer log does not already contain.
+	if got := resp["xRequestID"]; got != "req-123" {
+		t.Fatalf("xRequestID = %v, want the outer id req-123 forwarded so both logs carry it", got)
 	}
 }
 

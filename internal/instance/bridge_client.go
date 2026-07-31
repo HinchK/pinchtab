@@ -169,6 +169,11 @@ func (bc *BridgeClient) ProxyWithTabID(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	proxyReq.Header.Set("Content-Type", "application/json")
+	// This hop re-encodes the body and so builds a fresh request rather than copying the
+	// caller's, which means it tells the instance nothing unless asked to. The request id
+	// is forwarded explicitly — and only the request id, so re-encoding does not become a
+	// back door around the headers the copying hops deliberately strip.
+	httpx.ForwardRequestID(proxyReq.Header, r.Header)
 
 	resp, err := bc.client.Do(proxyReq)
 	if err != nil {
