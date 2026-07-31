@@ -457,9 +457,10 @@ func (h *Handlers) refreshRefCache(ctx context.Context, tabID string) {
 	flat, refs := bridge.BuildSnapshot(nodes, bridge.FilterInteractive, -1)
 	_ = bridge.EnrichA11yNodesWithDOMMetadata(ctx, flat)
 	h.Bridge.SetRefCache(tabID, &bridge.RefCache{
-		Refs:    refs,
-		Targets: bridge.RefTargetsFromNodes(flat),
-		Nodes:   flat,
+		Refs:     refs,
+		Targets:  bridge.RefTargetsFromNodes(flat),
+		Nodes:    flat,
+		DomEpoch: bridge.MintVocabToken(),
 	})
 }
 

@@ -74,6 +74,10 @@ func (c *RefCache) Lookup(ref string) (RefTarget, bool) {
 	return RefTarget{}, false
 }
 
+func MintVocabToken() string {
+	return mintDomEpoch()
+}
+
 func RefTargetsFromNodes(nodes []A11yNode) map[string]RefTarget {
 	targets := make(map[string]RefTarget, len(nodes))
 	for _, node := range nodes {

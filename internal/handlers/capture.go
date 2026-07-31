@@ -172,14 +172,13 @@ func (h *Handlers) HandleCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist the snapshot half to the ref cache with the minted epoch so that
-	// follow-up `/click eN` etc. can later opt into an epoch handshake.
 	h.Bridge.SetRefCache(resolvedTabID, &bridge.RefCache{
 		Refs:     result.Refs,
 		Targets:  bridge.RefTargetsFromNodes(result.Nodes),
 		Nodes:    result.Nodes,
 		DomEpoch: result.DomEpoch,
 	})
+	w.Header().Set(vocabHeader, result.DomEpoch)
 
 	imageInfo := map[string]any{
 		"format":           result.ImageFormat,

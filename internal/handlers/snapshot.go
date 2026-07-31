@@ -220,11 +220,14 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	vocab := bridge.MintVocabToken()
 	h.Bridge.SetRefCache(resolvedTabID, &bridge.RefCache{
-		Refs:    refs,
-		Targets: bridge.RefTargetsFromNodes(flat),
-		Nodes:   flat,
+		Refs:     refs,
+		Targets:  bridge.RefTargetsFromNodes(flat),
+		Nodes:    flat,
+		DomEpoch: vocab,
 	})
+	w.Header().Set(vocabHeader, vocab)
 
 	h.recordResolvedURL(r, url)
 
@@ -444,11 +447,12 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write(yamlContent)
 	default:
 		resp := scopeInfo.attach(map[string]any{
-			"url":   url,
-			"title": title,
-			"route": snapChromeRoute,
-			"nodes": flat,
-			"count": len(flat),
+			"url":             url,
+			"title":           title,
+			"route":           snapChromeRoute,
+			"nodes":           flat,
+			"count":           len(flat),
+			"vocabularyToken": vocab,
 		})
 		if truncated {
 			resp["truncated"] = true

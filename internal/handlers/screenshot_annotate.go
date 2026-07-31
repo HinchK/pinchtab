@@ -61,11 +61,11 @@ func (h *Handlers) collectScreenshotAnnotations(
 		flat, refs = bridge.BuildSnapshot(rawNodes, "", -1)
 	}
 
-	// Record refs so a subsequent click/fill on `e5` resolves the same node.
 	h.Bridge.SetRefCache(tabID, &bridge.RefCache{
-		Refs:    refs,
-		Targets: bridge.RefTargetsFromNodes(flat),
-		Nodes:   flat,
+		Refs:     refs,
+		Targets:  bridge.RefTargetsFromNodes(flat),
+		Nodes:    flat,
+		DomEpoch: bridge.MintVocabToken(),
 	})
 
 	items = make([]cdptk.AnnotationItem, 0, len(flat))

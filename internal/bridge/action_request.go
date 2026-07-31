@@ -151,6 +151,8 @@ type ActionRequest struct {
 	// browsers. Recorded on route metadata but does not change actual
 	// routing yet.
 	Browser string `json:"browser,omitempty"`
+
+	Vocab string `json:"vocab,omitempty"`
 }
 
 type actionRequestAlias ActionRequest

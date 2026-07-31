@@ -431,6 +431,7 @@ func decodeActionRequest(w http.ResponseWriter, r *http.Request) (bridge.ActionR
 		d.Bool("hasDelta", &hasDeltaParam)
 		req.HasDelta = req.HasDelta || hasDeltaParam
 		req.Browser = q.Get("browser")
+		req.Vocab = q.Get("vocab")
 		if err := d.Err(); err != nil {
 			httpx.Error(w, 400, err)
 			return bridge.ActionRequest{}, false
@@ -444,6 +445,26 @@ func decodeActionRequest(w http.ResponseWriter, r *http.Request) (bridge.ActionR
 	req.Kind = bridge.CanonicalActionKind(req.Kind)
 	req.DialogAction = strings.ToLower(strings.TrimSpace(req.DialogAction))
 	return req, true
+}
+
+const vocabHeader = "X-PinchTab-Vocab"
+
+const vocabSupersededCode = "vocab_superseded"
+
+func actionTargetsRef(req bridge.ActionRequest) bool {
+	if req.NodeID != 0 {
+		return false
+	}
+	if strings.TrimSpace(req.Ref) != "" {
+		return true
+	}
+	return selector.Parse(req.Selector).Kind == selector.KindRef
+}
+
+func writeVocabSuperseded(w http.ResponseWriter, tabID string) {
+	httpx.ErrorCode(w, http.StatusConflict, vocabSupersededCode,
+		"ref vocabulary superseded: a newer snapshot renumbered this tab's refs, so a ref from the earlier snapshot no longer denotes the node it named — re-snapshot and use the refs from the latest response",
+		true, map[string]any{"tabId": tabID})
 }
 
 func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
@@ -532,6 +553,16 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	h.recordResolvedTab(r, resolvedTabID)
 	w.Header().Set(activity.HeaderPTTabID, resolvedTabID)
+
+	if req.Vocab == "" {
+		req.Vocab = r.Header.Get(vocabHeader)
+	}
+	if req.Vocab != "" && actionTargetsRef(req) {
+		if cache := h.Bridge.GetRefCache(resolvedTabID); cache != nil && cache.DomEpoch != "" && cache.DomEpoch != req.Vocab {
+			writeVocabSuperseded(w, resolvedTabID)
+			return
+		}
+	}
 
 	actionTimeout := effectiveCfg.ActionTimeout
 	if r.Method == http.MethodGet {
