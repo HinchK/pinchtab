@@ -13,6 +13,9 @@ import (
 )
 
 const cloakMinVersion = "120.0.0"
+const cloakIdentityPlatform = "windows"
+
+var launchAndEvaluate = chrome.LaunchAndEvaluate
 
 // DoctorChecks overrides the inherited Chrome DoctorChecks method.
 func (Browser) DoctorChecks(_ browsers.TargetConfig) []browsers.DoctorCheck {
@@ -121,6 +124,27 @@ func cloakPresenceCheck(ctx context.Context, cfg interface{}) browsers.DoctorChe
 			Detail: fmt.Sprintf("%s: could not parse version from %q", found, line),
 		}
 	}
+	var platform string
+	identityArgs := []string{"--fingerprint-platform=" + cloakIdentityPlatform}
+	if env, ok := cfg.(*browsers.DoctorEnv); ok && env != nil && env.NoSandbox {
+		identityArgs = append(identityArgs, "--no-sandbox")
+	}
+	_, err = launchAndEvaluate(ctx, found, identityArgs, 10*time.Second, "navigator.platform", &platform)
+	if err != nil || platform != "Win32" {
+		reason := fmt.Sprintf("fingerprint platform probe returned %q, want Win32", platform)
+		if err != nil {
+			reason = err.Error()
+		}
+		prefix := fmt.Sprintf("binary %q", found)
+		if override != "" {
+			prefix = fmt.Sprintf("configured browser.binary %q", found)
+		}
+		return browsers.DoctorCheckResult{
+			Status: browsers.DoctorWarn,
+			Detail: fmt.Sprintf("%s reports version %s but did not exhibit CloakBrowser fingerprint behavior: %s", prefix, token, reason),
+			Err:    err,
+		}
+	}
 	if browserprobe.CompareSemver(token, cloakMinVersion) < 0 {
 		return browsers.DoctorCheckResult{
 			Status: browsers.DoctorWarn,
@@ -133,13 +157,9 @@ func cloakPresenceCheck(ctx context.Context, cfg interface{}) browsers.DoctorChe
 			Detail: fmt.Sprintf("CloakBrowser found at %s -> %s, but browser.binary is unset", found, token),
 		}
 	}
-	// A configured browser.binary is trusted on version alone: CloakBrowser's
-	// forked Chromium reports "Chromium <ver>" from --version, indistinguishable
-	// from vanilla Chromium, so there is no product string to gate identity on.
-	// Say so plainly rather than implying the binary was verified to be CloakBrowser.
 	return browsers.DoctorCheckResult{
 		Status: browsers.DoctorPass,
-		Detail: fmt.Sprintf("%s -> %s (>= %s); trusted from browser.binary without CloakBrowser identity check", found, token, cloakMinVersion),
+		Detail: fmt.Sprintf("%s -> %s (>= %s)", found, token, cloakMinVersion),
 	}
 }
 
@@ -152,7 +172,11 @@ func cdpReachableCheck(ctx context.Context, cfg interface{}) browsers.DoctorChec
 	if bin == "" {
 		return browsers.DoctorCheckResult{Status: browsers.DoctorSkip, Detail: "skipped — no browser.binary set (see cloakbrowser_present)"}
 	}
-	res, err := chrome.LaunchAndProbe(ctx, bin, nil, 10*time.Second)
+	var args []string
+	if env.NoSandbox {
+		args = append(args, "--no-sandbox")
+	}
+	res, err := chrome.LaunchAndProbe(ctx, bin, args, 10*time.Second)
 	if err != nil {
 		return browsers.DoctorCheckResult{Status: browsers.DoctorFail, Detail: err.Error(), Err: err}
 	}
@@ -191,6 +215,9 @@ func fingerprintFlagsCheck(ctx context.Context, cfg interface{}) browsers.Doctor
 	}
 	if len(fpFlags) == 0 {
 		return browsers.DoctorCheckResult{Status: browsers.DoctorSkip, Detail: "no cloak fingerprint flags configured"}
+	}
+	if env.NoSandbox {
+		fpFlags = append(fpFlags, "--no-sandbox")
 	}
 	res, err := chrome.LaunchAndProbe(ctx, bin, fpFlags, 10*time.Second)
 	if err != nil {

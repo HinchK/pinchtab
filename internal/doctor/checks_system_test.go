@@ -253,15 +253,15 @@ func TestCloakBrowserPresent_FailWhenAbsentAndConfigured(t *testing.T) {
 	}
 }
 
-func TestCloakBrowserPresent_WarnsWhenDiscoveredButUnconfigured(t *testing.T) {
+func TestCloakBrowserPresent_DoesNotTrustDiscoveredNameAlone(t *testing.T) {
 	withStubBinary(t, "cloakbrowser", "CloakBrowser 130.0.6723.91")
 	t.Setenv("HOME", t.TempDir())
 	r := runCloakPresent(t)
 	if r.Status != StatusWarn {
 		t.Fatalf("status = %v want warn; detail=%q err=%v", r.Status, r.Detail, r.Err)
 	}
-	if !strings.Contains(r.Detail, "browser.binary is unset") {
-		t.Fatalf("detail = %q, want browser.binary setup guidance", r.Detail)
+	if !strings.Contains(r.Detail, "did not exhibit CloakBrowser fingerprint behavior") {
+		t.Fatalf("detail = %q, want behavioral identity warning", r.Detail)
 	}
 }
 

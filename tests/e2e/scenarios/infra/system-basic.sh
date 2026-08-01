@@ -142,77 +142,6 @@ end_test
 ORCH_URL=$E2E_SERVER
 ORIG_URL=$E2E_SERVER
 
-assert_instance_logs_poll() {
-  local inst_id="$1"
-  local needle="$2"
-  local desc="$3"
-  local attempts="${4:-15}"
-  local delay="${5:-1}"
-
-  local i
-  for i in $(seq 1 "$attempts"); do
-    E2E_SERVER=$ORCH_URL pt_get "/instances/${inst_id}/logs" >/dev/null
-    # Avoid a false negative under `set -o pipefail`: `grep -q` exits early
-    # after a match, which can SIGPIPE the writer side of a pipeline.
-    if [[ "$HTTP_STATUS" =~ ^2 ]] && grep -Fq -- "$needle" <<<"$RESULT"; then
-      echo -e "  ${GREEN}✓${NC} $desc"
-      ((ASSERTIONS_PASSED++)) || true
-      return 0
-    fi
-    sleep "$delay"
-  done
-
-  echo -e "  ${RED}✗${NC} $desc (missing: $needle)"
-  ((ASSERTIONS_FAILED++)) || true
-  return 1
-}
-
-assert_instance_logs_poll_all() {
-  local inst_id="$1"
-  local desc="$2"
-  shift 2
-
-  local attempts=15
-  local delay=1
-  local i needle ok
-  for i in $(seq 1 "$attempts"); do
-    E2E_SERVER=$ORCH_URL pt_get "/instances/${inst_id}/logs" >/dev/null
-    if [[ "$HTTP_STATUS" =~ ^2 ]]; then
-      ok=1
-      for needle in "$@"; do
-        if ! grep -Fq -- "$needle" <<<"$RESULT"; then
-          ok=0
-          break
-        fi
-      done
-      if [ "$ok" -eq 1 ]; then
-        echo -e "  ${GREEN}✓${NC} $desc"
-        ((ASSERTIONS_PASSED++)) || true
-        return 0
-      fi
-    fi
-    sleep "$delay"
-  done
-
-  echo -e "  ${RED}✗${NC} $desc (missing fragments: $*)"
-  ((ASSERTIONS_FAILED++)) || true
-  return 1
-}
-
-print_extension_hints() {
-  local inst_id="${1:-}"
-  echo ""
-  echo "  ${YELLOW}${BOLD}🔍 Troubleshooting Extension Failure:${NC}"
-  echo "  - Check if /extensions/test-extension exists and is readable in the pinchtab container."
-  echo "  - Check Manifest V3 host_permissions matches: [\"*://*/*\"]"
-  if [ -n "$inst_id" ]; then
-    E2E_SERVER=$ORCH_URL pt_get "/instances/${inst_id}/logs" >/dev/null
-    echo "  - Recent instance log tail:"
-    printf '%s\n' "$RESULT" | tail -n 12 | sed 's/^/    /'
-  fi
-  echo ""
-}
-
 # --- T1: Default instance loads configured extension path ---
 start_test "Extension config: default instance loads configured extension path"
 
@@ -229,29 +158,10 @@ fi
 
 pt_post /navigate "{\"url\":\"${FIXTURES_URL}/index.html\"}"
 assert_ok "navigate"
-
-DEFAULT_LOG_PASS=1
-if [ -n "$DEFAULT_INST_ID" ] && [ "$DEFAULT_INST_ID" != "null" ]; then
-  assert_instance_logs_poll_all \
-    "$DEFAULT_INST_ID" \
-    "default instance logs configured extension path" \
-    "loading extensions" \
-    "paths=/extensions/test-extension"
-  DEFAULT_LOG_PASS=$?
-
-  assert_instance_logs_poll \
-    "$DEFAULT_INST_ID" \
-    "browser initialized successfully" \
-    "default instance browser initialized"
-fi
-
-if [ $DEFAULT_LOG_PASS -ne 0 ]; then
-  print_extension_hints "$DEFAULT_INST_ID"
-  # Debug: dump full instance logs for analysis
-  echo "  ${YELLOW}📋 Full instance logs:${NC}"
-  E2E_SERVER=$ORCH_URL pt_get "/instances/${DEFAULT_INST_ID}/logs" >/dev/null
-  printf '%s\n' "$RESULT" | head -30 | sed 's/^/    /'
-fi
+EXTENSION_TAB_ID=$(echo "$RESULT" | jq -r '.tabId // empty')
+pt_post "/tabs/${EXTENSION_TAB_ID}/evaluate" '{"expression":"document.documentElement.getAttribute(\"data-pinchtab-test-extension\")"}'
+assert_ok "evaluate extension marker"
+assert_result_eq ".result" "loaded" "configured extension executed on the default instance"
 
 end_test
 

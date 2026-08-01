@@ -89,6 +89,15 @@ func TestBrowserOverviewCloakHintsMatchPresenceState(t *testing.T) {
 		t.Fatalf("broken binary hint = %q, must not claim browser was found", browserOverviewHint(brokenPath))
 	}
 
+	unverified := base
+	unverified.Checks = []doctor.CheckResult{
+		{Name: "cloakbrowser_present", Status: doctor.StatusWarn, Detail: `/tmp/google-chrome: could not parse version from "not-a-version-string"`},
+		{Name: "cdp_reachable", Status: doctor.StatusFail},
+	}
+	if hint := browserOverviewHint(unverified); strings.Contains(hint, "was found") {
+		t.Fatalf("unverified binary hint = %q, must not claim CloakBrowser was found", hint)
+	}
+
 	cdpFailure := base
 	cdpFailure.Checks = []doctor.CheckResult{
 		{Name: "cloakbrowser_present", Status: doctor.StatusPass, Detail: "/opt/cloak/chrome -> 130.0.0 (>= 120.0.0)"},
