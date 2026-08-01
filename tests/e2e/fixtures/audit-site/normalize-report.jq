@@ -12,7 +12,11 @@
 # Uncaught JS errors collapse to their COUNT: their message text is assembled
 # differently by the two capture paths (Runtime.exceptionThrown prefixes the
 # exception description, the Console-domain fallback does not) and carries the
-# script URL, so only the count is comparable across providers.
+# script URL, so only the count is comparable — and only among providers that
+# capture uncaught errors at all. Cloak omits CapRuntimeConsoleEvents (its
+# Console-domain fallback never sees uncaught page errors, which ride only
+# Runtime.exceptionThrown), so its count is structurally always 0; the
+# audit-repro-extended golden check excludes jsErrors for the cloak provider.
 #
 # Regenerate the golden report (from a runner shell against the e2e stack):
 #   curl -s -H "Authorization: Bearer $E2E_SERVER_TOKEN" -X POST "$E2E_SERVER/audit" \
