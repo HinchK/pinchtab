@@ -27,10 +27,10 @@ fi
 end_test
 
 # ─────────────────────────────────────────────────────────────────
-start_test "pinchtab daemon unknown-subcommand → exit 2"
+start_test "pinchtab daemon unknown-subcommand → exit 1"
 
 pt daemon bogus-command
-assert_exit_code 2 "unknown subcommand rejected"
+assert_exit_code 1 "unknown subcommand rejected"
 
 end_test
 
