@@ -122,10 +122,21 @@ func browserOverviewHint(bi doctor.BrowserInfo) string {
 			if strings.Contains(presence.Detail, "configured browser.binary") {
 				return "Fix browser.binary (or browser.targets.<name>.binary) so it points to an executable CloakBrowser binary."
 			}
+			if strings.Contains(presence.Detail, "< required") {
+				return "The configured CloakBrowser binary is too old. Update it to a build with an adequate Chromium version."
+			}
 		}
-		if presence != nil && presence.Status == doctor.StatusPass && hasFailedCheck(bi, "cdp_reachable") {
-			if binary := cloakPresentBinary(presence.Detail); binary != "" {
-				return fmt.Sprintf("CloakBrowser was found at %s but did not accept CDP. Try updating or reinstalling it.", binary)
+		if presence != nil && presence.Status == doctor.StatusPass {
+			if hasFailedCheck(bi, "cdp_reachable") {
+				if binary := cloakPresentBinary(presence.Detail); binary != "" {
+					return fmt.Sprintf("CloakBrowser was found at %s but did not accept CDP. Try updating or reinstalling it.", binary)
+				}
+			}
+			if hasFailedCheck(bi, "fingerprint_flags_accepted") {
+				return "The configured CloakBrowser binary rejected the fingerprint flags. Update it to a build that supports the configured cloak fingerprint options."
+			}
+			if hasWarnCheck(bi, "linux_fonts_present") {
+				return "CloakBrowser is installed, but the Windows fingerprint fonts are missing on this Linux host. Install msttcorefonts or mount a Windows fonts directory."
 			}
 		}
 	}
@@ -147,6 +158,15 @@ func cloakPresenceResult(bi doctor.BrowserInfo) *doctor.CheckResult {
 func hasFailedCheck(bi doctor.BrowserInfo, name string) bool {
 	for _, check := range bi.Checks {
 		if check.Name == name && check.Status == doctor.StatusFail {
+			return true
+		}
+	}
+	return false
+}
+
+func hasWarnCheck(bi doctor.BrowserInfo, name string) bool {
+	for _, check := range bi.Checks {
+		if check.Name == name && check.Status == doctor.StatusWarn {
 			return true
 		}
 	}

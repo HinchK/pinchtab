@@ -97,6 +97,38 @@ func TestBrowserOverviewCloakHintsMatchPresenceState(t *testing.T) {
 	if hint := browserOverviewHint(cdpFailure); !strings.Contains(hint, "was found at /opt/cloak/chrome") {
 		t.Fatalf("CDP failure hint = %q, want verified-binary repair guidance", hint)
 	}
+
+	tooOld := base
+	tooOld.Checks = []doctor.CheckResult{{
+		Name:   "cloakbrowser_present",
+		Status: doctor.StatusWarn,
+		Detail: "/opt/cloak/chrome -> 118.0.0 (< required 120.0.0)",
+	}}
+	if hint := browserOverviewHint(tooOld); !strings.Contains(hint, "too old") {
+		t.Fatalf("too-old hint = %q, want update guidance, not a reinstall/install prompt", hint)
+	}
+
+	flagsRejected := base
+	flagsRejected.Checks = []doctor.CheckResult{
+		{Name: "cloakbrowser_present", Status: doctor.StatusPass, Detail: "/opt/cloak/chrome -> 130.0.0 (>= 120.0.0)"},
+		{Name: "fingerprint_flags_accepted", Status: doctor.StatusFail},
+	}
+	if hint := browserOverviewHint(flagsRejected); !strings.Contains(hint, "fingerprint flags") {
+		t.Fatalf("fingerprint-flags hint = %q, want flag-support guidance", hint)
+	}
+
+	fontsMissing := base
+	fontsMissing.Checks = []doctor.CheckResult{
+		{Name: "cloakbrowser_present", Status: doctor.StatusPass, Detail: "/opt/cloak/chrome -> 130.0.0 (>= 120.0.0)"},
+		{Name: "linux_fonts_present", Status: doctor.StatusWarn},
+	}
+	hint := browserOverviewHint(fontsMissing)
+	if !strings.Contains(hint, "fingerprint fonts") {
+		t.Fatalf("fonts hint = %q, want font-install guidance", hint)
+	}
+	if strings.Contains(hint, "custom build") {
+		t.Fatalf("fonts hint = %q, must not tell the user to install an already-present browser", hint)
+	}
 }
 
 func TestRunDoctorReturnsUsageErrorWithoutMutatingCheckFlag(t *testing.T) {

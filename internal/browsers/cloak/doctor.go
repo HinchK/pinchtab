@@ -133,9 +133,13 @@ func cloakPresenceCheck(ctx context.Context, cfg interface{}) browsers.DoctorChe
 			Detail: fmt.Sprintf("CloakBrowser found at %s -> %s, but browser.binary is unset", found, token),
 		}
 	}
+	// A configured browser.binary is trusted on version alone: CloakBrowser's
+	// forked Chromium reports "Chromium <ver>" from --version, indistinguishable
+	// from vanilla Chromium, so there is no product string to gate identity on.
+	// Say so plainly rather than implying the binary was verified to be CloakBrowser.
 	return browsers.DoctorCheckResult{
 		Status: browsers.DoctorPass,
-		Detail: fmt.Sprintf("%s -> %s (>= %s)", found, token, cloakMinVersion),
+		Detail: fmt.Sprintf("%s -> %s (>= %s); trusted from browser.binary without CloakBrowser identity check", found, token, cloakMinVersion),
 	}
 }
 
