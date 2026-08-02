@@ -34,7 +34,7 @@ func (pm *ProfileManager) Import(name, sourcePath string) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	_, dest, err := pm.preflightProfileDestination(name, nil)
+	id, _, err := pm.preflightProfileDestination(name, nil)
 	if err != nil {
 		return err
 	}
@@ -62,24 +62,43 @@ func (pm *ProfileManager) Import(name, sourcePath string) error {
 	}
 
 	slog.Info("importing profile", "name", name, "source", source.displayPath)
-	// Import is all-or-nothing. preflight already established that dest did not
-	// exist, so anything under it now is ours to remove — and leaving a partial
-	// copy would make every retry fail with "already exists" instead of the real
-	// cause (a live Chrome user data dir has Singleton* symlinks copyDir rejects).
-	if err := copyDir(source, dest); err != nil {
-		_ = os.RemoveAll(dest)
+	// Import is all-or-nothing. The rooted Mkdir claims the preflighted id
+	// atomically, so anything under it is ours to remove on failure.
+	baseRoot, err := os.OpenRoot(pm.baseDir)
+	if err != nil {
+		return fmt.Errorf("open profile root: %w", err)
+	}
+	defer func() { _ = baseRoot.Close() }()
+	if err := baseRoot.Mkdir(id, srcInfo.Mode().Perm()); err != nil {
+		return fmt.Errorf("create profile destination: %w", err)
+	}
+	destRoot, err := baseRoot.OpenRoot(id)
+	if err != nil {
+		_ = baseRoot.RemoveAll(id)
+		return fmt.Errorf("open profile destination: %w", err)
+	}
+	cleanup := func() {
+		_ = destRoot.Close()
+		_ = baseRoot.RemoveAll(id)
+	}
+	if err := copyDir(source, destRoot); err != nil {
+		cleanup()
 		return fmt.Errorf("copy failed: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(dest, ".pinchtab-imported"), []byte(source.displayPath), 0600); err != nil {
+	if err := destRoot.WriteFile(".pinchtab-imported", []byte(source.displayPath), 0600); err != nil {
 		slog.Warn("failed to write import marker", "err", err)
 	}
-	if err := writeProfileMeta(dest, ProfileMeta{
-		ID:   profileID(name),
+	if err := writeProfileMetaRoot(destRoot, ProfileMeta{
+		ID:   id,
 		Name: name,
 	}); err != nil {
-		_ = os.RemoveAll(dest)
+		cleanup()
 		return err
+	}
+	if err := destRoot.Close(); err != nil {
+		_ = baseRoot.RemoveAll(id)
+		return fmt.Errorf("close profile destination: %w", err)
 	}
 	return nil
 }

@@ -101,9 +101,25 @@ func readProfileMeta(profileDir string) ProfileMeta {
 }
 
 func writeProfileMeta(profileDir string, meta ProfileMeta) error {
-	data, err := json.MarshalIndent(meta, "", "  ")
+	data, err := profileMetaJSON(meta)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(profileDir, "profile.json"), data, 0644)
+}
+
+func writeProfileMetaRoot(root *os.Root, meta ProfileMeta) error {
+	data, err := profileMetaJSON(meta)
+	if err != nil {
+		return err
+	}
+	return root.WriteFile("profile.json", data, 0644)
+}
+
+func profileMetaJSON(meta ProfileMeta) ([]byte, error) {
+	data, err := json.MarshalIndent(meta, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
 }
