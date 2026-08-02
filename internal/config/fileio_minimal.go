@@ -63,7 +63,10 @@ func parseJSONObject(data []byte) []jsonMember {
 // stale value in place, which is the one way writing less can lose data.
 func patchConfigObject(onDisk []jsonMember, full, shipped map[string]any) []jsonMember {
 	seen := make(map[string]bool, len(onDisk))
-	out := make([]jsonMember, 0, len(onDisk)+len(full))
+	// The result often needs room for both collections, but adding their lengths
+	// can overflow int before make validates the capacity. Start with the known
+	// on-disk size and let append grow the slice for new members.
+	out := make([]jsonMember, 0, len(onDisk))
 
 	for _, member := range onDisk {
 		seen[member.key] = true

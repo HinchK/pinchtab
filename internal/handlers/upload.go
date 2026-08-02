@@ -268,8 +268,11 @@ func stagedUploadName(name string, i int, ext string) string {
 	// contains no separator at all and survives whole. The cost is that a literal
 	// backslash in a genuine POSIX filename is treated as a separator too, which is
 	// the same trade a browser makes — it sends the final component and nothing else.
-	trimmed := strings.TrimSpace(name)
-	base := trimmed[strings.LastIndexAny(trimmed, `/\`)+1:]
+	trimmed := strings.ReplaceAll(strings.TrimSpace(name), `\`, "/")
+	if strings.HasSuffix(trimmed, "/") {
+		return generated
+	}
+	base := filepath.Base(trimmed)
 	switch {
 	case base == "", base == ".", base == "..", strings.ContainsRune(base, 0):
 		return generated
@@ -292,7 +295,11 @@ func stageUploadPath(stagedDir string, i int, name, ext string) (string, error) 
 	if err := os.MkdirAll(fileDir, 0o700); err != nil {
 		return "", fmt.Errorf("create staged dir: %w", err)
 	}
-	return filepath.Join(fileDir, stagedUploadName(name, i, ext)), nil
+	path, err := httpx.SafeCreatePath(fileDir, stagedUploadName(name, i, ext))
+	if err != nil {
+		return "", fmt.Errorf("resolve staged file path: %w", err)
+	}
+	return path, nil
 }
 
 func validateUploadSandboxPath(baseDir, rawPath string, maxFileBytes int) (string, int64, error) {
