@@ -107,9 +107,12 @@ func TestAttachIndicatorNamesPortPersistsAndClears(t *testing.T) {
 }
 
 func TestAttachIndicatorRejectsInvalidPort(t *testing.T) {
-	for _, port := range []string{"", "0", "65536", "not-a-port"} {
+	for _, port := range []string{"", "0", "65536", "not-a-port", `9867\"; alert(1)`} {
 		if _, err := attachIndicatorScript(port); err == nil {
 			t.Fatalf("port %q accepted", port)
+		}
+		if _, err := clearAttachIndicatorScript(port); err == nil {
+			t.Fatalf("cleanup port %q accepted", port)
 		}
 	}
 	script, err := attachIndicatorScript(" 9867 ")
