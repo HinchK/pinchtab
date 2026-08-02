@@ -40,6 +40,13 @@ assert_tab_id "returns tab ID"
 end_test
 
 # ─────────────────────────────────────────────────────────────────
+start_test "pinchtab nav --timeout <seconds>"
+
+pt_ok nav "${FIXTURES_URL}/index.html" --timeout 5
+assert_tab_id "accepts a per-request timeout"
+
+end_test
+
 start_test "pinchtab nav (empty URL)"
 
 pt_fail nav ""

@@ -1,15 +1,17 @@
 package actions
 
 import (
-	"time"
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
 	"github.com/pinchtab/pinchtab/internal/cli/output"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -81,10 +83,8 @@ func landedURL(result map[string]any) string {
 func Navigate(client *http.Client, base, token string, url string, cmd *cobra.Command) string {
 	req := buildNavigateRequest(url, cmd)
 
-	// A per-request timeout can exceed the shared client budget; mirror the
-	// longClient pattern used by scrape/audit so the HTTP client outlives it.
-	if v, err := cmd.Flags().GetFloat64("timeout"); err == nil && v > 0 {
-		client = &http.Client{Transport: client.Transport, Timeout: time.Duration((v + 15) * float64(time.Second))}
+	if timeoutSeconds, ok := req.body["timeout"].(float64); ok {
+		client = navigationHTTPClient(client, timeoutSeconds)
 	}
 
 	jsonOutput, _ := cmd.Flags().GetBool("json")
@@ -155,8 +155,8 @@ func buildNavigateRequest(url string, cmd *cobra.Command) navigateRequest {
 	if newTab {
 		body["newTab"] = true
 	}
-	if v, err := cmd.Flags().GetFloat64("timeout"); err == nil && v > 0 {
-		body["timeout"] = v
+	if timeoutSeconds := navigationTimeoutSeconds(cmd); timeoutSeconds > 0 {
+		body["timeout"] = timeoutSeconds
 	}
 	if v, _ := cmd.Flags().GetBool("block-images"); v {
 		body["blockImages"] = true
@@ -186,6 +186,23 @@ func buildNavigateRequest(url string, cmd *cobra.Command) navigateRequest {
 		fallbackOnNotFound: fallbackOnNotFound,
 		tabID:              tabID,
 	}
+}
+
+func navigationTimeoutSeconds(cmd *cobra.Command) float64 {
+	timeoutSeconds, err := cmd.Flags().GetFloat64("timeout")
+	if err != nil || timeoutSeconds <= 0 || math.IsNaN(timeoutSeconds) {
+		return 0
+	}
+	if timeoutSeconds > httpx.MaxNavigationTimeout.Seconds() {
+		return httpx.MaxNavigationTimeout.Seconds()
+	}
+	return timeoutSeconds
+}
+
+func navigationHTTPClient(client *http.Client, timeoutSeconds float64) *http.Client {
+	clone := *client
+	clone.Timeout = time.Duration(timeoutSeconds*float64(time.Second)) + httpx.NavigationTransportGrace
+	return &clone
 }
 
 // postNavigate returns the decoded response and whether the tab-scoped request

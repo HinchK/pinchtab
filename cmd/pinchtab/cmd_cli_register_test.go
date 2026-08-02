@@ -38,6 +38,16 @@ func TestCaptureCommandRegistersTabFlag(t *testing.T) {
 	}
 }
 
+func TestNavigateCommandRegistersTimeoutInSeconds(t *testing.T) {
+	flag := navCmd.Flags().Lookup("timeout")
+	if flag == nil {
+		t.Fatal("navCmd missing --timeout flag")
+	}
+	if flag.DefValue != "0" || flag.Usage != "Navigation timeout in seconds (max 120); overrides the 30s new-tab ceiling" {
+		t.Fatalf("--timeout default/usage = %q / %q", flag.DefValue, flag.Usage)
+	}
+}
+
 // TestPostActionFlagsBundle pins the exact usage strings the shared
 // addPostActionFlags helper interpolates per verb, so a future verb edit cannot
 // silently drift the --help text, and verifies the one no-text command omits it.

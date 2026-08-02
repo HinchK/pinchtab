@@ -151,6 +151,7 @@ Common commands:
 | Command | Purpose |
 | --- | --- |
 | `pinchtab nav <url>` | Navigate current tracked tab, or create one if needed |
+| `pinchtab nav <url> --timeout 90` | Override the navigation timeout in seconds (maximum 120) |
 | `pinchtab nav <url> --snap` | Navigate and output an interactive compact snapshot |
 | `pinchtab snap [selector]` | Accessibility snapshot for the current tab, optionally scoped |
 | `pinchtab frame [target\|main]` | Show or set selector frame scope |

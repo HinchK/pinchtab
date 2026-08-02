@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/httpx"
@@ -22,7 +21,7 @@ type BridgeClient struct {
 // NewBridgeClient creates a BridgeClient.
 func NewBridgeClient() *BridgeClient {
 	return &BridgeClient{
-		client: &http.Client{Timeout: 135 * time.Second},
+		client: &http.Client{Timeout: httpx.MaxNavigationHTTPDuration},
 	}
 }
 

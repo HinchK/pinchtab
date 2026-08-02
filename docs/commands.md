@@ -51,6 +51,7 @@ bridge. Orchestrator-spawned bridges inherit the level through their child confi
 pinchtab nav <url>                      # Navigate current tab, or create one if needed
 pinchtab nav <url> --tab <id>           # Reuse a specific tab
 pinchtab nav <url> --new-tab            # Explicitly force a new tab
+pinchtab nav <url> --timeout 90          # Allow up to 90s (maximum 120s)
 pinchtab nav <url> --block-images       # Block images for this navigation
 pinchtab nav <url> --block-ads          # Block ads for this navigation
 pinchtab nav <url> --snap               # Navigate and output interactive snapshot

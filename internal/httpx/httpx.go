@@ -17,6 +17,10 @@ import (
 const (
 	DefaultMaxJSONBodyBytes = 1 << 20
 	maxErrorMessageBytes    = 1024
+
+	MaxNavigationTimeout      = 120 * time.Second
+	NavigationTransportGrace  = 15 * time.Second
+	MaxNavigationHTTPDuration = MaxNavigationTimeout + NavigationTransportGrace
 )
 
 type ProblemDetails struct {

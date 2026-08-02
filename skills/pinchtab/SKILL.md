@@ -128,7 +128,7 @@ The optional background daemon is for local convenience, not normal agent workfl
 ### Navigation and tabs
 
 ```bash
-pinchtab nav <url>                                  # auto-starts default local server; flags: --snap, --new-tab, --tab <id>, --block-images, --block-ads, --dismiss-banners, --print-tab-id
+pinchtab nav <url>                                  # auto-starts default local server; flags: --snap, --new-tab, --tab <id>, --timeout <seconds>, --block-images, --block-ads, --dismiss-banners, --print-tab-id
 pinchtab back | forward | reload                    # all support --snap, --snap-diff, --text, --dismiss-banners
 pinchtab tab                                        # list tabs
 pinchtab tab <tab-id>                               # focus tab

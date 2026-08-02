@@ -97,10 +97,10 @@ func RunBridgeServer(cfg *config.RuntimeConfig, version string) {
 			),
 		),
 		MaxHeaderBytes:    maxHeaderBytes,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      135 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
 	}
 
 	listener, err := net.Listen("tcp", listenAddr)
