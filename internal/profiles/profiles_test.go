@@ -169,6 +169,27 @@ func TestProfileManagerImportRejectsSymlinkSource(t *testing.T) {
 	}
 }
 
+func TestProfileManagerImportRejectsIntermediateSymlinkOutsideRoot(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("rooted symlink test requires Unix symlink semantics")
+	}
+
+	dir := t.TempDir()
+	pm := NewProfileManager(dir)
+	link := filepath.Join(t.TempDir(), "escape")
+	if err := os.Symlink(string(os.PathSeparator), link); err != nil {
+		t.Skipf("symlink not supported: %v", err)
+	}
+
+	err := pm.Import("escaped-source", filepath.Join(link, "etc"))
+	if err == nil || !strings.Contains(err.Error(), "source path invalid") {
+		t.Fatalf("expected rooted source validation to reject the escaping symlink, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, profileID("escaped-source"))); !os.IsNotExist(statErr) {
+		t.Fatalf("rejected import created a destination: %v", statErr)
+	}
+}
+
 func TestProfileManagerImportRejectsSymlinkEntry(t *testing.T) {
 	dir := t.TempDir()
 	pm := NewProfileManager(dir)
