@@ -307,10 +307,10 @@ func RunDashboard(cfg *config.RuntimeConfig, version string) {
 		Addr:              cfg.Bind + ":" + dashPort,
 		Handler:           handler,
 		MaxHeaderBytes:    maxHeaderBytes,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      60 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		ReadHeaderTimeout: serverReadHeaderTimeout,
+		ReadTimeout:       serverReadTimeout,
+		WriteTimeout:      serverWriteTimeout,
+		IdleTimeout:       serverIdleTimeout,
 	}
 
 	if err := activeStrategy.Start(context.Background()); err != nil {

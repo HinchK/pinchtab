@@ -10,16 +10,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
-// DefaultClient is the shared HTTP client for proxy requests.
-// A 60-second timeout accommodates lazy Chrome initialization (8-20s)
-// and tab navigation (up to 60s for NavigateTimeout in bridge config).
-var DefaultClient = &http.Client{Timeout: 60 * time.Second}
+var DefaultClient = &http.Client{Timeout: httpx.MaxNavigationHTTPDuration}
 
 type Options struct {
 	Client            *http.Client

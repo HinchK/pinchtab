@@ -3,10 +3,13 @@ package actions
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/cookiejar"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinchtab/pinchtab/internal/cli"
+	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/spf13/cobra"
 )
 
@@ -16,9 +19,75 @@ func newNavigateCmd() *cobra.Command {
 	cmd.Flags().Bool("block-images", false, "")
 	cmd.Flags().Bool("block-ads", false, "")
 	cmd.Flags().Bool("dismiss-banners", false, "")
+	cmd.Flags().Float64("timeout", 0, "")
 	cmd.Flags().String("tab", "", "")
 	cmd.Flags().Bool("print-tab-id", false, "")
 	return cmd
+}
+
+func TestNavigateTimeoutIsSentAndClampedToTheAPICeiling(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		want  float64
+		set   bool
+	}{
+		{name: "omitted"},
+		{name: "explicit", value: "90.5", want: 90.5, set: true},
+		{name: "over maximum", value: "121", want: httpx.MaxNavigationTimeout.Seconds(), set: true},
+		{name: "infinite", value: "+Inf", want: httpx.MaxNavigationTimeout.Seconds(), set: true},
+		{name: "not a number", value: "NaN", set: true},
+		{name: "negative", value: "-1", set: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newNavigateCmd()
+			if tc.set {
+				if err := cmd.Flags().Set("timeout", tc.value); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			req := buildNavigateRequest("https://pinchtab.com", cmd)
+			got, present := req.body["timeout"].(float64)
+			if tc.want == 0 {
+				if present {
+					t.Fatalf("timeout = %v, want omitted", got)
+				}
+				return
+			}
+			if !present || got != tc.want {
+				t.Fatalf("timeout = %v (present %v), want %v", got, present, tc.want)
+			}
+		})
+	}
+}
+
+func TestNavigationHTTPClientPreservesCallerPolicy(t *testing.T) {
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &http.Client{
+		Transport:     http.DefaultTransport,
+		Jar:           jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		Timeout:       time.Minute,
+	}
+
+	got := navigationHTTPClient(base, 90.5)
+	if got == base {
+		t.Fatal("navigation client mutated the shared client instead of cloning it")
+	}
+	if base.Timeout != time.Minute {
+		t.Fatalf("shared client timeout changed to %v", base.Timeout)
+	}
+	if got.Transport != base.Transport || got.Jar != base.Jar || got.CheckRedirect == nil {
+		t.Fatal("navigation client dropped caller transport, cookie jar, or redirect policy")
+	}
+	wantTimeout := 90*time.Second + 500*time.Millisecond + httpx.NavigationTransportGrace
+	if got.Timeout != wantTimeout {
+		t.Fatalf("timeout = %v, want %v", got.Timeout, wantTimeout)
+	}
 }
 
 func newHistoryCmd() *cobra.Command {

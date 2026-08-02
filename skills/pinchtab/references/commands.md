@@ -49,6 +49,7 @@ Navigate the current tracked tab to a URL, or create one when no current tab is 
 pinchtab nav https://pinchtab.com
 pinchtab nav https://pinchtab.com --new-tab
 pinchtab nav https://pinchtab.com --snap
+pinchtab nav https://pinchtab.com --timeout 90
 pinchtab nav https://pinchtab.com --block-images
 pinchtab nav https://pinchtab.com --tab <tabId>
 ```
@@ -58,6 +59,7 @@ pinchtab nav https://pinchtab.com --tab <tabId>
 | `--new-tab` | Explicitly force a new tab |
 | `--tab <id>` | Reuse a specific tab |
 | `--snap` | Navigate and print an interactive compact snapshot |
+| `--timeout <seconds>` | Override the navigation timeout (maximum 120 seconds) |
 | `--block-images` | Block image loading (faster, fewer tokens) |
 | `--block-ads` | Block ads for this navigation |
 | `--print-tab-id` | Print only the tab ID |

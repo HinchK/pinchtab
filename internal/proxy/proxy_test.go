@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"testing"
 
 	"github.com/pinchtab/pinchtab/internal/httpx"
-	"testing"
 )
 
 func fakeBridge(t *testing.T) *httptest.Server {
@@ -149,8 +149,8 @@ func TestHTTP_UsesSharedClient(t *testing.T) {
 	if DefaultClient == nil {
 		t.Fatal("DefaultClient should not be nil")
 	}
-	if DefaultClient.Timeout != 60*1e9 { // 60 seconds in nanoseconds
-		t.Errorf("expected 60s timeout, got %s", DefaultClient.Timeout)
+	if DefaultClient.Timeout != httpx.MaxNavigationHTTPDuration {
+		t.Errorf("timeout = %s, want %s", DefaultClient.Timeout, httpx.MaxNavigationHTTPDuration)
 	}
 }
 

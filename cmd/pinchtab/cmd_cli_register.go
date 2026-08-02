@@ -196,6 +196,7 @@ func configureBrowserFlags() {
 	checkedCmd.Flags().Bool("json", false, "Output full JSON response instead of just checked state")
 
 	navCmd.Flags().Bool("new-tab", false, "Open in new tab")
+	navCmd.Flags().Float64("timeout", 0, "Navigation timeout in seconds (max 120); overrides the 30s new-tab ceiling")
 	navCmd.Flags().Bool("block-images", false, "Block image loading")
 	navCmd.Flags().Bool("block-ads", false, "Block ads")
 	addPostActionFlags(navCmd, "navigation", true)

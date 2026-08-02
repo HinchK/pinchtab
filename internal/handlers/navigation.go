@@ -29,7 +29,7 @@ import (
 // @Param url string body URL to navigate to (required)
 // @Param newTab bool body Force create new tab (optional, default: false)
 // @Param waitTitle float64 body Wait for title change (ms) (optional, default: 0)
-// @Param timeout float64 body Timeout for navigation (ms) (optional, default: 30000)
+// @Param timeout float64 body Timeout for navigation in seconds (optional, max: 120)
 //
 // @Response 200 application/json Returns {tabId, url, title}
 // @Response 400 application/json Invalid URL or parameters
@@ -375,8 +375,9 @@ func (h *Handlers) executeNavigate(w http.ResponseWriter, r *http.Request, req n
 
 	navTimeout := effectiveCfg.NavigateTimeout
 	if req.Timeout > 0 {
-		if req.Timeout > 120 {
-			req.Timeout = 120
+		maxTimeoutSeconds := httpx.MaxNavigationTimeout.Seconds()
+		if req.Timeout > maxTimeoutSeconds {
+			req.Timeout = maxTimeoutSeconds
 		}
 		navTimeout = time.Duration(req.Timeout * float64(time.Second))
 	}
