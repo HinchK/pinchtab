@@ -36,8 +36,10 @@ type mockBridge struct {
 	availableActions  []string
 	navigateResult    *bridge.NavigateResult
 	navigateErr       error
+	navigateFn        func(context.Context, string, bridge.NavigateParams) (*bridge.NavigateResult, error)
 	closedTabs        []string
 	runningBrowser    string
+	createTabFn       func(string) (string, context.Context, context.CancelFunc, error)
 
 	staticFirstNavigate bool
 	staticEscalate      *bridge.StaticEscalateError
@@ -82,6 +84,9 @@ func (m *mockBridge) ExecuteAction(ctx context.Context, kind string, req bridge.
 
 func (m *mockBridge) CreateTab(url string) (string, context.Context, context.CancelFunc, error) {
 	m.createTabURLs = append(m.createTabURLs, url)
+	if m.createTabFn != nil {
+		return m.createTabFn(url)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately - no browser spawned
 	return "tab_abc12345", ctx, cancel, nil
@@ -135,8 +140,11 @@ func (m *mockBridge) GetRefCache(tabID string) *bridge.RefCache        { return 
 func (m *mockBridge) SetRefCache(tabID string, cache *bridge.RefCache) {}
 func (m *mockBridge) DeleteRefCache(tabID string)                      {}
 
-func (m *mockBridge) Navigate(_ context.Context, url string, params bridge.NavigateParams) (*bridge.NavigateResult, error) {
+func (m *mockBridge) Navigate(ctx context.Context, url string, params bridge.NavigateParams) (*bridge.NavigateResult, error) {
 	m.navigateParams = append(m.navigateParams, params)
+	if m.navigateFn != nil {
+		return m.navigateFn(ctx, url, params)
+	}
 	if params.NoEscalate && m.staticEscalate != nil {
 		return nil, m.staticEscalate
 	}

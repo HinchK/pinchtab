@@ -511,8 +511,8 @@ func (h *Handlers) runNavigate(w http.ResponseWriter, r *http.Request, ex navExe
 		}
 		if ex.isNewTab && errors.Is(navErr, context.DeadlineExceeded) {
 			httpx.Error(w, http.StatusServiceUnavailable, fmt.Errorf(
-				"new tab did not load in time — the browser may be out of memory or overloaded; "+
-					"close tabs or restart the instance with `pinchtab server restart`"))
+				"new tab did not load in time: %v; the browser may be out of memory or overloaded; "+
+					"close tabs or restart the instance with `pinchtab server restart`", navErr))
 			return
 		}
 		navigateErrorWithHint(w, classifyNavigateError(navErr), navErr, ex.url)
