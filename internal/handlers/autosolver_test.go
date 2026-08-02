@@ -2,10 +2,13 @@ package handlers
 
 import (
 	"context"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pinchtab/pinchtab/internal/autosolver"
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -148,5 +151,97 @@ func TestMaybeAutoSolve_InvokesRunnerWhenEnabled(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("autoSolverRunner calls with navigate trigger disabled = %d, want unchanged", got)
+	}
+}
+
+// The catalog is only a single owner if what actually registers stays inside it.
+// A new solver wired into buildAutoSolver but not added to the catalog would
+// leave config validation rejecting a name the product really accepts, and this
+// is the link that fails when that happens.
+func TestRegisteredSolversAreAllKnownToTheCatalog(t *testing.T) {
+	h := &Handlers{Config: &config.RuntimeConfig{AutoSolver: config.AutoSolverConfig{
+		CapsolverKey:  "test-capsolver-key",
+		TwoCaptchaKey: "test-twocaptcha-key",
+	}}}
+
+	// The normalised config, exactly as both production call sites build it: the keys
+	// travel to the registry through cfg.APIKeys now, so handing buildAutoSolver a bare
+	// DefaultConfig would register nothing gated and assert against a config nobody uses.
+	as := h.buildAutoSolver(h.normalizedAutoSolverConfig(), true)
+	registered := as.Registry().Names()
+	if len(registered) == 0 {
+		t.Fatal("no solvers registered — this guard is checking nothing")
+	}
+
+	for _, name := range registered {
+		if !catalog.IsKnown(name) {
+			t.Errorf("solver %q registers but config validation rejects it (known: %v)", name, catalog.Names())
+		}
+	}
+
+	// Both key-gated solvers registered above, so the catalog's key-gated list is
+	// the real one rather than a guess.
+	for _, gated := range catalog.KeyGated() {
+		if !slices.Contains(registered, gated) {
+			t.Errorf("catalog lists %q as key-gated but it did not register with a key set (registered: %v)", gated, registered)
+		}
+	}
+}
+
+// The handler's only remaining per-solver knowledge is DATA: which runtime field holds
+// each gated solver's key. The rule that consumes it lives in the catalog, so this pins
+// the seam between them — every gated solver's key must actually arrive, or availability
+// silently answers "keyless" for a solver the operator configured.
+func TestEveryGatedSolverKeyReachesTheNormalisedConfig(t *testing.T) {
+	h := &Handlers{Config: &config.RuntimeConfig{AutoSolver: config.AutoSolverConfig{
+		CapsolverKey:  "cap-key",
+		TwoCaptchaKey: "two-key",
+	}}}
+
+	cfg := h.normalizedAutoSolverConfig()
+	gated := autosolver.KeyGatedSolvers()
+	if len(gated) == 0 {
+		t.Fatal("no key-gated solvers; this seam test would check nothing")
+	}
+	for _, solver := range gated {
+		if cfg.APIKey(solver.Name) == "" {
+			t.Errorf("%s is key-gated but its key never reaches the config the catalog reads; add it to autoSolverAPIKeys beside %s", solver.Name, solver.ConfigKey)
+		}
+		if !catalog.IsAvailable(solver.Name, cfg) {
+			t.Errorf("%s has its key configured but the catalog reports it unavailable", solver.Name)
+		}
+	}
+
+	keyless := (&Handlers{Config: &config.RuntimeConfig{}}).normalizedAutoSolverConfig()
+	for _, solver := range gated {
+		if catalog.IsAvailable(solver.Name, keyless) {
+			t.Errorf("%s is available with no key configured", solver.Name)
+		}
+	}
+}
+
+// availableAutoSolverNames is the list the API prints and guards on, and it must follow
+// the catalog rather than re-deriving availability. Both directions, because the defect
+// this card fixes was a configured solver reported as unknown.
+func TestAvailableNamesFollowTheConfiguredKeys(t *testing.T) {
+	for _, solver := range autosolver.KeyGatedSolvers() {
+		t.Run(solver.Name, func(t *testing.T) {
+			keyless := &Handlers{Config: &config.RuntimeConfig{}}
+			if slices.Contains(keyless.availableAutoSolverNames(), solver.Name) {
+				t.Errorf("%s is listed available with no key set", solver.Name)
+			}
+			if keyless.isAvailableAutoSolver(solver.Name) {
+				t.Errorf("isAvailableAutoSolver(%s) with no key set", solver.Name)
+			}
+
+			keyed := &Handlers{Config: &config.RuntimeConfig{AutoSolver: config.AutoSolverConfig{
+				CapsolverKey:  "k",
+				TwoCaptchaKey: "k",
+				Solvers:       []string{solver.Name},
+			}}}
+			if !slices.Contains(keyed.availableAutoSolverNames(), solver.Name) {
+				t.Errorf("%s is not listed available with its key set (list %v)", solver.Name, keyed.availableAutoSolverNames())
+			}
+		})
 	}
 }

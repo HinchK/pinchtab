@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -15,13 +14,11 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
 func TestKnownInterstitialDismissalIsCatalogAndModalScoped(t *testing.T) {
-	chromePath, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Skip("chromium not installed")
-	}
+	chromePath := testbrowser.Path(t)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Query().Get("case") {
 		case "known":
@@ -38,10 +35,7 @@ func TestKnownInterstitialDismissalIsCatalogAndModalScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, err := os.MkdirTemp("", "pinchtab-interstitial-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),

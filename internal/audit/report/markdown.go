@@ -20,18 +20,14 @@ func renderMarkdown(r audit.AuditReport) []byte {
 
 	w("## Summary")
 	w("")
-	w("**Summary score: %d/100**", r.SummaryScore)
+	w("**Mean accessibility score: %d/100**", r.SummaryScore)
 	w("")
-	w("| Page | Score | Load | Broken assets | Console errors | Status |")
-	w("|---|---|---|---|---|---|")
+	w("| Page | Score | Load | Broken assets | Console errors | Uncaught JS errors | Status |")
+	w("|---|---|---|---|---|---|---|")
 	for _, p := range r.Pages {
-		status := "ok"
-		if p.Error != "" {
-			status = "error: " + p.Error
-		}
-		w("| %s | %d | %s | %d | %d | %s |",
+		w("| %s | %d | %s | %d | %d | %d | %s |",
 			pageLabel(p), p.Browser.AccessibilityScore, formatMs(p.Browser.TimingMetrics.Load),
-			len(p.Browser.BrokenAssets), pageConsoleErrors(p), status)
+			len(p.Browser.BrokenAssets), pageConsoleErrors(p), len(p.Browser.JSErrors), audit.PageStatus(p))
 	}
 	w("")
 
@@ -94,16 +90,19 @@ func renderMarkdown(r audit.AuditReport) []byte {
 		w("")
 	}
 
-	if hasConsoleProblems(r) {
+	if hasConsoleProblems(r) || hasJSErrors(r) {
 		w("## Console & JS Errors")
 		w("")
 		for _, p := range r.Pages {
 			problems := consoleProblems(p)
-			if len(problems) == 0 {
+			if len(problems) == 0 && len(p.Browser.JSErrors) == 0 {
 				continue
 			}
 			w("### %s", pageLabel(p))
 			w("")
+			for _, e := range p.Browser.JSErrors {
+				w("- `uncaught` %s", firstLine(e.Message))
+			}
 			for _, l := range problems {
 				w("- `%s` %s", l.Level, l.Message)
 			}

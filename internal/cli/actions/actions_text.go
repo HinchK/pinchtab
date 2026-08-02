@@ -57,11 +57,19 @@ func Text(client *http.Client, base, token string, cmd *cobra.Command, args []st
 
 	body := apiclient.DoGetRaw(client, base, token, "/text", params)
 	var result struct {
-		Text string `json:"text"`
+		Text       string `json:"text"`
+		Extraction string `json:"extraction"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
 		output.Value(string(body))
 		return
 	}
+	if result.Extraction == extractionReadabilityFallback {
+		output.Hint("readability extracted only a fragment of this page; returned the full page text instead (pass --full to request it directly)")
+	}
 	output.Value(result.Text)
 }
+
+// extractionReadabilityFallback mirrors the /text envelope value the server
+// echoes when readability collapsed and it returned the raw document instead.
+const extractionReadabilityFallback = "readability_fallback"

@@ -62,17 +62,26 @@ func (pm *ProfileManager) Import(name, sourcePath string) error {
 	}
 
 	slog.Info("importing profile", "name", name, "source", resolvedSourcePath)
+	// Import is all-or-nothing. preflight already established that dest did not
+	// exist, so anything under it now is ours to remove — and leaving a partial
+	// copy would make every retry fail with "already exists" instead of the real
+	// cause (a live Chrome user data dir has Singleton* symlinks copyDir rejects).
 	if err := copyDir(resolvedSourcePath, dest); err != nil {
+		_ = os.RemoveAll(dest)
 		return fmt.Errorf("copy failed: %w", err)
 	}
 
 	if err := os.WriteFile(filepath.Join(dest, ".pinchtab-imported"), []byte(resolvedSourcePath), 0600); err != nil {
 		slog.Warn("failed to write import marker", "err", err)
 	}
-	return writeProfileMeta(dest, ProfileMeta{
+	if err := writeProfileMeta(dest, ProfileMeta{
 		ID:   profileID(name),
 		Name: name,
-	})
+	}); err != nil {
+		_ = os.RemoveAll(dest)
+		return err
+	}
+	return nil
 }
 
 func (pm *ProfileManager) ImportWithMeta(name, sourcePath string, meta ProfileMeta) error {
@@ -131,6 +140,9 @@ func (pm *ProfileManager) Reset(name string) error {
 	if err != nil {
 		return err
 	}
+	if holder, held := pm.profileHolder(profileID(name), dir); held {
+		return tagged(ErrProfileInUse, fmt.Sprintf("profile %q is in use by %s; stop it before resetting", name, holder))
+	}
 
 	resetProfileDir(dir)
 	slog.Info("profile reset", "name", name)
@@ -170,17 +182,40 @@ func resetProfileDir(dir string) {
 }
 
 func (pm *ProfileManager) Delete(name string) error {
+	_, err := pm.remove(name, false)
+	return err
+}
+
+// ForceDelete skips the in-use refusal. profiles is a leaf and cannot stop
+// instances, so a held profile is removed anyway and the holder is returned
+// for the response to report as orphaned — a browser left running on a
+// deleted directory must never be silent.
+func (pm *ProfileManager) ForceDelete(name string) (orphanedInstance string, err error) {
+	return pm.remove(name, true)
+}
+
+func (pm *ProfileManager) remove(name string, force bool) (string, error) {
 	if err := ValidateProfileName(name); err != nil {
-		return err
+		return "", err
 	}
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	dir, err := pm.findProfileDirByName(name)
 	if err != nil {
-		return err
+		return "", err
 	}
-	return os.RemoveAll(dir)
+	holder, held := pm.profileHolder(profileID(name), dir)
+	if held && !force {
+		return "", tagged(ErrProfileInUse, fmt.Sprintf("profile %q is in use by %s; delete with force=true to remove it anyway", name, holder))
+	}
+	if err := os.RemoveAll(dir); err != nil {
+		return "", err
+	}
+	if held {
+		return holder, nil
+	}
+	return "", nil
 }
 
 func (pm *ProfileManager) UpdateMeta(name string, meta map[string]string) error {

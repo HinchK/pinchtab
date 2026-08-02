@@ -273,7 +273,7 @@ func TestHandleClickSubmitNativeDialogKeepsDialogBlockingContract(t *testing.T) 
 	h := New(b, &config.RuntimeConfig{ActionTimeout: 10 * time.Millisecond}, nil, nil, nil)
 
 	w := postSubmitRequest(t, h, `{"kind":"click","tabId":"tab1","nodeId":42,"submit":true}`)
-	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), `"code":"dialog_blocking"`) {
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), `"code":"dialog_blocked"`) {
 		t.Fatalf("native dialog contract changed: status=%d body=%s", w.Code, w.Body.String())
 	}
 	if b.urlCalls != 1 {

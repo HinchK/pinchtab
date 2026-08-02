@@ -19,6 +19,8 @@ pinchtab server -e ./ext        # load browser extension
 |------|-------|-------------|
 | `--headed` | `-H` | Start browser in headed (visible) mode |
 | `--extension <path>` | `-e` | Load browser extension (repeatable) |
+| `--log-level <level>` | | Log threshold: `debug`, `info` (default), `warn` or `error` |
+| `--verbose` | `-v` | Show the full startup banner and log at debug level |
 
 > **Note:** Use `--headed` only when you need visual feedback (debugging, watching automation). Headless mode is more resource-efficient.
 
@@ -128,6 +130,8 @@ pinchtab mouse down --button left
 pinchtab mouse up e5 --button left
 pinchtab mouse up --button left
 pinchtab mouse wheel 240 --dx 40
+pinchtab mouse wheel -200
+pinchtab mouse move -5 -5
 pinchtab mouse move --x 400 --y 320
 pinchtab drag e5 400,320
 ```
@@ -135,12 +139,14 @@ pinchtab drag e5 400,320
 Use these for drag handles, canvas controls, precise hover choreography, or sites that require exact pointer sequencing.
 
 ### `pinchtab scroll <pixels|direction|selector>`
-Scroll the page or a specific element. Argument is positional — there is no `--pixels` flag.
+Scroll the page or a specific element. Give either `--dy`/`--dx` or one positional argument, never both. A negative pixel count works in either spelling. Only one positional is accepted, so `--tab` must be a flag, never placed after `--`.
 
 ```bash
 pinchtab scroll 800            # scroll page down 800px
 pinchtab scroll -300           # scroll page up 300px
-pinchtab scroll down           # named direction (also up, top, bottom)
+pinchtab scroll --dy -300      # the same, as a flag
+pinchtab scroll --dx -120      # scroll page left 120px
+pinchtab scroll down           # named direction: down, left, right, up
 pinchtab scroll '#footer'      # scroll a CSS selector into view
 pinchtab scroll e20            # scroll an element ref into view
 pinchtab scroll 800 --snap-diff
@@ -244,6 +250,62 @@ pinchtab network <requestId> --body
 ```
 
 > **Sensitive data:** Request bodies and exports may contain cookies, tokens, or personal data. Obtain explicit approval before inspecting bodies or exporting data, keep redaction enabled, and delete artifacts after use.
+
+---
+
+## State Commands
+
+### `pinchtab cookies`
+Read, set and clear browser cookies for the tab you are driving. Reach for `cookies get` to read a cookie — not `state`, which returns the whole gated state snapshot.
+
+```bash
+pinchtab cookies get                            # cookies visible to the tab's current URL, with values
+pinchtab cookies get --name session             # one cookie
+pinchtab cookies get --url https://example.com  # read another origin
+pinchtab cookies set session abc123             # reuse a session without replaying a saved state
+pinchtab cookies set session ""                 # blank the value without deleting the cookie
+pinchtab cookies clear                          # every cookie in the browser, all origins
+```
+
+| Flag | Command | Description |
+|------|---------|-------------|
+| `--name <name>` | `get` | Only return the cookie with this name |
+| `--url <url>` | `get`, `set` | Target URL instead of the tab's current page |
+| `--domain <domain>` | `set` | Cookie domain |
+| `--path <path>` | `set` | Cookie path |
+| `--same-site <v>` | `set` | SameSite attribute: `Strict`, `Lax` or `None` |
+| `--secure` | `set` | Mark the cookie Secure |
+| `--http-only` | `set` | Mark the cookie HttpOnly |
+| `--tab <id>` | `get`, `set` | Target a specific tab |
+
+`cookies clear` affects **all origins** and cannot be scoped to one tab or one domain — there is no per-cookie removal verb, and `--tab` is deliberately not offered on it. Nothing in the CLI restores what it removes: re-set what you need with `cookies set`, or reload a saved state with `state load`.
+
+Requires `security.allowCookies: true`.
+
+> **Sensitive data:** Cookie values are credentials. Obtain user approval before reading or forwarding them, and never print them into a transcript that outlives the task.
+
+### `pinchtab storage`
+Read and write `localStorage` and `sessionStorage` for the active tab's origin.
+
+```bash
+pinchtab storage get                      # both stores
+pinchtab storage get --type local         # one store
+pinchtab storage get --key token          # a single item
+pinchtab storage set token abc123         # writes to localStorage by default
+pinchtab storage set token abc123 --type session
+pinchtab storage delete --key token       # remove one key
+pinchtab storage delete                   # no --key: clears the whole store
+pinchtab storage clear --all              # both stores in one call
+```
+
+| Flag | Command | Description |
+|------|---------|-------------|
+| `--type <local\|session>` | `get`, `set`, `delete`, `clear` | Which store. `get` defaults to both; the write verbs default to `local` |
+| `--key <key>` | `get`, `delete` | `get`: return only this item. `delete`: the key to remove — omit it and the whole store is cleared |
+| `--all` | `clear` | Clear both stores in one call |
+| `--tab <id>` | all | Target a specific tab |
+
+`storage delete` with no `--key` clears the whole store `--type` selects — localStorage unless you pass `--type session` — for the tab's origin. It is the same call `storage clear` makes. `--all` is registered on `clear` only: `clear --all` empties both stores, while `delete --all` is refused as an unknown flag. `storage clear` without `--all` clears localStorage alone.
 
 ---
 

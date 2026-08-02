@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/stealth"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
 type debuggerCommand struct {
@@ -195,10 +195,7 @@ func TestDebuggerPauseGuardLive(t *testing.T) {
 		t.Skip("set PINCHTAB_DEBUGGER_GUARD_LIVE=1 for the local Chromium proof")
 	}
 
-	chromePath, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Fatal("chromium is required for the live debugger guard proof")
-	}
+	chromePath := testbrowser.MustPath(t)
 	opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(chromePath))
 	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), opts...)
 	defer allocCancel()

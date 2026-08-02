@@ -70,6 +70,10 @@ func SetupUsage(root *cobra.Command) {
 %s:
 {{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}
 {{end}}
+{{if .HasAvailableInheritedFlags}}
+%s:
+{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}
+{{end}}
 {{if .HasExample}}
 %s:
 {{.Example}}
@@ -80,6 +84,7 @@ func SetupUsage(root *cobra.Command) {
 		cmdStyle("{{rpad .Name .NamePadding}}"),
 		cmdStyle("{{rpad .Name .NamePadding}}"),
 		headerStyle("Flags"),
+		headerStyle("Global Flags"),
 		headerStyle("Examples")))
 }
 

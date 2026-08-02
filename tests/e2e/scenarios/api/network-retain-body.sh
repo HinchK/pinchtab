@@ -18,8 +18,9 @@ E2E_SERVER="$E2E_RETAIN_SERVER"
 pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/network-retain-body.html\"}"
 assert_ok "navigate to retention fixture"
 
-NETWORK_JSON=$(e2e_curl -s "${E2E_SERVER}/network?type=XHR&limit=20")
-REQ_ID=$(echo "$NETWORK_JSON" | jq -r '.items[] | select(.url | contains("network-retain-body.json")) | .requestId' | head -n1)
+# The fixture uses fetch(), which CDP classifies as Fetch rather than XHR.
+NETWORK_JSON=$(e2e_curl -s "${E2E_SERVER}/network?type=Fetch&limit=20")
+REQ_ID=$(echo "$NETWORK_JSON" | jq -r '.entries[] | select(.url | contains("network-retain-body.json")) | .requestId' | head -n1)
 if [ -z "$REQ_ID" ] || [ "$REQ_ID" = "null" ]; then
   echo -e "  ${RED}✗${NC} could not find retained-body request in network buffer"
   ((ASSERTIONS_FAILED++)) || true

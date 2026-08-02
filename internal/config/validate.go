@@ -10,8 +10,10 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/browsers"
 	"github.com/pinchtab/pinchtab/internal/config/geo"
+	"github.com/pinchtab/pinchtab/internal/safelog"
 )
 
 type ValidationError struct {
@@ -23,7 +25,15 @@ func (e ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Field, e.Message)
 }
 
-// ValidateFileConfig validates a FileConfig and returns all errors found.
+// ValidateFileConfig returns the GATING problems in a FileConfig: values that are wrong,
+// out of range, or no longer supported. Every caller that decides whether a write may
+// proceed gates on this, so anything returned here blocks a save — off a TTY that means an
+// agent's write is refused, which is correct for an invalid port and wrong for a key that
+// merely does nothing.
+//
+// Advisories live in FileConfigAdvisories instead. Two severities rather than one is the
+// whole point: a diagnostic about an inert key used to ride this list and abort every
+// later config write, including writes to unrelated keys.
 func ValidateFileConfig(fc *FileConfig) []error {
 	var errs []error
 
@@ -35,6 +45,11 @@ func ValidateFileConfig(fc *FileConfig) []error {
 	if fc.Server.Bind != "" {
 		if err := validateBind(fc.Server.Bind, "server.bind"); err != nil {
 			errs = append(errs, err)
+		}
+	}
+	if fc.Server.LogLevel != "" {
+		if _, err := safelog.ParseLevel(fc.Server.LogLevel); err != nil {
+			errs = append(errs, ValidationError{Field: "server.logLevel", Message: err.Error()})
 		}
 	}
 	if fc.Server.NetworkBufferSize != nil {
@@ -279,6 +294,19 @@ func ValidateFileConfig(fc *FileConfig) []error {
 			})
 			break
 		}
+	}
+	// An unmatched name does not fail at run time, it changes which solvers run:
+	// one typo alongside good names silently drops that solver, and a list of
+	// only typos silently runs every solver instead.
+	for i, solverName := range fc.AutoSolver.Solvers {
+		name := strings.TrimSpace(solverName)
+		if name == "" || catalog.IsKnown(name) {
+			continue
+		}
+		errs = append(errs, ValidationError{
+			Field:   fmt.Sprintf("autoSolver.solvers[%d]", i),
+			Message: fmt.Sprintf("unknown solver %q (known: %v)", name, catalog.Names()),
+		})
 	}
 
 	if fc.Observability.Activity.SessionIdleSec != nil && *fc.Observability.Activity.SessionIdleSec < 0 {
@@ -622,4 +650,44 @@ func validateBrowsersBlock(fc FileConfig) []error {
 	}
 
 	return errs
+}
+
+// FileConfigAdvisories reports what a config file says that has no effect. These are
+// REPORTED, never gating: nothing here means the file is unsafe to load or the next write
+// is unsafe to make, so blocking a save on one would refuse work for no reason.
+//
+// A diagnostic belongs here only when the value is inert — PinchTab reads something else,
+// or nothing — and the reader has nothing to fix. Anything the user could get wrong, and
+// anything PinchTab will act on, stays in ValidateFileConfig where it gates.
+//
+//	observability.activity.stateDir  the path is derived from server.stateDir; the loader
+//	                                 never reads this key, and `config set` refuses it
+func FileConfigAdvisories(fc *FileConfig) []string {
+	if fc == nil {
+		return nil
+	}
+	var advisories []string
+	if strings.TrimSpace(fc.Observability.Activity.StateDir) != "" {
+		advisories = append(advisories, ActivityStateDirAdvisory)
+	}
+	advisories = append(advisories, proxyServerAdvisories(fc)...)
+	return advisories
+}
+
+// proxyServerAdvisories reports every proxy block that holds something but no server.
+// Target proxies are walked too: their blocks were never dropped at save, so a
+// serverless one has always been kept and silently unused — the same state this card's
+// defect produced for browser.proxy, one level down.
+func proxyServerAdvisories(fc *FileConfig) []string {
+	var advisories []string
+	if !fc.Browser.Proxy.IsZero() && fc.Browser.Proxy.HasNoServer() {
+		advisories = append(advisories, ProxyServerRequiredAdvisory("browser.proxy"))
+	}
+	for _, name := range SortedBrowserTargetNames(fc.Browser.Targets) {
+		target := fc.Browser.Targets[name]
+		if !target.Proxy.IsZero() && target.Proxy.HasNoServer() {
+			advisories = append(advisories, ProxyServerRequiredAdvisory(fmt.Sprintf("browser.targets.%s.proxy", name)))
+		}
+	}
+	return advisories
 }

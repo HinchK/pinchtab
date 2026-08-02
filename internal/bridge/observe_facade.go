@@ -72,6 +72,14 @@ func AnnotateBounds(ctx context.Context, nodes []A11yNode, pageCoords bool, vp V
 	return bridgeobserve.AnnotateBounds(ctx, nodes, pageCoords, vp)
 }
 
+func ElementBorderBox(ctx context.Context, backendNodeID int64) (BoundingBox, bool) {
+	return bridgeobserve.ElementBorderBox(ctx, backendNodeID)
+}
+
+func IsOnScreen(box BoundingBox, vp ViewportInfo) bool {
+	return bridgeobserve.IsOnScreen(box, vp)
+}
+
 func FetchAXTree(ctx context.Context) ([]RawAXNode, error) {
 	return bridgeobserve.FetchAXTree(ctx)
 }
@@ -116,8 +124,8 @@ func matchStatusRange(status int, pattern string) bool {
 	return bridgeobserve.MatchStatusRange(status, pattern)
 }
 
-func GetResponseBodyDirect(ctx context.Context, requestID string) (string, bool, error) {
-	return bridgeobserve.GetResponseBodyDirect(ctx, requestID)
+func GetResponseBody(ctx context.Context, requestID string) (string, bool, error) {
+	return bridgeobserve.GetResponseBody(ctx, requestID)
 }
 
 func (b *Bridge) GetMemoryMetrics(tabID string) (*MemoryMetrics, error) {

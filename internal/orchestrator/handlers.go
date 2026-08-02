@@ -62,6 +62,10 @@ func (o *Orchestrator) registerHandlers(mux *http.ServeMux, skipLaunch bool) {
 	mux.HandleFunc("GET /instances/{id}", o.handleGetInstance)
 	mux.HandleFunc("GET /instances/tabs", o.handleAllTabs)
 	mux.HandleFunc("GET /instances/metrics", o.handleAllMetrics)
+	// The front door answers the bare /metrics with its OWN counters, so an
+	// instance's request counters need a path of their own; without it, moving
+	// /metrics to the front door would just make the other layer invisible.
+	mux.HandleFunc("GET /instances/{id}/metrics", o.proxyToInstance)
 	if !skipLaunch {
 		mux.HandleFunc("POST /instances/start", o.handleStartInstance)
 		mux.HandleFunc("POST /instances/launch", o.handleLaunchByName)

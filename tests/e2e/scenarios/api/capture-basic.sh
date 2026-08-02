@@ -136,7 +136,7 @@ assert_result_jq \
 end_test
 
 # ─────────────────────────────────────────────────────────────────
-start_test "capture: epoch token is unique across calls"
+start_test "capture: epoch token stays stable across unchanged calls"
 
 pt_get /capture
 EPOCH_A=$(echo "$RESULT" | jq -r '.epoch.domEpoch')
@@ -144,10 +144,10 @@ EPOCH_A=$(echo "$RESULT" | jq -r '.epoch.domEpoch')
 pt_get /capture
 EPOCH_B=$(echo "$RESULT" | jq -r '.epoch.domEpoch')
 
-if [ -n "$EPOCH_A" ] && [ -n "$EPOCH_B" ] && [ "$EPOCH_A" != "$EPOCH_B" ]; then
-  pass_assert "epochs differ ($EPOCH_A != $EPOCH_B)"
+if [ -n "$EPOCH_A" ] && [ -n "$EPOCH_B" ] && [ "$EPOCH_A" = "$EPOCH_B" ]; then
+  pass_assert "epochs match ($EPOCH_A)"
 else
-  fail_assert "epochs not unique ($EPOCH_A vs $EPOCH_B)"
+  fail_assert "epochs changed without a new document ($EPOCH_A vs $EPOCH_B)"
 fi
 
 end_test

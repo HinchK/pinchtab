@@ -3,10 +3,13 @@ package doctor
 
 import (
 	"context"
+	"os"
+	"runtime"
 	"strings"
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/browsers"
+	"github.com/pinchtab/pinchtab/internal/browsers/runtimekit"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -194,8 +197,10 @@ func buildDoctorEnv(cfg *config.RuntimeConfig) *browsers.DoctorEnv {
 	if cfg == nil {
 		return nil
 	}
+	_, containerErr := os.Stat("/.dockerenv")
 	return &browsers.DoctorEnv{
-		Binary: strings.TrimSpace(cfg.BrowserBinary),
+		Binary:    strings.TrimSpace(cfg.BrowserBinary),
+		NoSandbox: runtimekit.ChromeNeedsNoSandbox(runtime.GOOS, os.Geteuid(), containerErr == nil),
 		Cloak: browsers.CloakFingerprint{
 			FingerprintSeed: cfg.Cloak.FingerprintSeed,
 			Platform:        cfg.Cloak.Platform,

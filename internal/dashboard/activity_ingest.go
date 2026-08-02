@@ -52,7 +52,12 @@ func activityEventToLiveEvent(evt activity.Event) apiTypes.ActivityEvent {
 	}
 
 	return apiTypes.ActivityEvent{
-		ID:        evt.RequestID,
+		// Identity comes from the activity store's composite key, not RequestID:
+		// requestIDFor returns the X-Request-Id header or empty and never
+		// generates one, so keying on it would give most events a fresh random id
+		// per ingest (defeating dedup), while collapsing distinct events that do
+		// share a request id.
+		ID:        activity.EventIdentity(evt),
 		AgentID:   agentIDOrAnonymous(evt.AgentID),
 		Channel:   "tool_call",
 		Type:      classifyActivityType(evt),

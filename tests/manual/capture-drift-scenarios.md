@@ -23,6 +23,13 @@ Expect:
 - response prints `epoch: ep_...`, `pairing: navigated=false`.
 - the snapshot's button "Known Position Button" has a `boundingBox` near
   `{x: 100, y: 200, w: 240, h: 48}` (within 1 CSS pixel × `devicePixelRatio`).
+- the button "Bordered Padded Button" has a `boundingBox` near
+  `{x: 100, y: 400, w: 240, h: 48}` — the BORDER box. Its content box is
+  `{x: 118, y: 418, w: 204, h: 12}`, so reading `{118, 418, 204, 12}` here means
+  the bounds path has gone back to the content quad and every overlay drawn from
+  it will sit inside the painted border.
+- cross-check the same ref against `pinchtab box` and
+  `GET /screenshot?annotate=true`: all three report the same rectangle.
 - `image.coordinateSpace == "viewport"`.
 
 ## 2. wait:stable for deferred mount

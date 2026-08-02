@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/pinchtab/pinchtab/internal/selector"
+	"unicode/utf8"
 )
 
 // @Endpoint GET /text
@@ -30,7 +32,11 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	mode := r.URL.Query().Get("mode")
+	mode, modeErr := resolveTextMode(r.URL.Query().Get("mode"))
+	if modeErr != nil {
+		httpx.Error(w, 400, modeErr)
+		return
+	}
 	format := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("format")))
 	maxChars := -1
 	if v := r.URL.Query().Get("maxChars"); v != "" {
@@ -62,19 +68,21 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 		if !ghostRoute {
 			modalNodeID, modalOpen, err = bridge.TopmostModalNodeID(tCtx, targetFrameID)
 			if err != nil {
-				httpx.Error(w, selectorResolutionHTTPStatus(err), fmt.Errorf("resolve topmost dialog: %w", err))
+				httpx.Error(w, selectorResolutionHTTPStatus(err), err)
 				return
 			}
 		}
 
 		var text string
+		var extraction textExtraction
 		if selectorParam != "" || refParam != "" {
 			text, err = h.extractElementText(tCtx, resolvedTabID, selectorParam, refParam, modalNodeID)
 		} else if modalOpen {
 			err = h.Bridge.CallFunctionOnNode(tCtx, modalNodeID,
 				`function() { return this.innerText || this.textContent || ''; }`, nil, &text)
+			extraction = textExtraction{Text: text, Mode: extractionRaw, RawLength: utf8.RuneCountInString(text), RawKnown: true}
 		} else {
-			text, err = h.extractDocumentText(tCtx, mode, targetFrameID)
+			extraction, err = h.extractDocumentText(tCtx, mode, targetFrameID)
 		}
 
 		stable := true
@@ -98,10 +106,11 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 			httpx.Error(w, status, err)
 			return
 		}
+		scopeInfo := h.frameDisclosureFor(tCtx, resolvedTabID, targetFrameID)
 		if selectorParam != "" || refParam != "" {
-			h.writeElementTextResponse(w, r, tCtx, text)
+			h.writeElementTextResponse(w, r, tCtx, text, scopeInfo)
 		} else {
-			h.writeTextResponse(w, r, tCtx, text, maxChars, format, textRoute)
+			h.writeTextResponse(w, r, tCtx, extraction, maxChars, format, textRoute, scopeInfo)
 		}
 		return
 	}
@@ -109,40 +118,156 @@ func (h *Handlers) HandleText(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeElementTextResponse writes an already scope-validated element read.
-func (h *Handlers) writeElementTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, text string) {
+func (h *Handlers) writeElementTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, text string, scope *frameDisclosure) {
 	url, _ := h.Bridge.CurrentURL(tCtx)
 	title, _ := h.Bridge.CurrentTitle(tCtx)
 	h.recordResolvedURL(r, url)
-	httpx.JSON(w, 200, map[string]any{
+	httpx.JSON(w, 200, scope.attach(map[string]any{
 		"url":   url,
 		"title": title,
 		"text":  text,
-	})
+	}))
+}
+
+const rawTextScript = `document.body.innerText`
+
+// textModes are the values ?mode= accepts, each mapped to the extraction it selects.
+// "full" is an ALIAS of raw because that is what the CLI's --full already sends and
+// what the word plainly reads as — the whole unfiltered page. It used to fall through
+// to readability, so a caller who read the CLI help and wrote ?mode=full against the
+// API got the filtered output while believing they had asked for innerText.
+var textModes = map[string]string{
+	"":     "",
+	"raw":  "raw",
+	"full": "raw",
+}
+
+// resolveTextMode maps a requested mode onto the extraction that runs, and REFUSES an
+// unimplemented one. Silently extracting readability for a mode nobody implemented hands
+// the caller something other than what they asked for with no signal, which is the same
+// defect class as losing a field boundary.
+func resolveTextMode(requested string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(requested))
+	mode, ok := textModes[normalized]
+	if !ok {
+		return "", fmt.Errorf("unknown text mode %q; accepted values are %s (omit mode for the default Readability extraction)", requested, strings.Join(namedTextModes(), ", "))
+	}
+	return mode, nil
+}
+
+// namedTextModes lists the modes a caller can spell, sorted so the refusal reads the
+// same on every run rather than however the map happened to iterate.
+func namedTextModes() []string {
+	named := make([]string, 0, len(textModes))
+	for mode := range textModes {
+		if mode != "" {
+			named = append(named, mode)
+		}
+	}
+	sort.Strings(named)
+	return named
+}
+
+// Extraction modes echoed to the caller: which extractor produced the text.
+const (
+	extractionReadability         = "readability"
+	extractionRaw                 = "raw"
+	extractionReadabilityFallback = "readability_fallback"
+)
+
+// Readability is an article heuristic; on a layout it does not recognise as an
+// article (landing page, dashboard, docs index) it returns the single block it
+// scored highest. Measured against document.body.innerText, a collapse retains
+// ~3% of the page while healthy article extraction retains ~91%, so any ratio in
+// the low tens of percent separates the two with wide margin on both sides.
+const readabilityCoverageRatio = 0.25
+
+// Under this many raw characters the ratio is noise — a short page legitimately
+// extracts to a couple of lines — so no fallback fires below it.
+const readabilityCoverageFloorChars = 400
+
+// headerTextExtraction reports the extraction mode on the format=text path,
+// which returns a bare body with nowhere to carry the signal.
+const headerTextExtraction = "X-PT-Text-Extraction"
+
+// textExtraction is the document text plus the story of how it was produced:
+// the mode that actually ran and the length of the raw document it was measured
+// against (RawKnown is false when the baseline extraction itself failed).
+type textExtraction struct {
+	Text      string
+	Mode      string
+	RawLength int
+	RawKnown  bool
 }
 
 // extractDocumentText reads the document's text (readability unless mode=="raw")
-// across all reachable frames, or scoped to targetFrameID when set. The
-// cross-frame path silently skips cross-origin frames and never errors.
-func (h *Handlers) extractDocumentText(tCtx context.Context, mode, targetFrameID string) (string, error) {
-	script := `document.body.innerText`
-	if mode != "raw" {
-		script = assets.ReadabilityJS
+// across all reachable frames, or scoped to targetFrameID when set. Readability
+// output that covers too little of the raw document is discarded in favour of
+// the raw text, reported as extractionReadabilityFallback.
+func (h *Handlers) extractDocumentText(tCtx context.Context, mode, targetFrameID string) (textExtraction, error) {
+	if mode == "raw" {
+		text, err := h.extractText(tCtx, rawTextScript, targetFrameID)
+		if err != nil {
+			return textExtraction{}, err
+		}
+		return textExtraction{Text: text, Mode: extractionRaw, RawLength: utf8.RuneCountInString(text), RawKnown: true}, nil
 	}
+
+	text, err := h.extractText(tCtx, assets.ReadabilityJS, targetFrameID)
+	if err != nil {
+		return textExtraction{}, err
+	}
+
+	raw, rawErr := h.extractText(tCtx, rawTextScript, targetFrameID)
+	if rawErr != nil {
+		return textExtraction{Text: text, Mode: extractionReadability}, nil
+	}
+	extractedLen, rawLen := utf8.RuneCountInString(text), utf8.RuneCountInString(raw)
+	if readabilityCollapsed(extractedLen, rawLen) {
+		return textExtraction{Text: raw, Mode: extractionReadabilityFallback, RawLength: rawLen, RawKnown: true}, nil
+	}
+	return textExtraction{Text: text, Mode: extractionReadability, RawLength: rawLen, RawKnown: true}, nil
+}
+
+func readabilityCollapsed(extractedLen, rawLen int) bool {
+	return rawLen >= readabilityCoverageFloorChars && float64(extractedLen) < float64(rawLen)*readabilityCoverageRatio
+}
+
+// extractText runs one extraction script through the traversal the request
+// selected: every reachable frame (joined), or the scoped frame's isolated world
+// so the expression sees the iframe's `document`, not the parent's. Both sides of
+// the coverage ratio go through here, so they are always built identically.
+func (h *Handlers) extractText(tCtx context.Context, script, targetFrameID string) (string, error) {
 	if targetFrameID == "" {
 		return h.extractTextAllFrames(tCtx, script), nil
 	}
-	// Frame-scoped path — evaluate in the frame's isolated world so the
-	// expression sees the iframe's `document`, not the parent's.
 	return h.evalTextInFrame(tCtx, script, targetFrameID)
+}
+
+// truncateChars cuts s to at most limit characters, reporting whether it cut.
+// Slicing by byte splits multi-byte characters and the orphaned bytes reach the
+// client as U+FFFD.
+func truncateChars(s string, limit int) (string, bool) {
+	if limit < 0 || utf8.RuneCountInString(s) <= limit {
+		return s, false
+	}
+	count := 0
+	for offset := range s {
+		if count == limit {
+			return s[:offset], true
+		}
+		count++
+	}
+	return s, false
 }
 
 // writeTextResponse truncates, IDPI-scans, and writes the document text as
 // plain text (format text/plain) or the JSON envelope.
-func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, text string, maxChars int, format string, route *browserops.RouteMetadata) {
+func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCtx context.Context, extraction textExtraction, maxChars int, format string, route *browserops.RouteMetadata, scope *frameDisclosure) {
+	text := extraction.Text
 	truncated := false
-	if maxChars > -1 && len(text) > maxChars {
-		text = text[:maxChars]
-		truncated = true
+	if maxChars > -1 {
+		text, truncated = truncateChars(text, maxChars)
 	}
 
 	url, _ := h.Bridge.CurrentURL(tCtx)
@@ -157,6 +282,7 @@ func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCt
 	}
 	result.SetHeaders(w)
 	text = result.Text
+	w.Header().Set(headerTextExtraction, extraction.Mode)
 
 	if format == "text" || format == "plain" {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -165,12 +291,17 @@ func (h *Handlers) writeTextResponse(w http.ResponseWriter, r *http.Request, tCt
 		return
 	}
 
-	resp := map[string]any{
-		"url":       url,
-		"title":     title,
-		"text":      text,
-		"truncated": truncated,
-		"route":     route,
+	resp := scope.attach(map[string]any{
+		"url":        url,
+		"title":      title,
+		"text":       text,
+		"truncated":  truncated,
+		"route":      route,
+		"extraction": extraction.Mode,
+		"textLength": utf8.RuneCountInString(text),
+	})
+	if extraction.RawKnown {
+		resp["rawLength"] = extraction.RawLength
 	}
 	if result.Warning != "" {
 		resp["idpiWarning"] = result.Warning

@@ -248,8 +248,19 @@ func (o *Orchestrator) RunMaintenance(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			o.bindings.PruneAgents(idleTTL, maxAgent)
+			o.runMaintenanceOnce(idleTTL, maxAgent)
 		}
+	}
+}
+
+// runMaintenanceOnce bounds the caches that nothing else prunes. Agent bindings
+// have no lifecycle signal, and the tab→instance cache misses every tab that
+// closes without passing through the proxy — bridge-side idle eviction and
+// window.close() among them — so both need periodic reconciliation.
+func (o *Orchestrator) runMaintenanceOnce(idleTTL time.Duration, maxAgent int) {
+	o.bindings.PruneAgents(idleTTL, maxAgent)
+	if o.instanceMgr != nil {
+		o.instanceMgr.Locator.RefreshAll()
 	}
 }
 

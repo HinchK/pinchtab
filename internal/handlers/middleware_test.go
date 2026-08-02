@@ -856,18 +856,18 @@ func TestLoggingMiddleware_RecordsFailure(t *testing.T) {
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
-	snap := FailureSnapshot()
+	snap := FailureSnapshot(LayerInstance)
 	if got := snap["requestsFailed"].(uint64); got != 1 {
 		t.Fatalf("requestsFailed = %d, want 1", got)
 	}
-	recent, ok := snap["recent"].([]FailureEvent)
+	recent, ok := snap["recent"].([]map[string]any)
 	if !ok || len(recent) != 1 {
 		t.Fatalf("recent failures = %#v, want 1 event", snap["recent"])
 	}
-	if recent[0].Path != "/boom" {
-		t.Fatalf("recent path = %q, want /boom", recent[0].Path)
+	if recent[0]["path"] != "/boom" {
+		t.Fatalf("recent path = %v, want /boom", recent[0]["path"])
 	}
-	if recent[0].RequestID == "" {
+	if recent[0]["requestId"] == "" {
 		t.Fatal("expected request id on failure event")
 	}
 }

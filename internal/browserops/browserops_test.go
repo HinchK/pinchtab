@@ -5,25 +5,11 @@ import (
 	"testing"
 )
 
-func TestSingleBrowserRoute(t *testing.T) {
-	route := SingleBrowserRoute("chrome")
-	if route.RequestedBrowser != "chrome" {
-		t.Errorf("RequestedBrowser = %q, want %q", route.RequestedBrowser, "chrome")
-	}
-	if route.UsedBrowser != "chrome" {
-		t.Errorf("UsedBrowser = %q, want %q", route.UsedBrowser, "chrome")
-	}
-	if route.Escalated {
-		t.Error("Escalated should be false")
-	}
-	if len(route.Attempts) != 1 {
-		t.Fatalf("len(Attempts) = %d, want 1", len(route.Attempts))
-	}
-	if route.Attempts[0].Browser != "chrome" {
-		t.Errorf("Attempts[0].Browser = %q, want %q", route.Attempts[0].Browser, "chrome")
-	}
-	if !route.Attempts[0].Accepted {
-		t.Error("Attempts[0].Accepted should be true")
+func singleBrowserRoute(browser string) *RouteMetadata {
+	return &RouteMetadata{
+		RequestedBrowser: browser,
+		UsedBrowser:      browser,
+		Attempts:         []RouteAttempt{{Browser: browser, Accepted: true}},
 	}
 }
 
@@ -32,7 +18,7 @@ func TestRouteMetadataJSONKeys(t *testing.T) {
 		TabID: "tab-1",
 		URL:   "https://example.com",
 		Title: "Example",
-		Route: SingleBrowserRoute("chrome"),
+		Route: singleBrowserRoute("chrome"),
 	}
 
 	data, err := json.Marshal(result)
@@ -101,7 +87,7 @@ func TestRouteMetadataJSONKeys(t *testing.T) {
 // TestResultStructsOmitEngine verifies that all result structs serialize
 // with "route" metadata and never include an "browserops" key.
 func TestResultStructsOmitEngine(t *testing.T) {
-	route := SingleBrowserRoute("lite")
+	route := singleBrowserRoute("lite")
 
 	tests := []struct {
 		name string

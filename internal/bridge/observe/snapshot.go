@@ -12,6 +12,46 @@ import (
 	"github.com/chromedp/chromedp"
 )
 
+// MaskedValue stands in for a sensitive field's content in snapshots. Its width
+// is fixed on purpose: snapshots are persisted and rendered elsewhere, so a
+// length-proportional mask would leak the secret's length. It says "there is a
+// value here", nothing more — an empty sensitive field carries no value at all.
+const MaskedValue = "••••••••"
+
+// IsSensitiveAutocomplete reports whether an autocomplete token marks a field
+// whose content must never be printed.
+func IsSensitiveAutocomplete(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "current-password", "new-password":
+		return true
+	}
+	return false
+}
+
+// CheckedState is the accessibility tree's own "checked" property, verbatim. A bool
+// could not carry it: "mixed" is a real state that both a native indeterminate
+// checkbox and aria-checked="mixed" report, and absent has to mean "this node has no
+// checkedness" rather than "off".
+type CheckedState string
+
+const (
+	CheckedTrue  CheckedState = "true"
+	CheckedFalse CheckedState = "false"
+	CheckedMixed CheckedState = "mixed"
+)
+
+func checkedStateFromAX(value string) (CheckedState, bool) {
+	switch CheckedState(value) {
+	case CheckedTrue, CheckedFalse, CheckedMixed:
+		return CheckedState(value), true
+	}
+	return "", false
+}
+
+// A11yNode is one snapshot node. Visible is a pointer because nil (absent on
+// the wire) means the bounds pass never measured this node, which is a
+// different statement from a measured false: it is set exactly when
+// BoundingBox is.
 type A11yNode struct {
 	Ref            string       `json:"ref"`
 	Role           string       `json:"role"`
@@ -27,6 +67,7 @@ type A11yNode struct {
 	Tag            string       `json:"tag,omitempty"`
 	Disabled       bool         `json:"disabled,omitempty"`
 	Focused        bool         `json:"focused,omitempty"`
+	Checked        CheckedState `json:"checked,omitempty"`
 	Hidden         bool         `json:"hidden,omitempty"`
 	NodeID         int64        `json:"nodeId,omitempty"`
 	FrameID        string       `json:"frameId,omitempty"`
@@ -36,7 +77,7 @@ type A11yNode struct {
 	ChildFrameURL  string       `json:"childFrameUrl,omitempty"`
 	ChildFrameName string       `json:"childFrameName,omitempty"`
 	BoundingBox    *BoundingBox `json:"boundingBox,omitempty"`
-	Visible        bool         `json:"visible,omitempty"`
+	Visible        *bool        `json:"visible,omitempty"`
 }
 
 // BoundingBox is a CSS-pixel rectangle for a snapshot node. Populated only by
@@ -451,11 +492,25 @@ func BuildSnapshot(nodes []RawAXNode, filter string, maxDepth int) ([]A11yNode, 
 			if prop.Name == "focused" && prop.Value.String() == "true" {
 				entry.Focused = true
 			}
-			if prop.Name == "autocomplete" {
-				v := strings.ToLower(prop.Value.String())
-				if v == "current-password" || v == "new-password" {
-					entry.Value = "••••••••"
+			// The accessibility tree already answers this for checkboxes, radios,
+			// menuitemcheckbox/radio and any custom role carrying aria-checked, and
+			// it answers "mixed" for a native indeterminate box too. Reading it here
+			// costs nothing: no DOM access and no extra round trip. The other route
+			// — evaluating aria-checked in the page, as /checked and the check action
+			// do — would add a page call to every snapshot and would have to run in
+			// the best-effort DOM pass, where a failure produces an absent field that
+			// every consumer reads as unchecked.
+			if prop.Name == "checked" {
+				if state, ok := checkedStateFromAX(prop.Value.String()); ok {
+					entry.Checked = state
 				}
+			}
+			// Unconditional by design: this pass has no DOM access, and the DOM
+			// enrichment that knows whether the field is empty is best-effort. If
+			// it never runs, this mask is what keeps a password out of the
+			// snapshot, so it must not depend on a signal available only there.
+			if prop.Name == "autocomplete" && IsSensitiveAutocomplete(prop.Value.String()) {
+				entry.Value = MaskedValue
 			}
 		}
 
@@ -596,7 +651,7 @@ func DiffSnapshot(prev, curr []A11yNode) (added, changed, removed []A11yNode) {
 		old, existed := prevMap[key]
 		if !existed {
 			added = append(added, n)
-		} else if old.Value != n.Value || old.Focused != n.Focused || old.Disabled != n.Disabled {
+		} else if old.Value != n.Value || old.Focused != n.Focused || old.Disabled != n.Disabled || old.Checked != n.Checked {
 			changed = append(changed, n)
 		}
 	}

@@ -30,6 +30,8 @@ var htmlTemplate = template.Must(template.New("report").Funcs(template.FuncMap{
 	"formatCLS":       formatCLS,
 	"sortedKeys":      sortedKeys,
 	"pageErrors":      pageConsoleErrors,
+	"pageStatus":      audit.PageStatus,
+	"firstLine":       firstLine,
 	// Screenshot sources are our own artifact paths or data: URIs built by
 	// BuildPDFHTML, so they are trusted; html/template would otherwise
 	// reject data: URLs.
@@ -46,10 +48,10 @@ var htmlTemplate = template.Must(template.New("report").Funcs(template.FuncMap{
 <p>Schema version {{.R.SchemaVersion}} · generated {{.R.GeneratedAt.Format "2006-01-02 15:04:05 UTC"}} · {{len .R.Pages}} page(s)</p>
 
 <h2>Summary</h2>
-<p class="score">Summary score: {{.R.SummaryScore}}/100</p>
+<p class="score">Mean accessibility score: {{.R.SummaryScore}}/100</p>
 <table>
-<tr><th>Page</th><th>Score</th><th>Load</th><th>Broken assets</th><th>Console errors</th><th>Status</th></tr>
-{{range .R.Pages}}<tr><td>{{pageLabel .}}</td><td>{{.Browser.AccessibilityScore}}</td><td>{{formatMs .Browser.TimingMetrics.Load}}</td><td>{{len .Browser.BrokenAssets}}</td><td>{{pageErrors .}}</td><td>{{if .Error}}<span class="error">{{.Error}}</span>{{else}}ok{{end}}</td></tr>
+<tr><th>Page</th><th>Score</th><th>Load</th><th>Broken assets</th><th>Console errors</th><th>Uncaught JS errors</th><th>Status</th></tr>
+{{range .R.Pages}}<tr><td>{{pageLabel .}}</td><td>{{.Browser.AccessibilityScore}}</td><td>{{formatMs .Browser.TimingMetrics.Load}}</td><td>{{len .Browser.BrokenAssets}}</td><td>{{pageErrors .}}</td><td>{{len .Browser.JSErrors}}</td><td>{{if .Error}}<span class="error">{{.Error}}</span>{{else}}{{pageStatus .}}{{end}}</td></tr>
 {{end}}</table>
 
 {{if .HasSeaportal}}<h2>SEO &amp; Metadata</h2>
@@ -73,8 +75,9 @@ var htmlTemplate = template.Must(template.New("report").Funcs(template.FuncMap{
 {{end}}</table>{{end}}
 
 {{if .HasConsole}}<h2>Console &amp; JS Errors</h2>
-{{range .R.Pages}}{{$problems := consoleProblems .}}{{if $problems}}<h3>{{pageLabel .}}</h3><ul>
-{{range $problems}}<li><code>{{.Level}}</code> {{.Message}}</li>
+{{range .R.Pages}}{{$problems := consoleProblems .}}{{if or $problems .Browser.JSErrors}}<h3>{{pageLabel .}}</h3><ul>
+{{range .Browser.JSErrors}}<li><code>uncaught</code> {{firstLine .Message}}</li>
+{{end}}{{range $problems}}<li><code>{{.Level}}</code> {{.Message}}</li>
 {{end}}</ul>{{end}}{{end}}{{end}}
 
 {{if .HasBroken}}<h2>Broken Assets</h2>
@@ -130,7 +133,7 @@ func renderHTML(r audit.AuditReport) ([]byte, error) {
 		HasElements:     hasElements(r),
 		HasVisualDiff:   hasVisualDiff(r),
 		HasTiming:       hasTiming(r),
-		HasConsole:      hasConsoleProblems(r),
+		HasConsole:      hasConsoleProblems(r) || hasJSErrors(r),
 		HasBroken:       hasBrokenAssets(r),
 		Usability:       usabilityPages(r),
 		Recommendations: recommendations(r),

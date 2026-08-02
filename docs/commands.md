@@ -4,9 +4,13 @@
 
 ```bash
 pinchtab server                         # Start the full server (dashboard + API)
+pinchtab server -b                      # Start it detached; logs go to <stateDir>/server.log
+pinchtab server -v                      # Full startup banner, and log at debug level
+pinchtab server --log-level warn        # Record warnings and errors only
 pinchtab server stop                    # Stop the running server (foreground or background)
 pinchtab server restart                 # Stop + restart in background (applies config changes)
 pinchtab bridge                         # Start the bridge-only runtime
+pinchtab bridge --log-level debug       # Bridge threshold (same precedence as server)
 pinchtab mcp                            # Start the MCP stdio server
 pinchtab daemon                         # Show daemon status
 pinchtab daemon install                 # Install as a background service
@@ -17,6 +21,30 @@ pinchtab daemon uninstall               # Remove the background service
 pinchtab completion <shell>             # Generate shell completions
 ```
 
+Logging is a level, not an on/off switch. Every run — foreground or `--background`
+— records the per-request access log (with its `requestId`), instance lifecycle
+transitions, warnings and errors. The threshold comes from the first of these that
+is set: `--log-level debug|info|warn|error`, then `server.logLevel` in the config
+file, then `-v`, then the default `info`. `-v` always adds the full startup banner,
+and it raises the level to debug only when neither of the other two is set.
+
+The access log is what an open dashboard costs: its errors and console panels each poll
+on a 3s interval, so a dashboard left open writes roughly 40 lines a minute. That is the
+deliberate trade for a run that explains itself afterwards, and `--log-level warn` is the
+escape hatch when you want the record without the polling.
+
+A daemon-installed server and the server a bare `pinchtab nav` auto-starts both run
+`pinchtab server` with no flags, so `server.logLevel` is the only way to set their
+threshold (`pinchtab config set server.logLevel warn`).
+
+Everything in this paragraph applies to `pinchtab bridge` as well: it reads the same
+`server.logLevel`, accepts the same `--log-level`, and resolves them with the same
+precedence — which matters because the bridge holds the CDP session, so it owns the
+target-crash, instance-lifecycle and selector-resolution logging. The one difference
+is that `bridge` has no `-v`: `-v` also switches on the server's startup banner, and
+the bridge has no banner to switch on, so `--log-level debug` is how you raise a
+bridge. Orchestrator-spawned bridges inherit the level through their child config.
+
 ## Navigation
 
 ```bash
@@ -26,11 +54,26 @@ pinchtab nav <url> --new-tab            # Explicitly force a new tab
 pinchtab nav <url> --block-images       # Block images for this navigation
 pinchtab nav <url> --block-ads          # Block ads for this navigation
 pinchtab nav <url> --snap               # Navigate and output interactive snapshot
+pinchtab nav <url> --text               # Navigate and output page text
+pinchtab nav <url> --print-tab-id       # Print only the tab ID, whatever stdout is
 pinchtab back                           # Go back in the active tab
 pinchtab back --tab <id>                # Go back in a specific tab
 pinchtab forward                        # Go forward in the active tab
 pinchtab reload                         # Reload the active tab
 ```
+
+`back`, `forward` and `reload` always report the URL the page actually landed on,
+so a redirect, a login wall or an error page is visible without `--snap`.
+
+`nav` is different, because its stdout is a value other commands consume: it
+prints the tab ID first, and adds the landed URL only when stdout is a terminal.
+Under `--print-tab-id`, a pipe or a redirect, stdout carries the tab ID alone, so
+`TAB=$(pinchtab nav <url>)` captures a usable tab ID. A scripted navigation that
+needs to know where it landed should ask for `--json`, which prints the response
+body carrying `url`, or `--snap`, which puts the landed URL in the header line
+above the nodes. Not `--text`: the URL reaches it only inside the IDPI
+trust-boundary wrapper, so it disappears wherever `security.idpi.enabled` or
+`security.idpi.wrapContent` is off.
 
 ## Tabs
 
@@ -68,6 +111,10 @@ Most element commands accept a unified selector:
 - role/name selector such as `role:button Save`
 - label, placeholder, alt, title, or test id selectors such as `label:Email`, `placeholder:Search`, `alt:Logo`, `title:Close`, `testid:submit`
 - positional wrappers such as `first:button`, `last:role:button`, or `nth:2:button` (`nth` is zero-based)
+
+Positional wrappers index the candidates in **document order** for every selector kind, so `nth:0:` is the first match in the page and `nth:1:` always comes after it. A bare `text:` selector is the one form that does not index: it picks the most control-like match among the smallest ones, so `text:Save` prefers a `<button>` over a `<div>` carrying the same label — which means `text:X` and `first:text:X` can resolve to different elements. A wrapper only ever chooses among the matches a bare selector would find; it never changes which matches exist.
+
+Selector prefixes are case-insensitive, so `CSS:#login` and `css:#login` mean the same thing. Only the prefix is case-folded; the value after it is passed through unchanged.
 
 Structured forms such as `role:`, `label:`, and `testid:` are matched by the semantic engine against enriched snapshot descriptors. CSS, XPath, refs, the existing `text:` action selector, and bare CSS/text wrappers remain browser-side selector resolution.
 
@@ -280,10 +327,57 @@ pinchtab instance stop <id>             # Stop an instance
 pinchtab instance logs <id>             # Show instance logs
 pinchtab instance navigate <id> <url>   # Open a tab in an instance and navigate it
 pinchtab profiles                       # List profiles
+pinchtab profiles prune                 # List reclaimable quarantined profiles (removes nothing)
+pinchtab profiles prune --confirm       # Remove them and report the disk freed
+pinchtab profiles prune --profile <dir> # Reclaim just one quarantined directory
 pinchtab activity                       # List recorded activity events
 pinchtab activity tab <tab-id>          # Filter activity by tab
 pinchtab health                         # Check server health
 ```
+
+### Reclaiming quarantined profiles
+
+When a profile's browser data becomes unreadable, PinchTab renames the directory to
+`<profile>.quarantine-<timestamp>` and starts the profile again from an empty one. Those
+directories are never read afterwards, so they are pure disk cost.
+
+Two things remove them, and they answer different questions:
+
+- The **automatic prune** bounds accumulation *per profile, at quarantine time*. Each time a
+  profile is quarantined, older quarantined copies **of that same profile** are removed,
+  keeping `profiles.quarantineKeep` of them (default 1). It only ever runs as a side effect
+  of a new quarantine, so a profile that is quarantined once and never again keeps its copy
+  indefinitely, and `profiles.quarantineKeep: 0` — the documented way to keep everything —
+  switches it off entirely.
+- **`pinchtab profiles prune`** reclaims *on demand, across all profiles*. It is the answer
+  to "give me the disk back now", including for quarantines the automatic prune will never
+  revisit. It ignores `quarantineKeep` completely, so keeping everything automatically still
+  leaves an explicit way to reclaim.
+
+Nothing is scheduled and nothing runs at startup; the on-demand path only runs when you ask.
+
+The bare command is a dry run — it prints what it would remove and the total it would free,
+and deletes nothing, so it is safe for an agent to run:
+
+```bash
+$ pinchtab profiles prune
+default.quarantine-1748100001	412.6 MB
+work.quarantine-1748100002	1.1 GB
+
+2 quarantined profile(s), 1.5 GB reclaimable. Nothing was removed; re-run with --confirm.
+```
+
+Eligibility is the quarantine name pattern `<profile>.quarantine-<timestamp>`, not a record
+of what PinchTab actually quarantined — so a profile you created under a name of that shape
+is eligible too, and it is listed as quarantined everywhere else as well. The bare dry run
+is where you see that before anything is removed. Nothing outside the pattern is removed,
+whatever you pass. `--profile` names a quarantined directory, never a filesystem path — a
+path is refused. To delete an ordinary profile, use the profile delete route instead; this
+command cannot reach one.
+
+Over HTTP the same operation is `POST /profiles/prune`, with `{"confirm": true}` to remove
+and an optional `"profile"` to narrow it. Every removal is logged with its path and the
+bytes it freed.
 
 ## Configuration And Security
 
@@ -307,10 +401,12 @@ pinchtab security down                  # Apply documented guards-down preset
 The root command supports:
 
 ```bash
-pinchtab --server http://host:9867 <command>
+PINCHTAB_TOKEN=<that-host-token> pinchtab --server http://host:9867 <command>
 pinchtab --help
 pinchtab --version
 ```
+
+A non-loopback `--server` host requires its credential in `PINCHTAB_TOKEN` (or `PINCHTAB_SESSION`) on the same command — the CLI refuses to send the local config's `server.token` off the machine.
 
 Commands with `--tab` currently include:
 

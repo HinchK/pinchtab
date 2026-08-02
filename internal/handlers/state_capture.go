@@ -93,11 +93,8 @@ func (h *Handlers) HandleStateLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	sf, err := state.Load(path, encryptionKey)
 	if err != nil {
-		sf, err = state.Load(path, "")
-		if err != nil {
-			httpx.Error(w, 500, fmt.Errorf("load state: %w", err))
-			return
-		}
+		httpx.Error(w, 500, fmt.Errorf("load state: %w", err))
+		return
 	}
 
 	ctx, resolvedTabID, err := h.tabContext(r, req.TabID)

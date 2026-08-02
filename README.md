@@ -174,7 +174,7 @@ Most users should not need to think about `pinchtab bridge` directly, and only n
 - **Headless or Headed** — Run without a window or with visible Chrome
 - **Multi-instance** — Run multiple parallel Chrome processes with isolated profiles
 - **Self-contained** — ~15MB binary, no external dependencies
-- **Accessibility-first** — Stable element refs instead of fragile coordinates
+- **Accessibility-first** — Element refs that denote a DOM node, not a row: the same `e5` survives a change of filter, selector or depth (filtered views are sparse), and expires only on navigation to a new document
 - **ARM64-optimized** — First-class Raspberry Pi support with automatic Chromium detection
 - **CloakBrowser support** — Optional drop-in provider for sites that fingerprint stock Chromium. PinchTab launches a user-supplied CloakBrowser binary; no CloakBrowser is bundled in released artifacts. See [docs/guides/cloakbrowser.md](docs/guides/cloakbrowser.md).
 

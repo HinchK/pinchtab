@@ -43,8 +43,8 @@ end_test
 start_test "pinchtab reload"
 
 pt_ok reload --tab "$TAB_ID"
-# Reload outputs "OK" in terse mode, pt_ok already asserts exit 0
-assert_output_contains "OK" "reload outputs OK"
+# Reload reports the landed URL, matching back and forward.
+assert_output_contains "form.html" "reload returned to form.html"
 
 end_test
 

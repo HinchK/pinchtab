@@ -16,6 +16,13 @@ var daemonCmd = &cobra.Command{
 	Use:   "daemon [action]",
 	Short: "Manage the background service",
 	Long:  "Start, stop, install, or check the status of the PinchTab background service.",
+	// The one leaf that reads a positional, so it declares its own arity rather than
+	// inheriting the no-argument rule every other leaf gets. One at most: this dispatches
+	// on args[0] and used to drop args[1:] silently, so `daemon status extra` reported the
+	// status it was asked for and said nothing about the word it ignored.
+	Args:          rejectExtraArguments,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	Run: func(cmd *cobra.Command, args []string) {
 		jsonOut, _ := cmd.Flags().GetBool("json")
 		sub := ""
@@ -32,20 +39,37 @@ func init() {
 	rootCmd.AddCommand(daemonCmd)
 }
 
+var daemonCurrentManager = daemon.CurrentManager
+
 func handleDaemonCommand(subcommand string, jsonOut bool) {
-	if subcommand == "" || subcommand == "help" || subcommand == "--help" || subcommand == "-h" {
+	if code := dispatchDaemonCommand(subcommand, jsonOut); code != 0 {
+		os.Exit(code)
+	}
+}
+
+func dispatchDaemonCommand(subcommand string, jsonOut bool) int {
+	if isDaemonStatusSubcommand(subcommand) {
 		if jsonOut {
 			printDaemonStatusJSON()
-			return
+			return 0
 		}
 		printDaemonOverview()
-		return
+		return 0
 	}
 
-	manager, err := daemon.CurrentManager()
+	policy, declared := daemonNotInstalledPolicies[subcommand]
+	if !declared {
+		return printDaemonUsage(subcommand)
+	}
+	notInstalled, code, refused := applyDaemonNotInstalledPolicy(subcommand, policy)
+	if refused {
+		return code
+	}
+
+	manager, err := daemonCurrentManager()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, err.Error()))
-		os.Exit(1)
+		return 1
 	}
 
 	switch subcommand {
@@ -56,14 +80,84 @@ func handleDaemonCommand(subcommand string, jsonOut bool) {
 	case "restart":
 		printDaemonManagerResult(manager.Restart())
 	case "stop":
-		printDaemonManagerResult(manager.Stop())
+		handleDaemonStop(manager, notInstalled)
 	case "uninstall":
-		handleDaemonUninstall(manager)
+		handleDaemonUninstall(manager, notInstalled)
 	default:
-		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("unknown daemon command: %s", subcommand)))
-		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.MutedStyle, "Usage: pinchtab daemon <install|start|restart|stop|uninstall>"))
-		os.Exit(2)
+		return printDaemonUsage(subcommand)
 	}
+	return 0
+}
+
+func printDaemonUsage(subcommand string) int {
+	fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, fmt.Sprintf("unknown daemon command: %s", subcommand)))
+	fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.MutedStyle, "Usage: pinchtab daemon <status|install|start|restart|stop|uninstall>"))
+	return unknownSubcommandExitCode
+}
+
+func isDaemonStatusSubcommand(subcommand string) bool {
+	switch subcommand {
+	case "", "status", "help", "--help", "-h":
+		return true
+	}
+	return false
+}
+
+type daemonNotInstalledPolicy int
+
+const (
+	daemonRefuse daemonNotInstalledPolicy = iota
+	daemonNoOp
+	daemonProceed
+)
+
+var daemonNotInstalledPolicies = map[string]daemonNotInstalledPolicy{
+	"install":   daemonProceed,
+	"start":     daemonRefuse,
+	"restart":   daemonRefuse,
+	"stop":      daemonNoOp,
+	"uninstall": daemonNoOp,
+}
+
+var daemonNotInstalledResults = map[string]string{
+	"stop":      "Background service is not installed; asked the service manager to stop any leftover job.",
+	"uninstall": "Background service is not installed; asked the service manager to remove any leftover job.",
+}
+
+func applyDaemonNotInstalledPolicy(subcommand string, policy daemonNotInstalledPolicy) (notInstalled bool, code int, refused bool) {
+	if policy == daemonProceed {
+		return false, 0, false
+	}
+
+	installed, err := daemonInstallationStatus()
+	if err != nil {
+		if policy == daemonRefuse {
+			fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle,
+				fmt.Sprintf("cannot determine whether the background service is installed; refusing to %s: %v", subcommand, err)))
+			return false, 1, true
+		}
+		return false, 0, false
+	}
+	if installed {
+		return false, 0, false
+	}
+	if policy == daemonRefuse {
+		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle,
+			"background service is not installed; install it first with: pinchtab daemon install"))
+		return false, 1, true
+	}
+	return true, 0, false
+}
+
+func daemonLifecycleMessage(subcommand string, notInstalled bool, message string) string {
+	if notInstalled {
+		return daemonNotInstalledResults[subcommand]
+	}
+	return message
+}
+
+func printDaemonOK(message string) {
+	fmt.Println(cli.StyleStdout(cli.SuccessStyle, "  [ok] ") + message)
 }
 
 func handleDaemonInstall(manager daemon.Manager) {
@@ -84,14 +178,11 @@ func handleDaemonInstall(manager daemon.Manager) {
 	if err != nil {
 		printDaemonActionError(manager, fmt.Sprintf("daemon install failed: %v", err))
 	}
-	fmt.Println(cli.StyleStdout(cli.SuccessStyle, "  [ok] ") + message)
+	printDaemonOK(message)
 	warnPrimaryChromeMacOS(loadConfig())
 	printDaemonFollowUp()
 }
 
-// warnPrimaryChromeMacOS surfaces the issue #583 collision at install time:
-// on macOS, auto-launching the user's daily Google Chrome for headless
-// automation can stop their normal Chrome from opening a window.
 func warnPrimaryChromeMacOS(cfg *config.RuntimeConfig) {
 	effective := runtimekit.ResolveEffectiveBrowser(cfg)
 	if effective.ID != config.BrowserChrome || !chrome.IsPrimaryChromeBinaryMacOS(effective.Binary) {
@@ -107,10 +198,19 @@ func warnPrimaryChromeMacOS(cfg *config.RuntimeConfig) {
 		"         to a dedicated automation browser."))
 }
 
-func handleDaemonUninstall(manager daemon.Manager) {
+func handleDaemonStop(manager daemon.Manager, notInstalled bool) {
+	message, err := manager.Stop()
+	if err != nil {
+		printDaemonManagerResult(message, err)
+		return
+	}
+	printDaemonOK(daemonLifecycleMessage("stop", notInstalled, message))
+}
+
+func handleDaemonUninstall(manager daemon.Manager, notInstalled bool) {
 	message, err := manager.Uninstall()
 	if err != nil {
 		printDaemonActionError(manager, err.Error())
 	}
-	fmt.Println(cli.StyleStdout(cli.SuccessStyle, "  [ok] ") + message)
+	printDaemonOK(daemonLifecycleMessage("uninstall", notInstalled, message))
 }

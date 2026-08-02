@@ -55,7 +55,9 @@ func cloakBrowserConfigJSONFromFile(c CloakBrowserConfig) *cloakBrowserConfigJSO
 	}
 }
 
-// browserProxyJSONFromFile returns nil when proxy is disabled so omitempty drops the field.
+// browserProxyJSONFromFile returns nil only when NOTHING is set, so omitempty drops the
+// field. It used to drop the whole block whenever server was unset, which discarded
+// credentials, bypass list and geo that `config set` had just reported as saved.
 func browserProxyJSONFromFile(p BrowserProxyConfig) *BrowserProxyConfig {
 	if p.IsZero() {
 		return nil
@@ -169,6 +171,7 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 			Bind:                      fc.Server.Bind,
 			Token:                     fc.Server.Token,
 			StateDir:                  fc.Server.StateDir,
+			LogLevel:                  fc.Server.LogLevel,
 			NetworkBufferSize:         fc.Server.NetworkBufferSize,
 			RetainNetworkBodies:       fc.Server.RetainNetworkBodies,
 			RetainNetworkBodyMaxBytes: fc.Server.RetainNetworkBodyMaxBytes,
@@ -204,6 +207,7 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 			StealthLevel:           fc.InstanceDefaults.StealthLevel,
 			TabEvictionPolicy:      fc.InstanceDefaults.TabEvictionPolicy,
 			TabPolicy:              fc.InstanceDefaults.TabPolicy,
+			DialogAutoAccept:       fc.InstanceDefaults.DialogAutoAccept,
 		},
 		Security: securityConfigJSON{
 			AllowEvaluate:          fc.Security.AllowEvaluate,
@@ -248,6 +252,7 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 		Profiles: profilesConfigJSON{
 			BaseDir:        fc.Profiles.BaseDir,
 			DefaultProfile: fc.Profiles.DefaultProfile,
+			QuarantineKeep: fc.Profiles.QuarantineKeep,
 		},
 		MultiInstance: multiInstanceConfigJSON{
 			Strategy:          fc.MultiInstance.Strategy,
@@ -276,6 +281,7 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 			MaxPerAgentFlight: fc.Scheduler.MaxPerAgentFlight,
 			ResultTTLSec:      fc.Scheduler.ResultTTLSec,
 			WorkerCount:       fc.Scheduler.WorkerCount,
+			MaxBatchSize:      fc.Scheduler.MaxBatchSize,
 		},
 		Observability: observabilityFileConfigJSON{
 			Activity: activityConfigJSON{
@@ -302,6 +308,12 @@ func (fc FileConfig) MarshalJSON() ([]byte, error) {
 				ElevationWindowSec:            fc.Sessions.Dashboard.ElevationWindowSec,
 				PersistElevationAcrossRestart: fc.Sessions.Dashboard.PersistElevationAcrossRestart,
 				RequireElevation:              fc.Sessions.Dashboard.RequireElevation,
+			},
+			Agent: agentSessionConfigJSON{
+				Enabled:        fc.Sessions.Agent.Enabled,
+				Mode:           fc.Sessions.Agent.Mode,
+				IdleTimeoutSec: fc.Sessions.Agent.IdleTimeoutSec,
+				MaxLifetimeSec: fc.Sessions.Agent.MaxLifetimeSec,
 			},
 		},
 		AutoSolver: autoSolverFileConfigJSON{
@@ -408,6 +420,9 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 	dashboardSessionElevationWindowSec := int(cfg.Sessions.Dashboard.ElevationWindow / time.Second)
 	dashboardSessionPersistElevationAcrossRestart := cfg.Sessions.Dashboard.PersistElevationAcrossRestart
 	dashboardSessionRequireElevation := cfg.Sessions.Dashboard.RequireElevation
+	agentSessionEnabled := cfg.Sessions.Agent.Enabled
+	agentSessionIdleSec := int(cfg.Sessions.Agent.IdleTimeout / time.Second)
+	agentSessionMaxLifetimeSec := int(cfg.Sessions.Agent.MaxLifetime / time.Second)
 	autoSolverEnabled := cfg.AutoSolver.Enabled
 	autoSolverAutoTrigger := cfg.AutoSolver.AutoTrigger
 	autoSolverTriggerOnNavigate := cfg.AutoSolver.TriggerOnNavigate
@@ -417,6 +432,9 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 	autoSolverRetryBaseDelayMs := cfg.AutoSolver.RetryBaseDelayMs
 	autoSolverRetryMaxDelayMs := cfg.AutoSolver.RetryMaxDelayMs
 	autoSolverLLMFallback := cfg.AutoSolver.LLMFallback
+
+	quarantineKeep := cfg.ProfileQuarantineKeep
+	dialogAutoAccept := cfg.DialogAutoAccept
 
 	mode := "headless"
 	if !cfg.Headless {
@@ -451,6 +469,7 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 			Bind:                      cfg.Bind,
 			Token:                     cfg.Token,
 			StateDir:                  cfg.StateDir,
+			LogLevel:                  cfg.LogLevel,
 			NetworkBufferSize:         netBufSize,
 			RetainNetworkBodies:       &retainBodies,
 			RetainNetworkBodyMaxBytes: &retainBodyMaxBytes,
@@ -486,6 +505,7 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 			StealthLevel:           cfg.StealthLevel,
 			TabEvictionPolicy:      cfg.TabEvictionPolicy,
 			TabPolicy:              tabPolicyDefaultsFromRuntime(cfg),
+			DialogAutoAccept:       &dialogAutoAccept,
 		},
 		Security: SecurityConfig{
 			AllowEvaluate:          &allowEvaluate,
@@ -521,6 +541,7 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 		Profiles: ProfilesConfig{
 			BaseDir:        cfg.ProfilesBaseDir,
 			DefaultProfile: cfg.DefaultProfile,
+			QuarantineKeep: &quarantineKeep,
 		},
 		MultiInstance: MultiInstanceConfig{
 			Strategy:          cfg.Strategy,
@@ -564,6 +585,12 @@ func FileConfigFromRuntime(cfg *RuntimeConfig) FileConfig {
 				ElevationWindowSec:            &dashboardSessionElevationWindowSec,
 				PersistElevationAcrossRestart: &dashboardSessionPersistElevationAcrossRestart,
 				RequireElevation:              &dashboardSessionRequireElevation,
+			},
+			Agent: AgentSessionFileConfig{
+				Enabled:        &agentSessionEnabled,
+				Mode:           cfg.Sessions.Agent.Mode,
+				IdleTimeoutSec: &agentSessionIdleSec,
+				MaxLifetimeSec: &agentSessionMaxLifetimeSec,
 			},
 		},
 		AutoSolver: AutoSolverFileConfig{

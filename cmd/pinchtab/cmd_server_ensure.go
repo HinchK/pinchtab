@@ -16,18 +16,27 @@ const ensureServerTimeout = 30 * time.Second
 
 type serverStartFunc func() error
 type serverHealthFunc func(baseURL, token string) bool
+type serverProbeFunc func(baseURL, token string) server.HealthProbe
 
 func ensureServerForCLI(cfg *config.RuntimeConfig, baseURL, token, command string) error {
-	return ensureServerWithAutoStart(baseURL, token, command, canAutoStartServerForCLI(cfg, baseURL), autoStartServer, isServerHealthy, ensureServerTimeout)
+	return ensureServerWithAutoStart(baseURL, token, command, canAutoStartServerForCLI(cfg, baseURL), autoStartServer, probeServerHealth, ensureServerTimeout)
 }
 
-func ensureServerWith(baseURL, token, command string, start serverStartFunc, healthy serverHealthFunc, timeout time.Duration) error {
-	return ensureServerWithAutoStart(baseURL, token, command, true, start, healthy, timeout)
+func ensureServerWith(baseURL, token, command string, start serverStartFunc, probe serverProbeFunc, timeout time.Duration) error {
+	return ensureServerWithAutoStart(baseURL, token, command, true, start, probe, timeout)
 }
 
-func ensureServerWithAutoStart(baseURL, token, command string, allowAutoStart bool, start serverStartFunc, healthy serverHealthFunc, timeout time.Duration) error {
-	if healthy(baseURL, token) {
+func ensureServerWithAutoStart(baseURL, token, command string, allowAutoStart bool, start serverStartFunc, probe serverProbeFunc, timeout time.Duration) error {
+	initial := probe(baseURL, token)
+	if serverProbeHealthy(initial) {
 		return nil
+	}
+
+	// Reachable but unhealthy: the server is up and answered this very probe, so
+	// starting a second one cannot fix whatever it reported. Quote its reason
+	// instead of waiting out the readiness timeout.
+	if initial.Reachable {
+		return fmt.Errorf("server at %s is running but unhealthy: %s", baseURL, unhealthyServerDetail(initial))
 	}
 
 	if !allowAutoStart {
@@ -40,7 +49,11 @@ func ensureServerWithAutoStart(baseURL, token, command string, allowAutoStart bo
 		return fmt.Errorf("server at %s is not running and auto-start failed: %w", baseURL, err)
 	}
 
-	if !waitForServerWith(baseURL, token, timeout, healthy) {
+	// The readiness wait keeps the bool semantics: a freshly spawned server
+	// answers 503 while its browser comes up, which is not-ready-yet, not a
+	// reason to abort.
+	ready := func(url, tok string) bool { return serverProbeHealthy(probe(url, tok)) }
+	if !waitForServerWith(baseURL, token, timeout, ready) {
 		return fmt.Errorf("server did not become healthy at %s within %s", baseURL, timeout)
 	}
 
@@ -48,13 +61,25 @@ func ensureServerWithAutoStart(baseURL, token, command string, allowAutoStart bo
 	return nil
 }
 
-func isServerHealthy(baseURL, token string) bool {
-	headers := map[string]string{}
-	if auth := server.AuthorizationHeaderValue(token); auth != "" {
-		headers["Authorization"] = auth
+func unhealthyServerDetail(probe server.HealthProbe) string {
+	if reason := probe.Reason(); reason != "" {
+		return reason
 	}
-	status, _, reachable := server.ProbeHealth(baseURL+"/health", 3*time.Second, headers)
-	return reachable && status < 500
+	return fmt.Sprintf("HTTP %d", probe.StatusCode)
+}
+
+func probeServerHealth(baseURL, token string) server.HealthProbe {
+	return server.ProbeHealthWithToken(baseURL+"/health", 3*time.Second, token)
+}
+
+// serverProbeHealthy is the CLI ensure path's own readiness rule: anything the
+// server answers below 500 means it is up enough to take the command.
+func serverProbeHealthy(probe server.HealthProbe) bool {
+	return probe.Reachable && probe.StatusCode < 500
+}
+
+func isServerHealthy(baseURL, token string) bool {
+	return serverProbeHealthy(probeServerHealth(baseURL, token))
 }
 
 func autoStartServer() error {

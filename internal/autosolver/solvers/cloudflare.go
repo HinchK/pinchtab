@@ -6,6 +6,7 @@ package solvers
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -14,12 +15,10 @@ import (
 )
 
 // Cloudflare implements autosolver.Solver for Cloudflare Turnstile
-// and interstitial challenges. Unlike bridge/cloudflare.go, this
-// implementation uses the Page/ActionExecutor abstraction and has
-// zero dependency on chromedp.
+// and interstitial challenges.
 type Cloudflare struct{}
 
-func (s *Cloudflare) Name() string  { return "cloudflare" }
+func (s *Cloudflare) Name() string  { return autosolver.CloudflareSolverName }
 func (s *Cloudflare) Priority() int { return 10 }
 
 // CanHandle checks for Cloudflare challenge indicators in the page title.
@@ -30,7 +29,7 @@ func (s *Cloudflare) CanHandle(_ context.Context, page autosolver.Page) (bool, e
 // Solve attempts to resolve the Cloudflare challenge by locating the
 // Turnstile widget and clicking the checkbox.
 func (s *Cloudflare) Solve(ctx context.Context, page autosolver.Page, executor autosolver.ActionExecutor) (*autosolver.Result, error) {
-	result := &autosolver.Result{SolverUsed: "cloudflare"}
+	result := &autosolver.Result{SolverUsed: s.Name()}
 
 	if !isCFChallenge(page.Title()) {
 		result.Solved = true
@@ -40,6 +39,17 @@ func (s *Cloudflare) Solve(ctx context.Context, page autosolver.Page, executor a
 	challengeType, err := detectCFChallengeType(ctx, executor)
 	if err != nil {
 		return result, fmt.Errorf("detect challenge type: %w", err)
+	}
+
+	// Re-detect once after a pause when the first read finds no type. Cloudflare
+	// writes cType into the document after the interstitial paints, so an early
+	// read sees nothing and a non-interactive challenge would be driven down the
+	// clicking path instead of simply being waited out.
+	if challengeType == "" {
+		time.Sleep(cfRedetectDelay)
+		if retried, retryErr := detectCFChallengeType(ctx, executor); retryErr == nil {
+			challengeType = retried
+		}
 	}
 
 	// Non-interactive challenges resolve automatically.
@@ -64,9 +74,11 @@ func (s *Cloudflare) Solve(ctx context.Context, page autosolver.Page, executor a
 			continue
 		}
 
-		// Click the checkbox area (left portion of the widget).
-		checkboxX := box.x + box.width*0.09
-		checkboxY := box.y + box.height*0.40
+		// Click the checkbox area (left portion of the widget), jittered: an
+		// exact-centre click on every attempt is a fingerprint, and this solver
+		// exists to get past fingerprinting.
+		checkboxX := box.x + box.width*0.09 + cfClickJitter()
+		checkboxY := box.y + box.height*0.40 + cfClickJitter()
 
 		if err := executor.Click(ctx, checkboxX, checkboxY); err != nil {
 			return result, fmt.Errorf("click turnstile: %w", err)
@@ -87,6 +99,21 @@ func (s *Cloudflare) Solve(ctx context.Context, page autosolver.Page, executor a
 
 type boundingBox struct {
 	x, y, width, height float64
+}
+
+const (
+	// cfRedetectDelay is how long to wait before re-reading the challenge type.
+	cfRedetectDelay = 2 * time.Second
+	// cfClickJitterPx is the full width of the click-position jitter window.
+	cfClickJitterPx = 8
+)
+
+// cfClickJitter returns a signed offset within half the jitter window either way.
+// Solve runs inside HTTP handler goroutines and the auto-trigger's own goroutine, so
+// two solves can jitter at once: the draw comes from the top-level source, which is
+// safe for concurrent use, never a package-level *rand.Rand, which is not.
+func cfClickJitter() float64 {
+	return (rand.Float64() - 0.5) * cfClickJitterPx // #nosec G404 -- input humanisation, not cryptography.
 }
 
 func isCFChallenge(title string) bool {

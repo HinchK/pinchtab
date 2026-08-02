@@ -22,6 +22,7 @@ type serverConfigJSON struct {
 	Bind                      string `json:"bind"`
 	Token                     string `json:"token"`
 	StateDir                  string `json:"stateDir"`
+	LogLevel                  string `json:"logLevel,omitempty"`
 	NetworkBufferSize         *int   `json:"networkBufferSize,omitempty"`
 	RetainNetworkBodies       *bool  `json:"retainNetworkBodies,omitempty"`
 	RetainNetworkBodyMaxBytes *int   `json:"retainNetworkBodyMaxBytes,omitempty"`
@@ -71,11 +72,13 @@ type instanceDefaultsConfigJSON struct {
 	StealthLevel           string             `json:"stealthLevel"`
 	TabEvictionPolicy      string             `json:"tabEvictionPolicy"`
 	TabPolicy              *TabPolicyDefaults `json:"tabPolicy,omitempty"`
+	DialogAutoAccept       *bool              `json:"dialogAutoAccept,omitempty"`
 }
 
 type profilesConfigJSON struct {
 	BaseDir        string `json:"baseDir"`
 	DefaultProfile string `json:"defaultProfile"`
+	QuarantineKeep *int   `json:"quarantineKeep,omitempty"`
 }
 
 type securityConfigJSON struct {
@@ -154,6 +157,7 @@ type schedulerFileConfigJSON struct {
 	MaxPerAgentFlight *int   `json:"maxPerAgentInflight"`
 	ResultTTLSec      *int   `json:"resultTTLSec"`
 	WorkerCount       *int   `json:"workerCount"`
+	MaxBatchSize      *int   `json:"maxBatchSize"`
 }
 
 type observabilityFileConfigJSON struct {
@@ -180,6 +184,19 @@ type activityEventsConfigJSON struct {
 
 type sessionsFileConfigJSON struct {
 	Dashboard dashboardSessionConfigJSON `json:"dashboard"`
+	Agent     agentSessionConfigJSON     `json:"agent,omitempty"`
+}
+
+// agentSessionConfigJSON mirrors AgentSessionFileConfig. Its absence is why
+// `config patch {"sessions":{"agent":{"enabled":true}}}` answered success and wrote
+// nothing: the update path patches the existing file object with the marshalled map, so
+// a key in neither could not appear. TestTheWireTwinCarriesEveryDeclaredField is what
+// keeps this hand-maintained twin from falling behind again.
+type agentSessionConfigJSON struct {
+	Enabled        *bool  `json:"enabled,omitempty"`
+	Mode           string `json:"mode,omitempty"`
+	IdleTimeoutSec *int   `json:"idleTimeoutSec,omitempty"`
+	MaxLifetimeSec *int   `json:"maxLifetimeSec,omitempty"`
 }
 
 type dashboardSessionConfigJSON struct {

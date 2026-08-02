@@ -30,6 +30,15 @@ type ProblemDetails struct {
 	Details   map[string]any `json:"details,omitempty"`
 }
 
+// JSONError writes a hand-shaped error body — one the standard envelope cannot express,
+// such as a health payload a client parses by key — and records the reason with it. Every
+// non-2xx JSON response goes through here or through ErrorCode, so no failure reaches the
+// log, the metrics or the activity record with the response body as its only witness.
+func JSONError(w http.ResponseWriter, status int, code, message string, payload any) {
+	RecordFailureReason(w, code, SanitizeErrorMessage(message))
+	JSON(w, status, payload)
+}
+
 func JSON(w http.ResponseWriter, code int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
@@ -50,17 +59,70 @@ func Error(w http.ResponseWriter, code int, err error) {
 }
 
 func ErrorCode(w http.ResponseWriter, status int, code, message string, retryable bool, details map[string]any) {
+	sanitized := SanitizeErrorMessage(message)
+	RecordFailureReason(w, code, sanitized)
 	payload := map[string]any{
-		"error": SanitizeErrorMessage(message),
+		"error": sanitized,
 		"code":  code,
 	}
 	if retryable {
 		payload["retryable"] = true
 	}
 	if len(details) > 0 {
-		payload["details"] = details
+		payload["details"] = sanitizeDetails(details)
 	}
 	JSON(w, status, payload)
+}
+
+// sanitizeDetails returns a copy of details with every string cleaned the same
+// way as the message beside it. Details carry page-controlled data — dialog
+// text, document titles, navigated URLs — and the CLI prints some of them
+// straight to a terminal, so leaving them raw would let a visited page smuggle
+// ANSI escapes past the sanitizing the message already gets. The input is
+// copied rather than rewritten so callers may reuse their map.
+func sanitizeDetails(details map[string]any) map[string]any {
+	if len(details) == 0 {
+		return nil
+	}
+	out := make(map[string]any, len(details))
+	for key, value := range details {
+		out[key] = sanitizeDetailValue(value, 0)
+	}
+	return out
+}
+
+const maxDetailDepth = 4
+
+func sanitizeDetailValue(value any, depth int) any {
+	if depth > maxDetailDepth {
+		return nil
+	}
+	switch v := value.(type) {
+	case string:
+		// Not SanitizeErrorMessage: an intentionally empty detail must stay
+		// empty rather than becoming the message-level "error" placeholder.
+		return sanitize.CleanError(v, maxErrorMessageBytes)
+	case []string:
+		out := make([]string, len(v))
+		for i, s := range v {
+			out[i] = sanitize.CleanError(s, maxErrorMessageBytes)
+		}
+		return out
+	case []any:
+		out := make([]any, len(v))
+		for i, e := range v {
+			out[i] = sanitizeDetailValue(e, depth+1)
+		}
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for k, e := range v {
+			out[k] = sanitizeDetailValue(e, depth+1)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func Problem(w http.ResponseWriter, status int, code, detail string, retryable bool, details map[string]any) {
@@ -69,13 +131,15 @@ func Problem(w http.ResponseWriter, status int, code, detail string, retryable b
 		title = "Error"
 	}
 
+	sanitized := SanitizeErrorMessage(detail)
+	RecordFailureReason(w, code, sanitized)
 	payload := ProblemDetails{
 		Type:    "about:blank",
 		Title:   title,
 		Status:  status,
-		Detail:  SanitizeErrorMessage(detail),
+		Detail:  sanitized,
 		Code:    code,
-		Details: details,
+		Details: sanitizeDetails(details),
 	}
 	if retryable {
 		payload.Retryable = true
@@ -125,9 +189,60 @@ func ExtendWriteDeadline(w http.ResponseWriter, d time.Duration) {
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(d))
 }
 
+// ReasonRecorder is implemented by a ResponseWriter that keeps the reason a failure was
+// written with, so an error producer can hand it back to the middlewares wrapped around
+// it. It is what makes the reason travel from the one frame that has it to the sinks,
+// instead of leaving the response body as its only copy.
+type ReasonRecorder interface {
+	RecordFailureReason(code, message string)
+}
+
+// FailureCodeHeader and FailureMessageHeader carry the reason across a proxy hop: the
+// producing instance stamps them, the front door reads them back into
+// RecordFailureReason, and the public boundary strips them (StatusWriter, below). The
+// X-Pinchtab- prefix keeps them inside the internal-header trust rules on the request
+// side too.
+const (
+	FailureCodeHeader    = "X-Pinchtab-Failure-Code"
+	FailureMessageHeader = "X-Pinchtab-Failure-Message"
+)
+
+// RecordFailureReason gives w the code and the SANITIZED message that were just written.
+// It stamps the hop headers so the reason survives a proxy boundary, and walks the
+// recorder chain for the in-process sinks; nothing re-reads the response body to recover
+// what the producer already held.
+func RecordFailureReason(w http.ResponseWriter, code, message string) {
+	if code == "" && message == "" {
+		return
+	}
+	w.Header().Set(FailureCodeHeader, code)
+	w.Header().Set(FailureMessageHeader, message)
+	if recorder, ok := w.(ReasonRecorder); ok {
+		recorder.RecordFailureReason(code, message)
+	}
+}
+
 type StatusWriter struct {
 	http.ResponseWriter
 	Code int
+
+	FailureCode    string
+	FailureMessage string
+
+	// StripFailureHeaders removes the hop headers at flush: set on the public
+	// boundary, left false for a trusted internal hop so the front door can read
+	// them. The header map is shared along the wrapper chain, so the innermost
+	// writer's decision is the one that acts.
+	StripFailureHeaders bool
+}
+
+// RecordFailureReason keeps the reason and passes it OUTWARD along the wrapper chain: the
+// request path stacks several StatusWriters (activity outside, logging inside), and each
+// one is a sink that needs the same fact. Whichever writer the handler holds, every
+// StatusWriter wrapped around it ends up with the reason.
+func (w *StatusWriter) RecordFailureReason(code, message string) {
+	w.FailureCode, w.FailureMessage = code, message
+	RecordFailureReason(w.ResponseWriter, code, message)
 }
 
 func (w *StatusWriter) Unwrap() http.ResponseWriter {
@@ -136,6 +251,10 @@ func (w *StatusWriter) Unwrap() http.ResponseWriter {
 
 func (w *StatusWriter) WriteHeader(code int) {
 	w.Code = code
+	if w.StripFailureHeaders {
+		w.Header().Del(FailureCodeHeader)
+		w.Header().Del(FailureMessageHeader)
+	}
 	w.ResponseWriter.WriteHeader(code)
 }
 

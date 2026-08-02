@@ -1060,3 +1060,584 @@ func TestProfileRenameRejectsDuplicate(t *testing.T) {
 		t.Errorf("expected 'already exists' error, got: %v", err)
 	}
 }
+
+// seedProfileDir writes a profile directory with metadata naming metaName,
+// which is how a directory copied or renamed out from under its profile.json
+// looks on disk.
+func seedProfileDir(t *testing.T, baseDir, dirName, metaName string) {
+	t.Helper()
+	dir := filepath.Join(baseDir, dirName)
+	if err := os.MkdirAll(filepath.Join(dir, "Default"), 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if metaName == "" {
+		return
+	}
+	if err := writeProfileMeta(dir, ProfileMeta{ID: profileID(metaName), Name: metaName}); err != nil {
+		t.Fatalf("writeProfileMeta: %v", err)
+	}
+}
+
+func listedByPath(t *testing.T, pm *ProfileManager, dirName string) bridge.ProfileInfo {
+	t.Helper()
+	profiles, err := pm.List()
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	for _, p := range profiles {
+		if filepath.Base(p.Path) == dirName {
+			return p
+		}
+	}
+	t.Fatalf("directory %q missing from the listing: %+v", dirName, profiles)
+	return bridge.ProfileInfo{}
+}
+
+func TestListMetadataNamingAnotherProfileFallsBackToTheDirectoryName(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.Create("live"); err != nil {
+		t.Fatal(err)
+	}
+	seedProfileDir(t, base, "live.quarantine-1785345247", "live")
+
+	live := listedByPath(t, pm, profileID("live"))
+	stale := listedByPath(t, pm, "live.quarantine-1785345247")
+
+	if stale.Name != "live.quarantine-1785345247" {
+		t.Fatalf("quarantined entry name = %q, want its directory name", stale.Name)
+	}
+	if stale.ID == live.ID {
+		t.Fatalf("quarantined entry shares the live profile's ID %q", stale.ID)
+	}
+	if stale.ID != profileID("live.quarantine-1785345247") {
+		t.Fatalf("quarantined ID = %q, want the ID derived from its directory name", stale.ID)
+	}
+}
+
+func TestListNeverReturnsTwoProfilesWithOneID(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.Create("live"); err != nil {
+		t.Fatal(err)
+	}
+	for _, dirName := range []string{"live.quarantine-1", "live.quarantine-2", "copy-of-live"} {
+		seedProfileDir(t, base, dirName, "live")
+	}
+
+	profiles, err := pm.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 4 {
+		t.Fatalf("expected all 4 directories listed, got %d", len(profiles))
+	}
+	seen := map[string]string{}
+	for _, p := range profiles {
+		if prev, dup := seen[p.ID]; dup {
+			t.Fatalf("duplicate id %q shared by %q and %q", p.ID, prev, p.Path)
+		}
+		seen[p.ID] = p.Path
+	}
+}
+
+func TestListKeepsMetadataWhenItNamesItsOwnDirectory(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.CreateWithMeta("owned", ProfileMeta{UseWhen: "reading the metadata still works"}); err != nil {
+		t.Fatal(err)
+	}
+	// A name-named directory is the other legitimate layout; both must keep
+	// reading their metadata. UseWhen only survives when the metadata is kept,
+	// so it distinguishes "trusted" from "fell back to the directory name".
+	seedProfileDir(t, base, "by-name", "by-name")
+	if err := writeProfileMeta(filepath.Join(base, "by-name"), ProfileMeta{
+		ID:      profileID("by-name"),
+		Name:    "by-name",
+		UseWhen: "a name-named directory keeps its metadata too",
+	}); err != nil {
+		t.Fatalf("writeProfileMeta: %v", err)
+	}
+
+	idNamed := listedByPath(t, pm, profileID("owned"))
+	if idNamed.Name != "owned" || idNamed.UseWhen != "reading the metadata still works" {
+		t.Fatalf("id-named directory lost its metadata: name=%q useWhen=%q", idNamed.Name, idNamed.UseWhen)
+	}
+	nameNamed := listedByPath(t, pm, "by-name")
+	if nameNamed.Name != "by-name" || nameNamed.ID != profileID("by-name") {
+		t.Fatalf("name-named directory: name=%q id=%q", nameNamed.Name, nameNamed.ID)
+	}
+	if nameNamed.UseWhen != "a name-named directory keeps its metadata too" {
+		t.Fatalf("name-named directory lost its metadata: useWhen=%q", nameNamed.UseWhen)
+	}
+}
+
+func TestListWithoutMetadataStillDerivesTheNameFromTheDirectory(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	seedProfileDir(t, base, "bare-dir", "")
+
+	got := listedByPath(t, pm, "bare-dir")
+	if got.Name != "bare-dir" || got.ID != profileID("bare-dir") {
+		t.Fatalf("no-metadata fallback changed: name=%q id=%q", got.Name, got.ID)
+	}
+}
+
+func TestResolutionByNameAndIDIgnoresADirectoryClaimingAnotherProfile(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.Create("live"); err != nil {
+		t.Fatal(err)
+	}
+	seedProfileDir(t, base, "live.quarantine-1785345247", "live")
+	liveDir := filepath.Join(base, profileID("live"))
+
+	path, err := pm.ProfilePath("live")
+	if err != nil {
+		t.Fatalf("resolve by name: %v", err)
+	}
+	if path != liveDir {
+		t.Fatalf("--profile live resolved to %q, want the live directory %q", path, liveDir)
+	}
+
+	name, err := pm.FindByID(profileID("live"))
+	if err != nil {
+		t.Fatalf("resolve by id: %v", err)
+	}
+	if name != "live" {
+		t.Fatalf("FindByID returned %q, want live", name)
+	}
+	quarantined, err := pm.FindByID(profileID("live.quarantine-1785345247"))
+	if err != nil {
+		t.Fatalf("resolve quarantined id: %v", err)
+	}
+	if quarantined != "live.quarantine-1785345247" {
+		t.Fatalf("quarantined ID resolved to %q, want its own directory name", quarantined)
+	}
+}
+
+// Rename writes the new name into metadata before renaming the directory. If
+// the rename fails it must put the old name back, or the directory is left
+// claiming a profile it is not — which is the state this fix stops trusting.
+func TestProfileRenameRollsBackMetadataWhenTheDirectoryRenameFails(t *testing.T) {
+	base := t.TempDir()
+	pm := NewProfileManager(base)
+	if err := pm.Create("old-name"); err != nil {
+		t.Fatal(err)
+	}
+	oldDir := filepath.Join(base, profileID("old-name"))
+
+	// The destination must look free to the preflight and still be unwritable
+	// at rename time, or Rename returns before it ever touches the metadata.
+	if err := os.Chmod(base, 0500); err != nil {
+		t.Fatalf("chmod base: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(base, 0755) })
+
+	if err := pm.Rename("old-name", "new-name"); err == nil {
+		t.Fatal("expected the rename to fail while the destination is occupied")
+	}
+
+	meta := readProfileMeta(oldDir)
+	if meta.Name != "old-name" || meta.ID != profileID("old-name") {
+		t.Fatalf("metadata not rolled back: name=%q id=%q", meta.Name, meta.ID)
+	}
+	if !pm.Exists("old-name") {
+		t.Fatal("the profile must still resolve under its old name")
+	}
+	got := listedByPath(t, pm, profileID("old-name"))
+	if got.Name != "old-name" || got.ID != profileID("old-name") {
+		t.Fatalf("listing after a failed rename: name=%q id=%q", got.Name, got.ID)
+	}
+}
+
+func TestProfileManagerListFlagsQuarantinedDirectories(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewProfileManager(dir)
+
+	if err := pm.Create("work"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "quarantine-notes", "Default"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	quarantineSizes := map[string]int{
+		profileID("work") + ".quarantine-1785343990": 1 << 20,
+		"quarantine-notes.quarantine-1785343991":     2 << 20,
+	}
+	for name, size := range quarantineSizes {
+		defaultDir := filepath.Join(dir, name, "Default")
+		if err := os.MkdirAll(defaultDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(defaultDir, "History"), make([]byte, size), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	profiles, err := pm.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(profiles) != 4 {
+		t.Fatalf("expected 4 entries (2 live + 2 quarantined), got %d", len(profiles))
+	}
+
+	live, quarantined := 0, 0
+	var quarantinedTotal int64
+	for _, p := range profiles {
+		if !p.Quarantined {
+			live++
+			continue
+		}
+		quarantined++
+		quarantinedTotal += p.DiskUsage
+		if _, ok := quarantineSizes[filepath.Base(p.Path)]; !ok {
+			t.Errorf("flagged %q as quarantined, but it is not a quarantine directory", p.Path)
+		}
+	}
+	if live != 2 || quarantined != 2 {
+		t.Fatalf("expected 2 live and 2 quarantined, got %d and %d", live, quarantined)
+	}
+	if quarantinedTotal < 3<<20 {
+		t.Errorf("quarantined disk usage totals %d bytes, want at least %d", quarantinedTotal, 3<<20)
+	}
+	for _, p := range profiles {
+		if p.Name == "quarantine-notes" && p.Quarantined {
+			t.Errorf("a profile merely named %q must not be flagged as quarantined", p.Name)
+		}
+	}
+}
+
+func TestHandleListMarksQuarantinedEntries(t *testing.T) {
+	dir := t.TempDir()
+	pm := NewProfileManager(dir)
+
+	if err := pm.Create("quarantine-notes"); err != nil {
+		t.Fatal(err)
+	}
+	quarantineDir := filepath.Join(dir, profileID("quarantine-notes")+".quarantine-1785343990", "Default")
+	if err := os.MkdirAll(quarantineDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/profiles", nil))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /profiles = %d", w.Code)
+	}
+	var listed []struct {
+		Name        string `json:"name"`
+		Quarantined bool   `json:"quarantined"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode /profiles: %v (%s)", err, w.Body.String())
+	}
+	if len(listed) != 2 {
+		t.Fatalf("expected 2 entries, got %d: %s", len(listed), w.Body.String())
+	}
+	for _, entry := range listed {
+		want := strings.HasSuffix(entry.Name, ".quarantine-1785343990")
+		if entry.Quarantined != want {
+			t.Errorf("entry %q quarantined = %v, want %v", entry.Name, entry.Quarantined, want)
+		}
+	}
+}
+
+func newHeldProfile(t *testing.T, pm *ProfileManager, name string) (id, cookies string) {
+	t.Helper()
+	if err := pm.Create(name); err != nil {
+		t.Fatal(err)
+	}
+	cookies = filepath.Join(pm.baseDir, profileID(name), "Default", "Cookies")
+	if err := os.WriteFile(cookies, []byte("session-data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return profileID(name), cookies
+}
+
+func requireCookiesIntact(t *testing.T, cookies string) {
+	t.Helper()
+	data, err := os.ReadFile(cookies)
+	if err != nil {
+		t.Fatalf("cookies file gone after a refused operation: %v", err)
+	}
+	if string(data) != "session-data" {
+		t.Fatalf("cookies content changed after a refused operation: %q", data)
+	}
+}
+
+// instanceLookupFrom derives the holder mapping the same way server.go composes
+// it from orch.List(), so running-ness in these tests and the guard share one
+// source instead of a per-test fixture.
+func instanceLookupFrom(instances []bridge.Instance) func(string) (string, bool) {
+	return func(profileID string) (string, bool) {
+		for _, inst := range instances {
+			if inst.ProfileID != profileID {
+				continue
+			}
+			switch inst.Status {
+			case "starting", "running", "stopping":
+				return inst.ID, true
+			}
+		}
+		return "", false
+	}
+}
+
+func TestDeleteRefusesAProfileAnInstanceHolds(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, cookies := newHeldProfile(t, pm, "held")
+	pm.SetInstanceLookup(instanceLookupFrom([]bridge.Instance{
+		{ID: "inst_holder01", ProfileID: id, Status: "running"},
+	}))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("DELETE", "/profiles/"+id, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 409 {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "inst_holder01") {
+		t.Fatalf("409 body does not name the holding instance: %s", w.Body.String())
+	}
+	requireCookiesIntact(t, cookies)
+}
+
+func TestResetRefusesAProfileAnInstanceHolds(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, cookies := newHeldProfile(t, pm, "held")
+	pm.SetInstanceLookup(instanceLookupFrom([]bridge.Instance{
+		{ID: "inst_holder02", ProfileID: id, Status: "running"},
+	}))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("POST", "/profiles/"+id+"/reset", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 409 {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "inst_holder02") {
+		t.Fatalf("409 body does not name the holding instance: %s", w.Body.String())
+	}
+	requireCookiesIntact(t, cookies)
+}
+
+// The force contract is delete-and-report-orphaned: profiles cannot stop
+// instances, so the holder is named in the response instead of being left
+// running on a removed directory silently.
+func TestForceDeleteRemovesAHeldProfileAndReportsTheOrphanedInstance(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, _ := newHeldProfile(t, pm, "held")
+	pm.SetInstanceLookup(instanceLookupFrom([]bridge.Instance{
+		{ID: "inst_holder03", ProfileID: id, Status: "running"},
+	}))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("DELETE", "/profiles/"+id+"?force=true", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp["orphanedInstance"] != "inst_holder03" {
+		t.Fatalf("force delete did not report the orphaned instance: %v", resp)
+	}
+	if _, err := os.Stat(filepath.Join(pm.baseDir, id)); !os.IsNotExist(err) {
+		t.Fatalf("profile directory still present after force delete: %v", err)
+	}
+}
+
+func TestDeleteAndResetOfIdleProfilesAreUnchanged(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	idleID, idleCookies := newHeldProfile(t, pm, "idle")
+	heldID, _ := newHeldProfile(t, pm, "held")
+	pm.SetInstanceLookup(instanceLookupFrom([]bridge.Instance{
+		{ID: "inst_holder04", ProfileID: heldID, Status: "running"},
+	}))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/profiles/"+idleID+"/reset", nil))
+	if w.Code != 200 {
+		t.Fatalf("idle reset: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(idleCookies); !os.IsNotExist(err) {
+		t.Fatalf("idle reset left the cookies file in place: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/profiles/"+idleID, nil))
+	if w.Code != 200 {
+		t.Fatalf("idle delete: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(pm.baseDir, idleID)); !os.IsNotExist(err) {
+		t.Fatalf("idle delete left the directory in place: %v", err)
+	}
+}
+
+func TestListRunningComesFromTheSameSourceAsTheGuard(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	heldID, _ := newHeldProfile(t, pm, "held")
+	if err := pm.Create("idle"); err != nil {
+		t.Fatal(err)
+	}
+	instances := []bridge.Instance{{ID: "inst_holder05", ProfileID: heldID, Status: "running"}}
+	pm.SetInstanceLookup(instanceLookupFrom(instances))
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("GET", "/profiles", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	var listed []profileResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 2 {
+		t.Fatalf("expected 2 profiles, got %d", len(listed))
+	}
+	for _, p := range listed {
+		want := false
+		for _, inst := range instances {
+			if inst.ProfileID == p.ID && inst.Status == "running" {
+				want = true
+			}
+		}
+		if p.Running != want {
+			t.Errorf("profile %q running = %v, want %v (from the instance mapping)", p.Name, p.Running, want)
+		}
+	}
+}
+
+// The bridge surface has no orchestrator, so the guard's fallback is the
+// pinchtab.pid lock in the profile directory; this mux is built with no
+// instance lookup at all and must still refuse.
+func TestDestructiveRoutesRefuseWithoutAnOrchestrator(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, cookies := newHeldProfile(t, pm, "held")
+	pm.lockOwner = func(string) (bool, int) { return true, 4242 }
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest("DELETE", "/profiles/"+id, nil),
+		httptest.NewRequest("POST", "/profiles/"+id+"/reset", nil),
+	} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != 409 {
+			t.Fatalf("%s %s: expected 409, got %d: %s", req.Method, req.URL.Path, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "4242") {
+			t.Fatalf("%s %s: 409 body does not name the holder: %s", req.Method, req.URL.Path, w.Body.String())
+		}
+	}
+	requireCookiesIntact(t, cookies)
+}
+
+func TestDefaultLockOwnerTreatsAPidFreeDirectoryAsIdle(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, _ := newHeldProfile(t, pm, "no-pid-file")
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	req := httptest.NewRequest("DELETE", "/profiles/"+id, nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200 for a directory with no pinchtab.pid, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// An orchestrator only knows the instances IT started. A profile held by a SECOND pinchtab
+// — another server, a `pinchtab bridge`, an always-on instance outside this map — makes the
+// lookup answer not-running with full confidence, so consulting it alone deletes a live
+// profile on exactly the surface this card was filed against: the one where a lookup IS
+// installed. The two sources are therefore ORed, and this is the direction that proves it.
+func TestAProfileHeldOnlyByThePidLockIsRefusedEvenWhenTheLookupSaysIdle(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, cookies := newHeldProfile(t, pm, "held-by-another-pinchtab")
+	pm.lockOwner = func(string) (bool, int) { return true, 4242 }
+	pm.SetInstanceLookup(func(string) (string, bool) { return "", false })
+
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	for _, req := range []*http.Request{
+		httptest.NewRequest("DELETE", "/profiles/"+id, nil),
+		httptest.NewRequest("POST", "/profiles/"+id+"/reset", nil),
+	} {
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		if w.Code != 409 {
+			t.Errorf("%s %s: got %d, want 409 — an installed lookup that answers not-running must not short-circuit the per-directory lock: %s",
+				req.Method, req.URL.Path, w.Code, w.Body.String())
+		}
+		if !strings.Contains(w.Body.String(), "4242") {
+			t.Errorf("%s %s: refusal does not name the pid-lock holder: %s", req.Method, req.URL.Path, w.Body.String())
+		}
+	}
+	requireCookiesIntact(t, cookies)
+
+	// The flag half of this card fails in the same case, from the same line.
+	list, err := pm.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, p := range list {
+		if p.Name != "held-by-another-pinchtab" {
+			continue
+		}
+		found = true
+		if !p.Running {
+			t.Errorf("running = false for a profile the pid lock says is held; the published flag and the guard must agree, since a client greys the button out from this field")
+		}
+	}
+	if !found {
+		t.Fatal("the held profile is absent from List, so this assertion would pass vacuously")
+	}
+}
+
+// The other direction, and the one the suite could not express before: the OR must not
+// refuse forever on a stale file. Nothing in the tree ever REMOVES pinchtab.pid — there is
+// no release path — so the file outlives its process and only the liveness and is-pinchtab
+// checks stop a dead pid reading as held. This is what stops a later reader simplifying the
+// OR back out on the grounds that it can only over-refuse.
+func TestAStaleLockWithNoLiveHolderStillDeletes(t *testing.T) {
+	pm := NewProfileManager(t.TempDir())
+	id, _ := newHeldProfile(t, pm, "stale-lock")
+	// What the real check answers for a pid that is dead, or alive but not pinchtab: the
+	// file is present and readable, and ownership is still refused.
+	pm.lockOwner = func(string) (bool, int) { return false, 999999 }
+	pm.SetInstanceLookup(func(string) (string, bool) { return "", false })
+
+	mux := http.NewServeMux()
+	pm.RegisterHandlers(mux)
+
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("DELETE", "/profiles/"+id, nil))
+	if w.Code != 200 {
+		t.Fatalf("got %d, want 200 — a lock whose holder is gone must not refuse forever; there is no release path, so the file always outlives the process: %s",
+			w.Code, w.Body.String())
+	}
+}

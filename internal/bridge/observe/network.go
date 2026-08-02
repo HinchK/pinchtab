@@ -2,14 +2,15 @@ package observe
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
-	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/config"
@@ -131,30 +132,7 @@ func (nm *NetworkMonitor) StartCaptureWithSize(tabCtx context.Context, tabID str
 	chromedp.ListenTarget(listenerCtx, func(ev interface{}) {
 		switch e := ev.(type) {
 		case *network.EventRequestWillBeSent:
-			headers := make(map[string]string)
-			if e.Request.Headers != nil {
-				for k, v := range e.Request.Headers {
-					if s, ok := v.(string); ok {
-						headers[k] = s
-					}
-				}
-			}
-			var postData string
-			if e.Request.HasPostData && len(e.Request.PostDataEntries) > 0 {
-				for _, entry := range e.Request.PostDataEntries {
-					postData += entry.Bytes
-				}
-			}
-			entry := NetworkEntry{
-				RequestID:      string(e.RequestID),
-				URL:            e.Request.URL,
-				Method:         e.Request.Method,
-				ResourceType:   e.Type.String(),
-				RequestHeaders: headers,
-				PostData:       postData,
-				StartTime:      time.Now(),
-			}
-			buf.Add(entry)
+			buf.Add(requestEntryFromEvent(e))
 			buf.MarkRequestStart(string(e.RequestID))
 
 		case *network.EventResponseReceived:
@@ -278,6 +256,50 @@ func (nm *NetworkMonitor) bodyRetentionEnabled() bool {
 	return nm.retainBodies
 }
 
+// fetchResponseBody reads the body from the browser. Indirected so retention
+// policy can be exercised without a live CDP target.
+var fetchResponseBody = GetResponseBody
+
+func skipRetainedBody(buf *NetworkBuffer, requestID, reason string) {
+	buf.Update(requestID, func(entry *NetworkEntry) {
+		entry.BodyPending = false
+		entry.BodySkipped = true
+		entry.BodySkipReason = reason
+		entry.BodyError = ""
+	})
+}
+
+// Operator-facing names of the two budgets a retained body is cut against, used
+// to build the skip reason so a dropped body says which one dropped it.
+const (
+	retentionLimitScope  = "retention limit"
+	retentionBudgetScope = "retention budget"
+	postDataLimitScope   = "request body limit"
+)
+
+// clampRetainedBody applies a byte budget to a retained payload — a response body,
+// or the request body in PostData. One rule: a retained payload is a byte-exact
+// prefix of what crossed the wire, or there is no retained payload. Text is cut on a rune boundary with the suffix-free helper — the display
+// variant appends "..." inside the budget, and a machine-read body must not carry
+// characters the payload never contained when the truncated flag already says it
+// was cut. A base64 body cannot be cut at all (the encoding's length and padding make
+// a fragment undecodable in whole, not only at the tail), and a budget smaller
+// than the body's first character leaves no whole rune to keep; both are dropped
+// with a reason rather than returned corrupt or returned empty-but-retained.
+func clampRetainedBody(body string, base64Encoded bool, limit int, scope string) (clamped string, truncated bool, dropReason string) {
+	if limit <= 0 || len(body) <= limit {
+		return body, false, ""
+	}
+	if base64Encoded {
+		return "", false, "base64 body exceeds " + scope
+	}
+	prefix := sanitize.TruncateUTF8BytesExact(body, limit)
+	if prefix == "" {
+		return "", false, scope + " is smaller than the body's first character"
+	}
+	return prefix, true, ""
+}
+
 func (nm *NetworkMonitor) maybeRetainBody(tabCtx context.Context, buf *NetworkBuffer, requestID string) {
 	// Every return path below resolves BodyPending via buf.Update; signal once on
 	// exit so retained-body readers wake instead of polling.
@@ -288,36 +310,21 @@ func (nm *NetworkMonitor) maybeRetainBody(tabCtx context.Context, buf *NetworkBu
 	maxBytes := nm.retainBodyMaxBytes
 	nm.mu.RUnlock()
 	if !enabled {
-		buf.Update(requestID, func(entry *NetworkEntry) {
-			entry.BodyPending = false
-			entry.BodySkipped = true
-			entry.BodySkipReason = "retention disabled"
-			entry.BodyError = ""
-		})
+		skipRetainedBody(buf, requestID, "retention disabled")
 		return
 	}
 	if buf.RetainedBytes() >= nm.retainBodyMaxPerTab {
-		buf.Update(requestID, func(entry *NetworkEntry) {
-			entry.BodyPending = false
-			entry.BodySkipped = true
-			entry.BodySkipReason = "retention budget exceeded"
-			entry.BodyError = ""
-		})
+		skipRetainedBody(buf, requestID, "retention budget exceeded")
 		return
 	}
 	select {
 	case nm.retainBodySemaphore <- struct{}{}:
 		defer func() { <-nm.retainBodySemaphore }()
 	default:
-		buf.Update(requestID, func(entry *NetworkEntry) {
-			entry.BodyPending = false
-			entry.BodySkipped = true
-			entry.BodySkipReason = "retention concurrency limit reached"
-			entry.BodyError = ""
-		})
+		skipRetainedBody(buf, requestID, "retention concurrency limit reached")
 		return
 	}
-	body, base64Encoded, err := GetResponseBodyDirect(tabCtx, requestID)
+	body, base64Encoded, err := fetchResponseBody(tabCtx, requestID)
 	if err != nil {
 		buf.Update(requestID, func(entry *NetworkEntry) {
 			entry.BodyPending = false
@@ -327,25 +334,22 @@ func (nm *NetworkMonitor) maybeRetainBody(tabCtx context.Context, buf *NetworkBu
 		})
 		return
 	}
-	truncated := false
-	if maxBytes > 0 && len(body) > maxBytes {
-		body = body[:maxBytes]
-		truncated = true
+	body, truncated, dropReason := clampRetainedBody(body, base64Encoded, maxBytes, retentionLimitScope)
+	if dropReason != "" {
+		skipRetainedBody(buf, requestID, dropReason)
+		return
 	}
 	remainingBudget := int(nm.retainBodyMaxPerTab - buf.RetainedBytes())
 	if remainingBudget <= 0 {
-		buf.Update(requestID, func(entry *NetworkEntry) {
-			entry.BodyPending = false
-			entry.BodySkipped = true
-			entry.BodySkipReason = "retention budget exceeded"
-			entry.BodyError = ""
-		})
+		skipRetainedBody(buf, requestID, "retention budget exceeded")
 		return
 	}
-	if len(body) > remainingBudget {
-		body = body[:remainingBudget]
-		truncated = true
+	body, cutForBudget, dropReason := clampRetainedBody(body, base64Encoded, remainingBudget, retentionBudgetScope)
+	if dropReason != "" {
+		skipRetainedBody(buf, requestID, dropReason)
+		return
 	}
+	truncated = truncated || cutForBudget
 	buf.Update(requestID, func(entry *NetworkEntry) {
 		entry.ResponseBody = body
 		entry.Base64Encoded = base64Encoded
@@ -369,13 +373,28 @@ func (nm *NetworkMonitor) IsTabIdle(tabID string) (bool, bool) {
 	return count == 0, true
 }
 
-func (nm *NetworkMonitor) GetResponseBody(tabCtx context.Context, requestID string) (string, bool, error) {
+// GetResponseBody is the only response-body fetcher. It reads Network.getResponseBody
+// as raw JSON so the body and the base64Encoded flag describing it come from the same
+// call and travel together.
+//
+// It deliberately does NOT use cdproto's typed constructor plus Do: that helper
+// base64-decodes the payload inside the dependency and returns []byte, so by the time
+// it returns the flag is gone and the string holds raw bytes. A second fetcher built
+// that way reported base64Encoded=false for every response, which meant a binary body
+// was retained as a string of U+FFFD once JSON-encoded — and made clampRetainedBody's
+// drop-and-mark branch unreachable in production, since nothing ever set the flag it
+// tests.
+func GetResponseBody(ctx context.Context, requestID string) (string, bool, error) {
 	var body string
 	var base64Encoded bool
 
-	err := chromedp.Run(tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		executor := chromedp.FromContext(ctx).Target
+		if executor == nil {
+			return fmt.Errorf("no CDP executor available")
+		}
 		var result json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "Network.getResponseBody", map[string]any{
+		if err := executor.Execute(ctx, "Network.getResponseBody", map[string]any{
 			"requestId": requestID,
 		}, &result); err != nil {
 			return err
@@ -395,36 +414,83 @@ func (nm *NetworkMonitor) GetResponseBody(tabCtx context.Context, requestID stri
 	return body, base64Encoded, err
 }
 
-func GetResponseBodyDirect(ctx context.Context, requestID string) (string, bool, error) {
-	var body string
-	var base64Encoded bool
-
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		executor := chromedp.FromContext(ctx).Target
-		if executor == nil {
-			return fmt.Errorf("no CDP executor available")
+// decodePostData joins a request's body entries into the bytes the page sent. CDP declares
+// PostDataEntry.Bytes as a protocol binary field, so each entry arrives base64-encoded, and
+// joining the entries as strings is wrong twice over: the published value is an encoded blob
+// in a field named after the request body, and base64(a)+base64(b) is not base64(a+b) once an
+// entry's length is not a multiple of three, so any multi-entry body arrives corrupt.
+//
+// Anything that cannot be published as the text it claims to be publishes nothing, and says
+// why: an entry that is not base64, or a body that is not valid UTF-8 once decoded, such as a
+// file part in a multipart POST. The alternative is mojibake, or a blob in a field with no
+// encoding signal, or — worse — an empty string that reads as a request sent with no body.
+// The second return is that reason, empty when there is nothing to explain.
+func decodePostData(entries []*network.PostDataEntry) (string, string) {
+	var decoded []byte
+	for _, entry := range entries {
+		if entry == nil {
+			continue
 		}
-		params := network.GetResponseBody(network.RequestID(requestID))
-		resp, err := params.Do(cdp.WithExecutor(ctx, executor))
+		chunk, err := base64.StdEncoding.DecodeString(entry.Bytes)
 		if err != nil {
-			return err
+			return "", "request body entry is not base64"
 		}
-		body = string(resp)
-		base64Encoded = false
-		return nil
-	}))
+		decoded = append(decoded, chunk...)
+	}
+	if !utf8.Valid(decoded) {
+		return "", "request body is not valid UTF-8"
+	}
+	return string(decoded), ""
+}
 
-	return body, base64Encoded, err
+// requestEntryFromEvent builds the entry a started request is recorded as. It is the one
+// place a refused request body turns into a stated reason on the entry, so an absent
+// postData is never mistaken for a request sent without one.
+func requestEntryFromEvent(e *network.EventRequestWillBeSent) NetworkEntry {
+	headers := make(map[string]string)
+	if e.Request.Headers != nil {
+		for k, v := range e.Request.Headers {
+			if s, ok := v.(string); ok {
+				headers[k] = s
+			}
+		}
+	}
+	postData, postDataSkipReason := decodePostData(e.Request.PostDataEntries)
+	return NetworkEntry{
+		RequestID:          string(e.RequestID),
+		URL:                e.Request.URL,
+		Method:             e.Request.Method,
+		ResourceType:       e.Type.String(),
+		RequestHeaders:     headers,
+		PostData:           postData,
+		PostDataSkipped:    postDataSkipReason != "",
+		PostDataSkipReason: postDataSkipReason,
+		StartTime:          time.Now(),
+	}
 }
 
 func normalizeNetworkEntry(entry NetworkEntry) NetworkEntry {
-	entry.URL = sanitize.TruncateUTF8Bytes(entry.URL, maxNetworkURLBytes)
-	entry.Method = sanitize.TruncateUTF8Bytes(entry.Method, maxNetworkMethodBytes)
-	entry.ResourceType = sanitize.TruncateUTF8Bytes(entry.ResourceType, maxNetworkResourceTypeBytes)
-	entry.StatusText = sanitize.TruncateUTF8Bytes(entry.StatusText, maxNetworkStatusTextBytes)
-	entry.MimeType = sanitize.TruncateUTF8Bytes(entry.MimeType, maxNetworkMimeTypeBytes)
-	entry.Error = sanitize.TruncateUTF8Bytes(entry.Error, maxNetworkErrorBytes)
-	entry.PostData = sanitize.TruncateUTF8Bytes(entry.PostData, maxNetworkPostDataBytes)
+	entry.URL = sanitize.TruncateUTF8BytesWithEllipsis(entry.URL, maxNetworkURLBytes)
+	entry.Method = sanitize.TruncateUTF8BytesWithEllipsis(entry.Method, maxNetworkMethodBytes)
+	entry.ResourceType = sanitize.TruncateUTF8BytesWithEllipsis(entry.ResourceType, maxNetworkResourceTypeBytes)
+	entry.StatusText = sanitize.TruncateUTF8BytesWithEllipsis(entry.StatusText, maxNetworkStatusTextBytes)
+	entry.MimeType = sanitize.TruncateUTF8BytesWithEllipsis(entry.MimeType, maxNetworkMimeTypeBytes)
+	entry.Error = sanitize.TruncateUTF8BytesWithEllipsis(entry.Error, maxNetworkErrorBytes)
+	// The request body is clamped by the one owner of that rule, so it inherits the
+	// prefix-or-nothing policy the response body already states. The budget measures the
+	// decoded body, which is what PostData holds, so the constant describes the request
+	// content rather than its encoded length. Flags are only ever set here, never cleared:
+	// an entry is re-normalised on every update, and a second pass sees a value already
+	// within budget.
+	clampedPostData, postDataTruncated, postDataDropReason := clampRetainedBody(entry.PostData, false, maxNetworkPostDataBytes, postDataLimitScope)
+	entry.PostData = clampedPostData
+	if postDataTruncated {
+		entry.PostDataTruncated = true
+	}
+	if postDataDropReason != "" {
+		entry.PostDataSkipped = true
+		entry.PostDataSkipReason = postDataDropReason
+	}
 	entry.RequestHeaders = normalizeNetworkHeaders(entry.RequestHeaders)
 	entry.ResponseHeaders = normalizeNetworkHeaders(entry.ResponseHeaders)
 	return entry
@@ -442,7 +508,7 @@ func normalizeNetworkHeaders(headers map[string]string) map[string]string {
 			break
 		}
 
-		key = sanitize.TruncateUTF8Bytes(key, maxNetworkHeaderKeyBytes)
+		key = sanitize.TruncateUTF8BytesWithEllipsis(key, maxNetworkHeaderKeyBytes)
 		if key == "" {
 			continue
 		}
@@ -455,7 +521,7 @@ func normalizeNetworkHeaders(headers map[string]string) map[string]string {
 			break
 		}
 
-		value = sanitize.TruncateUTF8Bytes(value, valueLimit)
+		value = sanitize.TruncateUTF8BytesWithEllipsis(value, valueLimit)
 		entryBytes := len(key) + len(value)
 		if entryBytes <= 0 {
 			continue

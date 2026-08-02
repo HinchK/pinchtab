@@ -15,7 +15,7 @@ type tabHandoffReader interface {
 
 func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 	if h.Bridge == nil {
-		httpx.JSON(w, 503, map[string]any{"status": "error", "reason": "bridge not initialized"})
+		writeUnavailable(w, 503, "bridge_unavailable", "bridge not initialized")
 		return
 	}
 	if draining, retryAfter := h.bridgeRestartStatus(); draining {
@@ -24,7 +24,9 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 			seconds = 1
 		}
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", seconds))
-		httpx.JSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining", "retryAfterSeconds": seconds})
+		httpx.JSONError(w, http.StatusServiceUnavailable, "browser_draining",
+			fmt.Sprintf("browser is restarting; retry after %ds", seconds),
+			map[string]any{"status": "draining", "retryAfterSeconds": seconds})
 		return
 	}
 
@@ -32,22 +34,27 @@ func (h *Handlers) HandleHealth(w http.ResponseWriter, r *http.Request) {
 		if h.writeBridgeUnavailable(w, err) {
 			return
 		}
-		httpx.JSON(w, 503, map[string]any{"status": "error", "reason": fmt.Sprintf("browser initialization failed: %v", err)})
+		writeUnavailable(w, 503, "browser_init_failed", fmt.Sprintf("browser initialization failed: %v", err))
 		return
 	}
 	targets, err := h.Bridge.ListTargets()
 	if err != nil {
-		httpx.JSON(w, 503, map[string]any{"status": "error", "reason": err.Error()})
+		writeUnavailable(w, 503, "list_targets_failed", err.Error())
 		return
 	}
 
 	resp := map[string]any{"status": "ok", "tabs": len(targets)}
+	// Server-mode /health reports version; bridge /health did not, so a bridge
+	// bug report could not state which build produced it.
+	if h.Version != "" {
+		resp["version"] = h.Version
+	}
 
 	if crashLogs := h.Bridge.GetCrashLogs(); len(crashLogs) > 0 {
 		resp["crashLogs"] = crashLogs
 	}
 	if hasFailureDiagnostics() {
-		resp["failures"] = FailureSnapshot()
+		resp["failures"] = FailureSnapshot(LayerInstance)
 	}
 	if bridge.HasCrashDiagnostics() {
 		resp["crashes"] = bridge.CrashSnapshot()
@@ -89,14 +96,11 @@ func (h *Handlers) HandleBrowserRestart(w http.ResponseWriter, r *http.Request) 
 	httpx.JSON(w, 200, map[string]string{"status": "browser_restarted"})
 }
 
+// HandleMetrics reports this process's own counters. In server mode that is an
+// instance child: the orchestrator front door answers its own /metrics, so a
+// client can read either layer without the two ever being summed.
 func (h *Handlers) HandleMetrics(w http.ResponseWriter, r *http.Request) {
-	result := map[string]any{"metrics": SnapshotMetrics()}
-	if hasFailureDiagnostics() {
-		result["failures"] = FailureSnapshot()
-	}
-	if bridge.HasCrashDiagnostics() {
-		result["crashes"] = bridge.CrashSnapshot()
-	}
+	result := DiagnosticsSnapshot(LayerInstance)
 
 	if h.Bridge != nil {
 		if mem, err := h.Bridge.GetAggregatedMemoryMetrics(); err == nil && mem != nil {

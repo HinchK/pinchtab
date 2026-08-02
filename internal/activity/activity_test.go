@@ -289,7 +289,7 @@ func TestStoreWritesJSONLFile(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	path := filepath.Join(root, "activity", "events-"+now.Format(time.DateOnly)+".jsonl")
+	path := filepath.Join(root, "events-"+now.Format(time.DateOnly)+".jsonl")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("activity log missing: %v", err)
 	}
@@ -322,7 +322,7 @@ func TestStorePartitionsDashboardEventsOutsidePrimaryLog(t *testing.T) {
 		t.Fatalf("Record server: %v", err)
 	}
 
-	mainPath := filepath.Join(root, "activity", "events-"+now.Format(time.DateOnly)+".jsonl")
+	mainPath := filepath.Join(root, "events-"+now.Format(time.DateOnly)+".jsonl")
 	mainData, err := os.ReadFile(mainPath)
 	if err != nil {
 		t.Fatalf("ReadFile main: %v", err)
@@ -334,7 +334,7 @@ func TestStorePartitionsDashboardEventsOutsidePrimaryLog(t *testing.T) {
 		t.Fatal("primary activity log should include server events")
 	}
 
-	dashboardPath := filepath.Join(root, "activity", "events-dashboard-"+now.Format(time.DateOnly)+".jsonl")
+	dashboardPath := filepath.Join(root, "events-dashboard-"+now.Format(time.DateOnly)+".jsonl")
 	dashboardData, err := os.ReadFile(dashboardPath)
 	if err != nil {
 		t.Fatalf("ReadFile dashboard: %v", err)
@@ -386,7 +386,7 @@ func TestStoreWritesServerEventsToSourcePartitionToo(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	mainPath := filepath.Join(root, "activity", "events-"+now.Format(time.DateOnly)+".jsonl")
+	mainPath := filepath.Join(root, "events-"+now.Format(time.DateOnly)+".jsonl")
 	mainData, err := os.ReadFile(mainPath)
 	if err != nil {
 		t.Fatalf("ReadFile main: %v", err)
@@ -395,7 +395,7 @@ func TestStoreWritesServerEventsToSourcePartitionToo(t *testing.T) {
 		t.Fatal("primary activity log should include server events")
 	}
 
-	serverPath := filepath.Join(root, "activity", "events-server-"+now.Format(time.DateOnly)+".jsonl")
+	serverPath := filepath.Join(root, "events-server-"+now.Format(time.DateOnly)+".jsonl")
 	serverData, err := os.ReadFile(serverPath)
 	if err != nil {
 		t.Fatalf("ReadFile server: %v", err)
@@ -432,7 +432,7 @@ func TestStoreWithEventsRecordsClientOnlyByDefaultPolicy(t *testing.T) {
 		t.Fatalf("unfiltered query = %#v, want single client event", gotAll)
 	}
 
-	clientPath := filepath.Join(root, "activity", "events-client-"+now.Format(time.DateOnly)+".jsonl")
+	clientPath := filepath.Join(root, "events-client-"+now.Format(time.DateOnly)+".jsonl")
 	clientData, err := os.ReadFile(clientPath)
 	if err != nil {
 		t.Fatalf("ReadFile client: %v", err)
@@ -447,7 +447,7 @@ func TestStoreWithEventsRecordsClientOnlyByDefaultPolicy(t *testing.T) {
 	}
 
 	for _, source := range []string{"dashboard", "server", "orchestrator"} {
-		path := filepath.Join(root, "activity", "events-"+source+"-"+now.Format(time.DateOnly)+".jsonl")
+		path := filepath.Join(root, "events-"+source+"-"+now.Format(time.DateOnly)+".jsonl")
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("%s activity log should not exist, stat err = %v", source, err)
 		}
@@ -481,7 +481,7 @@ func TestStorePrunesExpiredDailyFiles(t *testing.T) {
 		t.Fatalf("Record new: %v", err)
 	}
 
-	oldPath := filepath.Join(root, "activity", "events-"+oldDay.Format(time.DateOnly)+".jsonl")
+	oldPath := filepath.Join(root, "events-"+oldDay.Format(time.DateOnly)+".jsonl")
 	if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
 		t.Fatalf("expected old activity file to be pruned, stat err = %v", err)
 	}
@@ -489,7 +489,7 @@ func TestStorePrunesExpiredDailyFiles(t *testing.T) {
 
 func TestNewStorePrunesExpiredDailyFilesOnStartup(t *testing.T) {
 	root := t.TempDir()
-	activityDir := filepath.Join(root, "activity")
+	activityDir := root
 	if err := os.MkdirAll(activityDir, 0750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -520,7 +520,7 @@ func TestNewStorePrunesExpiredDailyFilesOnStartup(t *testing.T) {
 
 func TestNewStorePrunesExpiredSourceSpecificDailyFilesOnStartup(t *testing.T) {
 	root := t.TempDir()
-	activityDir := filepath.Join(root, "activity")
+	activityDir := root
 	if err := os.MkdirAll(activityDir, 0750); err != nil {
 		t.Fatalf("MkdirAll: %v", err)
 	}
@@ -661,7 +661,7 @@ func TestStoreRecord_SanitizesURLBeforePersisting(t *testing.T) {
 		t.Fatalf("Record: %v", err)
 	}
 
-	path := filepath.Join(root, "activity", "events-"+now.Format(time.DateOnly)+".jsonl")
+	path := filepath.Join(root, "events-"+now.Format(time.DateOnly)+".jsonl")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("ReadFile: %v", err)

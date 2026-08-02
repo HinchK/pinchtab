@@ -1,6 +1,10 @@
 package actions
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"os"
 	"strings"
 	"testing"
 
@@ -86,5 +90,83 @@ func TestTextTab(t *testing.T) {
 	Text(client, m.base(), "", cmd, nil)
 	if !strings.Contains(m.lastQuery, "tabId=TAB1") {
 		t.Errorf("expected tabId=TAB1, got %s", m.lastQuery)
+	}
+}
+
+func captureStderr(t *testing.T, fn func()) string {
+	t.Helper()
+
+	oldStderr := os.Stderr
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	os.Stderr = writer
+
+	var buf bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		_, copyErr := io.Copy(&buf, reader)
+		_ = reader.Close()
+		done <- copyErr
+	}()
+
+	defer func() { os.Stderr = oldStderr }()
+
+	fn()
+
+	_ = writer.Close()
+	if err := <-done; err != nil {
+		t.Fatalf("io.Copy: %v", err)
+	}
+	return buf.String()
+}
+
+func runTextAgainst(t *testing.T, response string) (stdout, stderr string) {
+	t.Helper()
+	m := newMockServer()
+	m.response = response
+	defer m.close()
+
+	stderr = captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			Text(m.server.Client(), m.base(), "", newTextCmd(), nil)
+		})
+	})
+	return stdout, stderr
+}
+
+func TestTextFallbackNotesOnStderrAndKeepsStdoutClean(t *testing.T) {
+	page := "PinchTab — browser control for AI agents\nInstall: curl -fsSL https://pinchtab.com/install.sh | sh"
+	body, err := json.Marshal(map[string]any{
+		"text":       page,
+		"extraction": "readability_fallback",
+		"textLength": len(page),
+		"rawLength":  len(page),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, stderr := runTextAgainst(t, string(body))
+
+	if stdout != page+"\n" {
+		t.Errorf("stdout = %q, want the page text alone", stdout)
+	}
+	if !strings.Contains(stderr, "--full") {
+		t.Errorf("stderr = %q, want a note pointing at --full", stderr)
+	}
+}
+
+func TestTextNoNoteWhenReadabilityHeld(t *testing.T) {
+	body := `{"text":"Article body","extraction":"readability","textLength":12,"rawLength":13}`
+
+	stdout, stderr := runTextAgainst(t, body)
+
+	if stdout != "Article body\n" {
+		t.Errorf("stdout = %q, want the article text", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want no note when readability held", stderr)
 	}
 }

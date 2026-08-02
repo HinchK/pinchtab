@@ -10,7 +10,53 @@ import (
 	_ "github.com/pinchtab/pinchtab/internal/browsers/cloak"
 	_ "github.com/pinchtab/pinchtab/internal/browsers/ghostchrome"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/routes"
 )
+
+// The guards-down preset used to hand-list its capability toggles and had silently drifted
+// from the canonical table — omitting stateExport. It now derives from routes, so this census
+// walks CapabilityEndpoints() and drives the real preset: every gated capability must be
+// enabled EXCEPT the one recorded exclusion, and each must resolve through routes.Meta rather
+// than a synthesised path. A capability that gates routes but routes.Meta cannot describe
+// (an endpoint added without a table entry) fails here rather than being silently skipped.
+func TestGuardsDownEnablesEveryCapabilityExceptTheRecordedExclusion(t *testing.T) {
+	gated := routes.CapabilityEndpoints()
+	if len(gated) < 2 {
+		t.Fatalf("only %d gated capabilities; this census would pass vacuously", len(gated))
+	}
+
+	fc := config.DefaultFileConfig()
+	if _, err := BuildGuardsDownConfig(&fc); err != nil {
+		t.Fatalf("BuildGuardsDownConfig() error = %v", err)
+	}
+
+	excludedSeen := false
+	for cap := range gated {
+		meta, ok := routes.Meta(cap)
+		if !ok {
+			t.Errorf("capability %q gates routes but routes.Meta does not describe it, so guards-down cannot derive its setting", cap)
+			continue
+		}
+		got, err := config.GetConfigValue(&fc, meta.Setting)
+		if err != nil {
+			t.Errorf("reading %s for capability %q: %v", meta.Setting, cap, err)
+			continue
+		}
+		if cap == guardsDownExcludedCapability {
+			excludedSeen = true
+			if got == "true" {
+				t.Errorf("guards-down enabled the recorded-exclusion capability %q (%s); disk state export must stay a deliberate opt-out, not a side effect of turning guards off", cap, meta.Setting)
+			}
+			continue
+		}
+		if got != "true" {
+			t.Errorf("guards-down left capability %q (%s) at %q, not enabled; a capability it omits is silently kept off", cap, meta.Setting, got)
+		}
+	}
+	if !excludedSeen {
+		t.Fatalf("the recorded exclusion %q is not among the gated capabilities; the exclusion is stale", guardsDownExcludedCapability)
+	}
+}
 
 func TestApplyGuardsDownPreset(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "pinchtab", "config.json")

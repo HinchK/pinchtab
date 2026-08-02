@@ -19,6 +19,8 @@ var mouseDownByCoordinateAction = MouseDownByCoordinate
 var mouseUpByCoordinateAction = MouseUpByCoordinate
 var clickByCoordinateAction = ClickByCoordinate
 var clickElementAction = ClickElement
+var hoverElementAction = HoverElement
+var hoverCoordinateAction = Hover
 var clickByNodeIDAction = ClickByNodeID
 var jsClickByBackendNodeAction = JSClickByBackendNode
 var dispatchClickByBackendNodeAction = JSDispatchClickByBackendNode
@@ -327,7 +329,7 @@ func (b *Bridge) actionClick(ctx context.Context, req ActionRequest) (result map
 		} else if req.HasXY {
 			err = clickByCoordinateAction(clickCtx, req.X, req.Y, req.Modifiers)
 		} else {
-			resultCh <- clickResult{err: fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")}
+			resultCh <- clickResult{err: NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")}
 			return
 		}
 		resultCh <- clickResult{err: err}
@@ -416,7 +418,7 @@ func (b *Bridge) actionDoubleClick(ctx context.Context, req ActionRequest) (resu
 		}
 		err = DoubleClickByCoordinate(ctx, req.X, req.Y)
 	} else {
-		return nil, fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")
+		return nil, NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")
 	}
 	if err != nil {
 		return nil, err
@@ -425,6 +427,9 @@ func (b *Bridge) actionDoubleClick(ctx context.Context, req ActionRequest) (resu
 }
 
 func (b *Bridge) actionHover(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	if b.effectiveHumanize(req) {
+		return b.actionHumanizedHover(ctx, req)
+	}
 	if req.NodeID > 0 {
 		return map[string]any{"hovered": true}, HoverByNodeID(ctx, req.NodeID)
 	}
@@ -438,7 +443,29 @@ func (b *Bridge) actionHover(ctx context.Context, req ActionRequest) (map[string
 	if req.HasXY {
 		return map[string]any{"hovered": true}, HoverByCoordinate(ctx, req.X, req.Y)
 	}
-	return nil, fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")
+	return nil, NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")
+}
+
+func (b *Bridge) actionHumanizedHover(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	var err error
+	switch {
+	case req.NodeID > 0:
+		err = hoverElementAction(ctx, cdp.BackendNodeID(req.NodeID))
+	case req.Selector != "":
+		node, nodeErr := firstNodeBySelector(ctx, req.Selector)
+		if nodeErr != nil {
+			return nil, nodeErr
+		}
+		err = hoverElementAction(ctx, node.BackendNodeID)
+	case req.HasXY:
+		err = hoverCoordinateAction(ctx, req.X, req.Y)
+	default:
+		return nil, NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"hovered": true, "human": true}, nil
 }
 
 func (b *Bridge) rememberPointerPosition(tabID string, x, y float64) {
@@ -467,7 +494,7 @@ func pointerTargetRequiredError(req ActionRequest, allowCurrent bool) error {
 	if allowCurrent && strings.TrimSpace(req.TabID) != "" {
 		return fmt.Errorf("no pointer position known for tab %s; move pointer first or provide selector, ref, nodeId, or x/y coordinates", req.TabID)
 	}
-	return fmt.Errorf("need selector, ref, nodeId, or x/y coordinates")
+	return NewInvalidActionRequestError("need selector, ref, nodeId, or x/y coordinates")
 }
 
 func (b *Bridge) pointerCoordinatesFromRequest(ctx context.Context, req ActionRequest, allowCurrent bool) (float64, float64, error) {
@@ -537,6 +564,12 @@ func (b *Bridge) actionMouseUp(ctx context.Context, req ActionRequest) (map[stri
 }
 
 func (b *Bridge) actionMouseWheel(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	// Resolved before the pointer target, so a request that cannot scroll is refused
+	// without reaching CDP at all.
+	deltaX, deltaY, err := wheelDelta(req)
+	if err != nil {
+		return nil, err
+	}
 	x, y, err := b.pointerCoordinatesFromRequest(ctx, req, true)
 	if err != nil {
 		if req.HasXY || req.NodeID > 0 || req.Selector != "" || req.TabID == "" {
@@ -547,20 +580,38 @@ func (b *Bridge) actionMouseWheel(ctx context.Context, req ActionRequest) (map[s
 			return nil, fmt.Errorf("resolve wheel viewport center: %w", err)
 		}
 	}
-	deltaX := req.DeltaX
-	deltaY := req.DeltaY
-	if deltaX == 0 && deltaY == 0 {
-		deltaX = req.ScrollX
-		deltaY = req.ScrollY
-	}
-	if deltaX == 0 && deltaY == 0 {
-		deltaY = 120
-	}
 	if err := scrollByCoordinateAction(ctx, x, y, deltaX, deltaY, req.Modifiers); err != nil {
 		return nil, err
 	}
 	b.rememberPointerPosition(req.TabID, x, y)
 	return map[string]any{"wheel": true, "x": x, "y": y, "deltaX": deltaX, "deltaY": deltaY}, nil
+}
+
+const defaultScrollNotch = 120
+
+func resolveScrollDelta(x, y int, explicit bool, spelling string) (int, int, error) {
+	if x != 0 || y != 0 {
+		return x, y, nil
+	}
+	if explicit {
+		return 0, 0, fmt.Errorf("a zero delta is not a scroll: pass a non-zero %s", spelling)
+	}
+	return 0, defaultScrollNotch, nil
+}
+
+func scrollDeltaFromRequest(primaryX, primaryY, fallbackX, fallbackY int, explicit bool, spelling string) (int, int, error) {
+	if primaryX == 0 && primaryY == 0 {
+		primaryX, primaryY = fallbackX, fallbackY
+	}
+	return resolveScrollDelta(primaryX, primaryY, explicit, spelling)
+}
+
+func wheelDelta(req ActionRequest) (int, int, error) {
+	return scrollDeltaFromRequest(req.DeltaX, req.DeltaY, req.ScrollX, req.ScrollY, req.HasDelta || req.HasScroll, "deltaX/deltaY")
+}
+
+func scrollDelta(req ActionRequest) (int, int, error) {
+	return scrollDeltaFromRequest(req.ScrollX, req.ScrollY, req.DeltaX, req.DeltaY, req.HasScroll || req.HasDelta, "scrollX/scrollY, or a selector to scroll into view")
 }
 
 func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[string]any, error) {
@@ -576,16 +627,14 @@ func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[strin
 		return map[string]any{"scrolled": true}, ScrollByNodeID(ctx, int64(node.BackendNodeID))
 	}
 
-	scrollX := req.ScrollX
-	scrollY := req.ScrollY
-	if scrollX == 0 && scrollY == 0 {
-		scrollY = 120
+	scrollX, scrollY, err := scrollDelta(req)
+	if err != nil {
+		return nil, err
 	}
 
 	scrollTargetX := req.X
 	scrollTargetY := req.Y
 	if !req.HasXY {
-		var err error
 		scrollTargetX, scrollTargetY, err = scrollViewportCenter(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("resolve scroll viewport center: %w", err)
@@ -606,11 +655,17 @@ func (b *Bridge) actionScroll(ctx context.Context, req ActionRequest) (map[strin
 }
 
 func (b *Bridge) actionDrag(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	if req.hasDragDestination() {
+		if req.DragX != 0 || req.DragY != 0 {
+			return nil, NewInvalidActionRequestError("drag takes a destination (toSelector/toNodeId/toX+toY) or an offset (dragX/dragY), not both")
+		}
+		return b.dragToDestination(ctx, req)
+	}
 	if req.DragX == 0 && req.DragY == 0 {
-		return nil, fmt.Errorf("dragX or dragY required for drag")
+		return nil, NewInvalidActionRequestError("dragX or dragY required for drag")
 	}
 	if req.NodeID > 0 {
-		err := DragByNodeID(ctx, req.NodeID, req.DragX, req.DragY)
+		err := DragByNodeID(ctx, req.NodeID, req.DragX, req.DragY, req.Button)
 		if err != nil {
 			return nil, err
 		}
@@ -621,13 +676,61 @@ func (b *Bridge) actionDrag(ctx context.Context, req ActionRequest) (map[string]
 		if err != nil {
 			return nil, err
 		}
-		err = DragByNodeID(ctx, int64(node.BackendNodeID), req.DragX, req.DragY)
+		err = DragByNodeID(ctx, int64(node.BackendNodeID), req.DragX, req.DragY, req.Button)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"dragged": true, "dragX": req.DragX, "dragY": req.DragY}, nil
 	}
-	return nil, fmt.Errorf("need selector, ref, or nodeId")
+	return nil, NewInvalidActionRequestError("need selector, ref, or nodeId")
+}
+
+func (b *Bridge) dragToDestination(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	fromX, fromY, err := dragPointFor(ctx, dragEnd{nodeID: req.NodeID, selector: req.Selector, x: req.X, y: req.Y, hasPoint: req.HasXY})
+	if err != nil {
+		return nil, fmt.Errorf("drag source: %w", err)
+	}
+	toX, toY, err := dragPointFor(ctx, dragEnd{nodeID: req.ToNodeID, selector: req.ToSelector, x: req.ToX, y: req.ToY, hasPoint: req.HasToXY})
+	if err != nil {
+		return nil, fmt.Errorf("drag destination: %w", err)
+	}
+	if err := DragBetweenPoints(ctx, fromX, fromY, toX, toY, req.Button); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"dragged": true,
+		"fromX":   fromX,
+		"fromY":   fromY,
+		"toX":     toX,
+		"toY":     toY,
+	}, nil
+}
+
+type dragEnd struct {
+	nodeID   int64
+	selector string
+	x, y     float64
+	hasPoint bool
+}
+
+func dragPointFor(ctx context.Context, end dragEnd) (float64, float64, error) {
+	switch {
+	case end.nodeID > 0:
+		return PointerPointForNode(ctx, end.nodeID, true)
+	case end.selector != "":
+		node, err := firstNodeBySelector(ctx, end.selector)
+		if err != nil {
+			return 0, 0, err
+		}
+		return PointerPointForNode(ctx, int64(node.BackendNodeID), true)
+	case end.hasPoint:
+		return end.x, end.y, nil
+	}
+	return 0, 0, NewInvalidActionRequestError("need selector, ref, nodeId, or coordinates")
+}
+
+func (r ActionRequest) hasDragDestination() bool {
+	return r.ToNodeID > 0 || r.ToSelector != "" || r.HasToXY
 }
 
 func (b *Bridge) actionHumanizedClick(ctx context.Context, req ActionRequest) (result map[string]any, err error) {
@@ -650,7 +753,7 @@ func (b *Bridge) actionHumanizedClick(ctx context.Context, req ActionRequest) (r
 			auto.prepareNode(ctx, int64(node.BackendNodeID))
 		}
 	default:
-		return nil, fmt.Errorf("need selector, ref, or nodeId")
+		return nil, NewInvalidActionRequestError("need selector, ref, or nodeId")
 	}
 
 	// If the caller expects this click to open a native JS dialog, arm a
@@ -717,5 +820,5 @@ func (b *Bridge) actionScrollIntoView(ctx context.Context, req ActionRequest) (m
 		}
 		return ScrollIntoViewAndGetBox(ctx, nid)
 	}
-	return nil, fmt.Errorf("need selector or ref")
+	return nil, NewInvalidActionRequestError("need selector or ref")
 }

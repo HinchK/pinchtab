@@ -3,14 +3,13 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
-	"os"
-	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
 // TestCaptureScreenshotOfBackgroundTabCompletesQuickly is a real-Chromium
@@ -22,15 +21,8 @@ import (
 // focus emulation and returns from captureScreenshot immediately regardless
 // of whether a real tab is actually painting.
 func TestCaptureScreenshotOfBackgroundTabCompletesQuickly(t *testing.T) {
-	chromePath, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Skip("chromium not installed")
-	}
-	profile, err := os.MkdirTemp("", "pinchtab-bg-capture-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(profile) })
+	chromePath := testbrowser.Path(t)
+	profile := testbrowser.ProfileDir(t)
 
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],

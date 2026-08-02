@@ -169,6 +169,11 @@ func (bc *BridgeClient) ProxyWithTabID(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	proxyReq.Header.Set("Content-Type", "application/json")
+	// This hop re-encodes the body and so builds a fresh request rather than copying the
+	// caller's, which means it tells the instance nothing unless asked to. The request id
+	// is forwarded explicitly — and only the request id, so re-encoding does not become a
+	// back door around the headers the copying hops deliberately strip.
+	httpx.ForwardRequestID(proxyReq.Header, r.Header)
 
 	resp, err := bc.client.Do(proxyReq)
 	if err != nil {
@@ -177,11 +182,7 @@ func (bc *BridgeClient) ProxyWithTabID(w http.ResponseWriter, r *http.Request, p
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	for key, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(key, v)
-		}
-	}
+	httpx.CopyProxiedResponseHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
 }
@@ -202,13 +203,11 @@ func (bc *BridgeClient) ProxyToTab(w http.ResponseWriter, r *http.Request, port,
 	}
 
 	for key, values := range r.Header {
-		switch key {
-		case "Host", "Connection", "Keep-Alive", "Proxy-Authenticate",
-			"Proxy-Authorization", "Te", "Trailers", "Transfer-Encoding", "Upgrade":
-		default:
-			for _, v := range values {
-				proxyReq.Header.Add(key, v)
-			}
+		if httpx.IsHopByHopHeader(key) {
+			continue
+		}
+		for _, v := range values {
+			proxyReq.Header.Add(key, v)
 		}
 	}
 
@@ -219,11 +218,7 @@ func (bc *BridgeClient) ProxyToTab(w http.ResponseWriter, r *http.Request, port,
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	for key, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(key, v)
-		}
-	}
+	httpx.CopyProxiedResponseHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
 }

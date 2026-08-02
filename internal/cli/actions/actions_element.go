@@ -10,6 +10,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
 	"github.com/pinchtab/pinchtab/internal/cli/output"
+	"github.com/pinchtab/pinchtab/internal/scroll"
 	"github.com/pinchtab/pinchtab/internal/selector"
 	"github.com/spf13/cobra"
 )
@@ -120,6 +121,12 @@ func postActionWithHeaders(client *http.Client, base, token string, cmd *cobra.C
 		path = "/tabs/" + tabID + "/action"
 	}
 
+	if _, ok := body["vocab"]; !ok {
+		if tok := apiclient.VocabTokenFor(base, tabID); tok != "" {
+			body["vocab"] = tok
+		}
+	}
+
 	jsonOutput, _ := cmd.Flags().GetBool("json")
 	if jsonOutput {
 		apiclient.DoPostWithHeaders(client, base, token, path, body, headers)
@@ -209,7 +216,41 @@ func setPointBody(body map[string]any, x, y float64) {
 	body["y"] = y
 }
 
-func readWheelDelta(cmd *cobra.Command, primary string) (int, bool) {
+// applyScrollTarget fills a scroll body from the single positional — integer pixels, then
+// direction keyword, then unified selector — or from --dy/--dx when there is no positional.
+// Pixels and directions would otherwise parse as CSS tag selectors ("up", "down"), so they
+// are intercepted before setSelectorBody.
+//
+// A negative count is only reachable through the flags: cobra reads a leading minus on a
+// positional as bundled shorthand flags.
+//
+// The positional and the flags are two spellings of ONE argument, so a positional wins
+// outright instead of merging: assigning both would build a diagonal scroll out of a flag
+// axis and a positional axis that no caller asked for. The CLI refuses that combination
+// before it gets here, but this is exported and callable without cobra's Args hook, so the
+// rule lives here rather than on loan from another package.
+func applyScrollTarget(body map[string]any, args []string, cmd *cobra.Command) {
+	if len(args) == 0 {
+		if deltaY, ok := readIntFlag(cmd, "dy"); ok {
+			body["scrollY"] = deltaY
+		}
+		if deltaX, ok := readIntFlag(cmd, "dx"); ok {
+			body["scrollX"] = deltaX
+		}
+		return
+	}
+	if px, err := strconv.Atoi(args[0]); err == nil {
+		body["scrollY"] = px
+		return
+	}
+	if direction, ok := scroll.DirectionFor(strings.ToLower(args[0])); ok {
+		body[direction.Axis] = direction.Delta
+		return
+	}
+	setSelectorBody(body, args[0])
+}
+
+func readIntFlag(cmd *cobra.Command, primary string) (int, bool) {
 	if cmd.Flags().Changed(primary) {
 		if value, err := cmd.Flags().GetInt(primary); err == nil {
 			return value, true
@@ -293,10 +334,10 @@ func MouseAction(client *http.Client, base, token, kind string, args []string, c
 				setSelectorBody(body, args[0])
 			}
 		}
-		if deltaX, ok := readWheelDelta(cmd, "dx"); ok {
+		if deltaX, ok := readIntFlag(cmd, "dx"); ok {
 			body["deltaX"] = deltaX
 		}
-		if deltaY, ok := readWheelDelta(cmd, "dy"); ok {
+		if deltaY, ok := readIntFlag(cmd, "dy"); ok {
 			if _, fromArg := body["deltaY"]; fromArg {
 				cli.Fatal("Usage: pinchtab mouse wheel <dy> [--dx <n>] or pinchtab mouse wheel [selector]")
 			}
@@ -358,12 +399,6 @@ func actionBodyForTarget(kind string, target dragTarget) map[string]any {
 }
 
 func Drag(client *http.Client, base, token string, args []string, cmd *cobra.Command) {
-	// Two modes:
-	//   1. pinchtab drag <selector> --drag-x N --drag-y N
-	//        → single HTTP "drag" action with pixel offsets (dragX/dragY).
-	//   2. pinchtab drag <from> <to>
-	//        → synthesized mouse-move → mouse-down → mouse-move → mouse-up
-	//          sequence. Each target may be "selector" or "x,y" coords.
 	hasDragX := cmd.Flags().Changed("drag-x")
 	hasDragY := cmd.Flags().Changed("drag-y")
 
@@ -388,20 +423,21 @@ func Drag(client *http.Client, base, token string, args []string, cmd *cobra.Com
 		cli.Fatal("Usage: pinchtab drag <from> <to>  or  pinchtab drag <selector> --drag-x <n> --drag-y <n>")
 	}
 
-	from := parseDragTarget(args[0])
-	to := parseDragTarget(args[1])
-
-	mouseDown := map[string]any{"kind": bridge.ActionMouseDown}
-	mouseUp := map[string]any{"kind": bridge.ActionMouseUp}
+	body := actionBodyForTarget(bridge.ActionDrag, parseDragTarget(args[0]))
+	setDragDestinationBody(body, parseDragTarget(args[1]))
 	if button, _ := cmd.Flags().GetString("button"); button != "" {
-		mouseDown["button"] = button
-		mouseUp["button"] = button
+		body["button"] = button
 	}
+	postAction(client, base, token, cmd, body)
+}
 
-	postAction(client, base, token, cmd, actionBodyForTarget(bridge.ActionMouseMove, from))
-	postAction(client, base, token, cmd, mouseDown)
-	postAction(client, base, token, cmd, actionBodyForTarget(bridge.ActionMouseMove, to))
-	postAction(client, base, token, cmd, mouseUp)
+func setDragDestinationBody(body map[string]any, target dragTarget) {
+	if target.hasXY {
+		body["toX"] = target.x
+		body["toY"] = target.y
+		return
+	}
+	body["toSelector"] = target.selector
 }
 
 func ActionSimple(client *http.Client, base, token, kind string, args []string, cmd *cobra.Command) {
@@ -425,30 +461,7 @@ func ActionSimple(client *http.Client, base, token, kind string, args []string, 
 			body["key"] = args[0]
 		}
 	case "scroll":
-		// Precedence: integer pixels > direction keyword > unified selector.
-		// Pixels and directions are short, low-cardinality inputs that would
-		// otherwise also parse as CSS tag selectors (e.g. "up" / "down"), so
-		// we intercept them before handing off to setSelectorBody.
-		if px, err := strconv.Atoi(args[0]); err == nil {
-			body["scrollY"] = px
-			break
-		}
-		switch strings.ToLower(args[0]) {
-		case "down":
-			body["scrollY"] = 800
-		case "up":
-			body["scrollY"] = -800
-		case "right":
-			body["scrollX"] = 800
-		case "left":
-			body["scrollX"] = -800
-		default:
-			// Fall back to the unified selector parser so refs ("e5"),
-			// CSS ("#footer", ".class"), XPath ("//..."), text: and
-			// semantic selectors all work — same contract as `click`,
-			// `fill`, `hover`, etc. Server supports these via req.Selector.
-			setSelectorBody(body, args[0])
-		}
+		applyScrollTarget(body, args, cmd)
 	case "select":
 		setSelectorBody(body, args[0])
 		body["value"] = args[1]

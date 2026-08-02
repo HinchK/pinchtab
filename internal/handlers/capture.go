@@ -172,14 +172,9 @@ func (h *Handlers) HandleCapture(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Persist the snapshot half to the ref cache with the minted epoch so that
-	// follow-up `/click eN` etc. can later opt into an epoch handshake.
-	h.Bridge.SetRefCache(resolvedTabID, &bridge.RefCache{
-		Refs:     result.Refs,
-		Targets:  bridge.RefTargetsFromNodes(result.Nodes),
-		Nodes:    result.Nodes,
-		DomEpoch: result.DomEpoch,
-	})
+	cache := bridge.EpochRefs(h.Bridge.GetRefCache(resolvedTabID), result.Nodes)
+	h.Bridge.SetRefCache(resolvedTabID, cache)
+	w.Header().Set(vocabHeader, cache.DomEpoch)
 
 	imageInfo := map[string]any{
 		"format":           result.ImageFormat,
@@ -232,7 +227,7 @@ func (h *Handlers) HandleCapture(w http.ResponseWriter, r *http.Request) {
 		"epoch": map[string]any{
 			"frameId":  result.FrameID,
 			"loaderId": result.LoaderID,
-			"domEpoch": result.DomEpoch,
+			"domEpoch": cache.DomEpoch,
 		},
 		"pairing": map[string]any{
 			"navigated":         result.Navigated,
@@ -245,6 +240,12 @@ func (h *Handlers) HandleCapture(w http.ResponseWriter, r *http.Request) {
 			"nodes":     result.Nodes,
 		},
 	}
+	// The scope disclosure, from the same owner the other scoped readers use and built from
+	// the frame this capture actually filtered its nodes to. epoch.frameId cannot serve
+	// here: it is the frame TREE's root, assigned from the pre-capture frame tree and
+	// identical whether or not a scope is set, so a reader checking it while scoped is told
+	// the content came from the main document. Absent when unscoped, like the others.
+	h.frameDisclosureFor(tCtx, resolvedTabID, opts.ScopeFrameID).attach(resp)
 	if idpiResult.Threat {
 		resp["idpiWarning"] = idpiResult.Reason
 	}

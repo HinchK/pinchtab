@@ -1,9 +1,11 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -120,5 +122,63 @@ func TestUserConfigDirWindowsUsesUserConfigDir(t *testing.T) {
 	want := filepath.Join(configHome, "pinchtab")
 	if got != want {
 		t.Fatalf("userConfigDir() = %q, want Windows default path %q", got, want)
+	}
+}
+
+func TestProvisionFileTokenRefusesAnOperatorSuppliedConfig(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "cfg.json")
+	if err := os.WriteFile(configPath, []byte(`{"server":{"port":"1"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", configPath)
+
+	fc := &FileConfig{}
+	changed, err := ProvisionFileToken(fc, configPath)
+	if !errors.Is(err, ErrOperatorConfigToken) {
+		t.Fatalf("err = %v, want ErrOperatorConfigToken; a generated credential must not be written into a file the operator supplied", err)
+	}
+	if changed || fc.Server.Token != "" {
+		t.Fatalf("changed = %v, token = %q; the refusal must not provision anyway", changed, fc.Server.Token)
+	}
+}
+
+func TestProvisionFileTokenProvisionsWhenTheConfigIsNotOperatorSupplied(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		envVal func(dir string) string
+	}{
+		{"no PINCHTAB_CONFIG", func(string) string { return "" }},
+		{"PINCHTAB_CONFIG names an absent file", func(dir string) string { return filepath.Join(dir, "cfg.json") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, "cfg.json")
+			t.Setenv("PINCHTAB_CONFIG", tc.envVal(dir))
+
+			fc := &FileConfig{}
+			changed, err := ProvisionFileToken(fc, configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !changed || strings.TrimSpace(fc.Server.Token) == "" {
+				t.Fatalf("changed = %v, token = %q; a config the operator did not author still self-provisions", changed, fc.Server.Token)
+			}
+		})
+	}
+}
+
+func TestProvisionFileTokenKeepsAnExistingToken(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "cfg.json")
+	if err := os.WriteFile(configPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", configPath)
+
+	fc := &FileConfig{Server: ServerConfig{Token: "tok"}}
+	changed, err := ProvisionFileToken(fc, configPath)
+	if err != nil || changed {
+		t.Fatalf("changed = %v, err = %v; a present token needs no decision at all", changed, err)
 	}
 }

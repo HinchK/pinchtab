@@ -3,19 +3,16 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
-	"os/exec"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
 func TestClickPreservesFloatingFlyoutWithoutScroll(t *testing.T) {
-	chromePath, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Skip("chromium not installed")
-	}
+	chromePath := testbrowser.Path(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),

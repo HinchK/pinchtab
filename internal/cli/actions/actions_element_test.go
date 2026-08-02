@@ -398,7 +398,35 @@ func TestMouseWheelSupportsPositionalDeltaY(t *testing.T) {
 	}
 }
 
-func TestDragPostsMouseSequence(t *testing.T) {
+// The from->to form used to post four independent pointer requests, and four requests
+// cannot interpolate: the pointer jumped from source to destination in one move, which
+// Chrome never reads as the start of a drag, so an HTML5 draggable saw nothing while all
+// four answered OK. The destination has to travel WITH the source in one action.
+func TestDragPostsOneActionCarryingItsDestination(t *testing.T) {
+	m := newMockServer()
+	defer m.close()
+	client := m.server.Client()
+
+	cmd := newActionCmd()
+	Drag(client, m.base(), "", []string{"e5", "e9"}, cmd)
+
+	if len(m.requests) != 1 {
+		t.Fatalf("expected 1 request, got %d; a drag assembled from several requests cannot interpolate the pointer", len(m.requests))
+	}
+	var body map[string]any
+	_ = json.Unmarshal([]byte(m.lastBody), &body)
+	if body["kind"] != "drag" {
+		t.Errorf("kind = %v, want drag", body["kind"])
+	}
+	if body["ref"] != "e5" {
+		t.Errorf("source = %+v, want ref e5", body)
+	}
+	if body["toSelector"] != "e9" {
+		t.Errorf("destination = %+v, want toSelector e9", body)
+	}
+}
+
+func TestDragToCoordinatesPostsThemAsTheDestination(t *testing.T) {
 	m := newMockServer()
 	defer m.close()
 	client := m.server.Client()
@@ -406,27 +434,13 @@ func TestDragPostsMouseSequence(t *testing.T) {
 	cmd := newActionCmd()
 	Drag(client, m.base(), "", []string{"e5", "400,320"}, cmd)
 
-	if len(m.requests) != 4 {
-		t.Fatalf("expected 4 requests, got %d", len(m.requests))
+	var body map[string]any
+	_ = json.Unmarshal([]byte(m.lastBody), &body)
+	if body["toX"] != float64(400) || body["toY"] != float64(320) {
+		t.Errorf("destination = %+v, want toX=400 toY=320", body)
 	}
-
-	var bodies []map[string]any
-	for _, req := range m.requests {
-		var body map[string]any
-		_ = json.Unmarshal([]byte(req.Body), &body)
-		bodies = append(bodies, body)
-	}
-	if bodies[0]["kind"] != "mouse-move" || bodies[0]["ref"] != "e5" {
-		t.Fatalf("unexpected first request: %+v", bodies[0])
-	}
-	if bodies[1]["kind"] != "mouse-down" {
-		t.Fatalf("unexpected second request: %+v", bodies[1])
-	}
-	if bodies[2]["kind"] != "mouse-move" || bodies[2]["x"] != float64(400) || bodies[2]["y"] != float64(320) {
-		t.Fatalf("unexpected third request: %+v", bodies[2])
-	}
-	if bodies[3]["kind"] != "mouse-up" {
-		t.Fatalf("unexpected fourth request: %+v", bodies[3])
+	if _, ok := body["toSelector"]; ok {
+		t.Errorf("destination = %+v, want no toSelector when the target is a coordinate pair", body)
 	}
 }
 
@@ -810,5 +824,151 @@ func TestKeyboardTypeWithTab(t *testing.T) {
 	ActionSimple(client, m.base(), "", "keyboard-type", []string{"test"}, cmd)
 	if m.lastPath != "/tabs/tab42/action" {
 		t.Errorf("expected /tabs/tab42/action, got %s", m.lastPath)
+	}
+}
+
+// newScrollCmd carries the flags cmd/pinchtab registers on `scroll`, so a body built here is
+// built from the same inputs production reads.
+func newScrollCmd() *cobra.Command {
+	cmd := newSimpleCmd()
+	cmd.Flags().Int("dy", 0, "")
+	cmd.Flags().Int("dx", 0, "")
+	return cmd
+}
+
+// Scrolling up by an exact pixel count is what had no working spelling: a positional "-300"
+// cannot reach the command (cobra reads it as shorthand flags), and `-- -300` swallowed
+// --tab. The flag is the reachable route, and negatives are fine as flag VALUES.
+func TestScrollByPixelFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags map[string]string
+		want  map[string]float64
+	}{
+		{name: "up", flags: map[string]string{"dy": "-300"}, want: map[string]float64{"scrollY": -300}},
+		{name: "down", flags: map[string]string{"dy": "800"}, want: map[string]float64{"scrollY": 800}},
+		{name: "left", flags: map[string]string{"dx": "-120"}, want: map[string]float64{"scrollX": -120}},
+		{name: "both axes", flags: map[string]string{"dy": "-300", "dx": "40"}, want: map[string]float64{"scrollY": -300, "scrollX": 40}},
+	} {
+		m := newMockServer()
+		cmd := newScrollCmd()
+		for flag, value := range tc.flags {
+			if err := cmd.Flags().Set(flag, value); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		ActionSimple(m.server.Client(), m.base(), "", "scroll", nil, cmd)
+
+		var body map[string]any
+		_ = json.Unmarshal([]byte(m.lastBody), &body)
+		for key, want := range tc.want {
+			if body[key] != want {
+				t.Errorf("%s: %s = %v, want %v (body %+v)", tc.name, key, body[key], want, body)
+			}
+		}
+		m.close()
+	}
+}
+
+// The positional forms are what everything else in the docs teaches, and adding the flags
+// touched the same precedence path that resolves them.
+func TestScrollPositionalFormsAreUnchangedByThePixelFlags(t *testing.T) {
+	for _, tc := range []struct {
+		arg  string
+		key  string
+		want any
+	}{
+		{arg: "800", key: "scrollY", want: float64(800)},
+		{arg: "down", key: "scrollY", want: float64(800)},
+		{arg: "up", key: "scrollY", want: float64(-800)},
+		{arg: "right", key: "scrollX", want: float64(800)},
+		{arg: "left", key: "scrollX", want: float64(-800)},
+		{arg: "e12", key: "ref", want: "e12"},
+		{arg: "#footer", key: "selector", want: "#footer"},
+		{arg: "text:Load more", key: "selector", want: "text:Load more"},
+	} {
+		m := newMockServer()
+		ActionSimple(m.server.Client(), m.base(), "", "scroll", []string{tc.arg}, newScrollCmd())
+
+		var body map[string]any
+		_ = json.Unmarshal([]byte(m.lastBody), &body)
+		if body[tc.key] != tc.want {
+			t.Errorf("scroll %q: %s = %v, want %v (body %+v)", tc.arg, tc.key, body[tc.key], tc.want, body)
+		}
+		m.close()
+	}
+}
+
+// ActionSimple is exported and reachable without cobra's Args hook, so the CLI's
+// refusal of the both-specified form is a friendly early error, not the thing that
+// keeps this correct. The rule has to live in the builder: a positional wins
+// outright. Before it did, the flags were assigned first and the positional then
+// overwrote scrollY — so `800` with `--dx -100` built a diagonal scroll out of one
+// axis from each spelling, resolved by statement order rather than by any rule.
+func TestScrollPositionalWinsOverThePixelFlagsWithoutCobrasArgsHook(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		arg    string
+		flags  map[string]string
+		want   map[string]any
+		absent []string
+	}{
+		{
+			name:   "same axis",
+			arg:    "800",
+			flags:  map[string]string{"dy": "-300"},
+			want:   map[string]any{"scrollY": float64(800)},
+			absent: []string{"scrollX"},
+		},
+		{
+			name:   "other axis must not survive as half a diagonal",
+			arg:    "800",
+			flags:  map[string]string{"dx": "-100"},
+			want:   map[string]any{"scrollY": float64(800)},
+			absent: []string{"scrollX"},
+		},
+		{
+			name:   "a direction keyword also wins",
+			arg:    "left",
+			flags:  map[string]string{"dy": "-300"},
+			want:   map[string]any{"scrollX": float64(-800)},
+			absent: []string{"scrollY"},
+		},
+		{
+			name:   "a selector wins and carries no delta",
+			arg:    "e12",
+			flags:  map[string]string{"dy": "-300", "dx": "40"},
+			want:   map[string]any{"ref": "e12"},
+			absent: []string{"scrollX", "scrollY"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newMockServer()
+			defer m.close()
+			cmd := newScrollCmd()
+			for flag, value := range tc.flags {
+				if err := cmd.Flags().Set(flag, value); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			ActionSimple(m.server.Client(), m.base(), "", "scroll", []string{tc.arg}, cmd)
+
+			var body map[string]any
+			if err := json.Unmarshal([]byte(m.lastBody), &body); err != nil {
+				t.Fatalf("decode body: %v (%s)", err, m.lastBody)
+			}
+			for key, want := range tc.want {
+				if body[key] != want {
+					t.Errorf("%s = %v, want %v (body %+v)", key, body[key], want, body)
+				}
+			}
+			for _, key := range tc.absent {
+				if _, present := body[key]; present {
+					t.Errorf("%s is present (%v); the positional is the whole argument, so no flag axis may survive alongside it (body %+v)", key, body[key], body)
+				}
+			}
+		})
 	}
 }

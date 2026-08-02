@@ -1,6 +1,19 @@
 package mcp
 
-import "github.com/mark3labs/mcp-go/mcp"
+import (
+	"strconv"
+
+	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/pinchtab/pinchtab/internal/scroll"
+)
+
+const positionalWrapperGrammar = " first/last/nth index matches in document order for every selector kind, so nth:0 is the first match in the page. A bare text: selector instead picks the most control-like smallest match, so text:X and first:text:X can differ."
+
+// scrollStepDescription states the direction magnitude in the tool description, read
+// from the owner rather than written out: an agent reads these descriptions fresh on
+// every session, so this is where the distance becomes discoverable — without it,
+// 'steps' is only usable by a caller who already knows an undocumented default.
+var scrollStepDescription = strconv.Itoa(scroll.StepPixels) + "px"
 
 // allTools returns every MCP tool exposed by the PinchTab MCP server.
 func allTools() []mcp.Tool {
@@ -13,6 +26,27 @@ func allTools() []mcp.Tool {
 			mcp.WithString("browser",
 				mcp.Description("Browser to use for this request (e.g. chrome, cloak, ghost-chrome).")),
 		),
+		mcp.NewTool("pinchtab_back",
+			mcp.WithDescription("Go back one entry in the tab's session history. Returns the tab ID and the URL the tab landed on, so a redirect or bfcache restore is visible without a snapshot."),
+			mcp.WithString("tabId", mcp.Description("Target tab ID (optional, uses current tab if empty)")),
+			mcp.WithBoolean("snap", mcp.Description("Return interactive compact snapshot after the navigation (saves a round-trip)")),
+			mcp.WithString("browser",
+				mcp.Description("Browser to use for this request (e.g. chrome, cloak, ghost-chrome).")),
+		),
+		mcp.NewTool("pinchtab_forward",
+			mcp.WithDescription("Go forward one entry in the tab's session history. Returns the tab ID and the URL the tab landed on."),
+			mcp.WithString("tabId", mcp.Description("Target tab ID (optional, uses current tab if empty)")),
+			mcp.WithBoolean("snap", mcp.Description("Return interactive compact snapshot after the navigation (saves a round-trip)")),
+			mcp.WithString("browser",
+				mcp.Description("Browser to use for this request (e.g. chrome, cloak, ghost-chrome).")),
+		),
+		mcp.NewTool("pinchtab_reload",
+			mcp.WithDescription("Reload the current page. Returns the tab ID and the URL the tab landed on."),
+			mcp.WithString("tabId", mcp.Description("Target tab ID (optional, uses current tab if empty)")),
+			mcp.WithBoolean("snap", mcp.Description("Return interactive compact snapshot after the navigation (saves a round-trip)")),
+			mcp.WithString("browser",
+				mcp.Description("Browser to use for this request (e.g. chrome, cloak, ghost-chrome).")),
+		),
 		mcp.NewTool("pinchtab_snapshot",
 			mcp.WithDescription("Get an accessibility tree snapshot of the current page. Use this sparingly: prefer pinchtab_find + action selectors for faster loops."),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
@@ -20,7 +54,7 @@ func allTools() []mcp.Tool {
 			mcp.WithBoolean("compact", mcp.Description("Compact format (most token-efficient)")),
 			mcp.WithString("format", mcp.Description("Output format: 'compact' or 'text'")),
 			mcp.WithBoolean("diff", mcp.Description("Only changes since last snapshot")),
-			mcp.WithString("selector", mcp.Description("Unified selector to scope the snapshot (ref, CSS, XPath, text, find, role, label, placeholder, alt, title, testid, first/last/nth). Selectors resolve in the current frame scope; use pinchtab_frame for iframe content.")),
+			mcp.WithString("selector", mcp.Description("Unified selector to scope the snapshot (ref, CSS, XPath, text, find, role, label, placeholder, alt, title, testid, first/last/nth). Selectors resolve in the current frame scope; use pinchtab_frame for iframe content."+positionalWrapperGrammar)),
 			mcp.WithNumber("maxTokens", mcp.Description("Maximum estimated tokens in response (e.g. 300)")),
 			mcp.WithNumber("depth", mcp.Description("Maximum tree depth (e.g. 3)")),
 			mcp.WithBoolean("noAnimations", mcp.Description("Disable animations before capturing the snapshot")),
@@ -75,7 +109,7 @@ func allTools() []mcp.Tool {
 
 		mcp.NewTool("pinchtab_click",
 			mcp.WithDescription("Click an element. Prefer selector from pinchtab_find.best_ref (e.g. 'e5') to avoid extra snapshots."),
-			mcp.WithString("selector", mcp.Description("Unified selector: ref (e.g. 'e5'), CSS, XPath, text, find, role, label, placeholder, alt, title, testid, or first/last/nth. Non-ref selectors resolve in the current frame scope.")),
+			mcp.WithString("selector", mcp.Description("Unified selector: ref (e.g. 'e5'), CSS, XPath, text, find, role, label, placeholder, alt, title, testid, or first/last/nth. Non-ref selectors resolve in the current frame scope."+positionalWrapperGrammar)),
 			mcp.WithString("ref", mcp.Description("(deprecated) Element ref from snapshot — use 'selector' instead")),
 			mcp.WithString("query", mcp.Description("Alias for semantic targeting when selector is omitted (example: 'login button' -> find:login button)")),
 			mcp.WithString("dialogAction", mcp.Description("Optional one-shot dialog handling for this click: 'accept' or 'dismiss'")),
@@ -85,6 +119,7 @@ func allTools() []mcp.Tool {
 			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),
 			mcp.WithBoolean("waitNav", mcp.Description("Wait for navigation after the click when the element triggers a page change")),
 			mcp.WithString("mode", mcp.Description("Optional click delivery override: 'dom' for element.click() or 'dispatch' for synthetic click events on the target")),
+			mcp.WithBoolean("humanize", mcp.Description("Use the humanized input path for this request — bezier pointer path, per-step jitter, pre-press delays. Overrides the instance default; omit to inherit it.")),
 			mcp.WithBoolean("snap", mcp.Description("Return interactive compact snapshot after click (saves a round-trip)")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 			mcp.WithString("browser",
@@ -96,6 +131,7 @@ func allTools() []mcp.Tool {
 			mcp.WithString("ref", mcp.Description("(deprecated) Element ref from snapshot — use 'selector' instead")),
 			mcp.WithString("query", mcp.Description("Alias for semantic targeting when selector is omitted")),
 			mcp.WithString("text", mcp.Required(), mcp.Description("Text to type")),
+			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 			mcp.WithString("browser",
 				mcp.Description("Browser to use for this request (e.g. chrome, cloak, ghost-chrome).")),
@@ -103,6 +139,7 @@ func allTools() []mcp.Tool {
 		mcp.NewTool("pinchtab_press",
 			mcp.WithDescription("Press a keyboard key (Enter, Tab, Escape, etc.)"),
 			mcp.WithString("key", mcp.Required(), mcp.Description("Key to press (e.g., 'Enter', 'Tab', 'Escape')")),
+			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 			mcp.WithString("browser",
 				mcp.Description("Browser to use for this request (e.g. chrome, cloak, ghost-chrome).")),
@@ -115,6 +152,7 @@ func allTools() []mcp.Tool {
 			mcp.WithNumber("x", mcp.Description("Optional X coordinate for coordinate hover")),
 			mcp.WithNumber("y", mcp.Description("Optional Y coordinate for coordinate hover")),
 			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),
+			mcp.WithBoolean("humanize", mcp.Description("Use the humanized input path for this request — bezier pointer path, per-step jitter, pre-press delays. Overrides the instance default; omit to inherit it.")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 			mcp.WithString("browser",
 				mcp.Description("Browser to use for this request (e.g. chrome, cloak, ghost-chrome).")),
@@ -135,6 +173,7 @@ func allTools() []mcp.Tool {
 			mcp.WithString("ref", mcp.Description("(deprecated) Element ref from snapshot — use 'selector' instead")),
 			mcp.WithString("query", mcp.Description("Alias for semantic targeting when selector is omitted")),
 			mcp.WithString("value", mcp.Required(), mcp.Description("Option value or visible text to select")),
+			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 			mcp.WithBoolean("snap", mcp.Description("Return interactive compact snapshot after select (saves a round-trip)")),
 			mcp.WithString("browser",
@@ -148,10 +187,15 @@ func allTools() []mcp.Tool {
 			mcp.WithNumber("pixels", mcp.Description("Number of pixels to scroll (positive=down, negative=up)")),
 			mcp.WithNumber("deltaX", mcp.Description("Horizontal wheel delta for precise scrolling")),
 			mcp.WithNumber("deltaY", mcp.Description("Vertical wheel delta for precise scrolling")),
-			mcp.WithString("direction", mcp.Description("Convenience direction: 'up' or 'down'")),
-			mcp.WithNumber("steps", mcp.Description("Multiplier for direction-based scrolling (default 1)")),
+			mcp.WithString("direction", mcp.Description(
+				"Convenience direction: 'down', 'left', 'right' or 'up'. Moves "+scrollStepDescription+
+					" per step, the same distance as the CLI's `pinchtab scroll <direction>`; multiply it with 'steps' or override it with 'pixels'. "+
+					"With a selector or nodeId it scrolls that far INSIDE the element (wheel semantics) rather than revealing it. "+
+					"It cannot be combined with deltaX/deltaY, which set their own magnitude.")),
+			mcp.WithNumber("steps", mcp.Description("Multiplier for direction-based scrolling (default 1), so steps=2 moves twice "+scrollStepDescription)),
 			mcp.WithNumber("x", mcp.Description("Optional X coordinate for wheel target")),
 			mcp.WithNumber("y", mcp.Description("Optional Y coordinate for wheel target")),
+			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 			mcp.WithString("browser",
 				mcp.Description("Browser to use for this request (e.g. chrome, cloak, ghost-chrome).")),
@@ -161,6 +205,7 @@ func allTools() []mcp.Tool {
 			mcp.WithString("selector", mcp.Description("Unified selector: ref (e.g. 'e5'), CSS, XPath, text, or semantic. Non-ref selectors resolve in the current frame scope.")),
 			mcp.WithString("ref", mcp.Description("(deprecated) Element ref — use 'selector' instead")),
 			mcp.WithString("query", mcp.Description("Alias for semantic targeting when selector is omitted")),
+			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 			mcp.WithString("browser",
 				mcp.Description("Browser to use for this request (e.g. chrome, cloak, ghost-chrome).")),
@@ -170,7 +215,8 @@ func allTools() []mcp.Tool {
 			mcp.WithString("selector", mcp.Description("Unified selector: ref (e.g. 'e5'), CSS, XPath, text, or semantic. Non-ref selectors resolve in the current frame scope.")),
 			mcp.WithString("ref", mcp.Description("(deprecated) Element ref — use 'selector' instead")),
 			mcp.WithString("query", mcp.Description("Alias for semantic targeting when selector is omitted")),
-			mcp.WithString("value", mcp.Required(), mcp.Description("Value to fill")),
+			mcp.WithString("value", mcp.Required(), mcp.Description("Value to fill; send an empty string to clear the field")),
+			mcp.WithNumber("nodeId", mcp.Description("Optional backend node ID to target directly")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 			mcp.WithBoolean("snap", mcp.Description("Return interactive compact snapshot after fill (saves a round-trip)")),
 			mcp.WithString("browser",
@@ -236,6 +282,19 @@ func allTools() []mcp.Tool {
 		),
 		mcp.NewTool("pinchtab_cookies",
 			mcp.WithDescription("Get cookies for the current page"),
+			mcp.WithString("tabId", mcp.Description("Target tab ID")),
+		),
+		mcp.NewTool("pinchtab_cookies_set",
+			mcp.WithDescription("Set one cookie on the current page, for reusing an authenticated session. An empty value blanks the cookie without deleting it."),
+			mcp.WithString("name", mcp.Required(), mcp.Description("Cookie name")),
+			mcp.WithString("value", mcp.Required(), mcp.Description("Cookie value; an empty string blanks the cookie")),
+			mcp.WithString("url", mcp.Description("Target URL (default: the tab's current page)")),
+			mcp.WithString("domain", mcp.Description("Cookie domain")),
+			mcp.WithString("path", mcp.Description("Cookie path")),
+			mcp.WithString("sameSite", mcp.Description("SameSite attribute: Strict, Lax or None")),
+			mcp.WithBoolean("secure", mcp.Description("Mark the cookie Secure")),
+			mcp.WithBoolean("httpOnly", mcp.Description("Mark the cookie HttpOnly")),
+			mcp.WithNumber("expires", mcp.Description("Expiry as a Unix timestamp in seconds; omit for a session cookie")),
 			mcp.WithString("tabId", mcp.Description("Target tab ID")),
 		),
 		mcp.NewTool("pinchtab_connect_profile",

@@ -7,36 +7,13 @@ import (
 	"github.com/pinchtab/pinchtab/internal/routes"
 )
 
-// capabilitySetting returns the config key and disabled code for a capability.
 func capabilitySetting(cap routes.Capability) (feature, setting, code string) {
-	switch cap {
-	case routes.CapEvaluate:
-		return "evaluate", "security.allowEvaluate", "evaluate_disabled"
-	case routes.CapMacro:
-		return "macro", "security.allowMacro", "macro_disabled"
-	case routes.CapScreencast:
-		return "screencast", "security.allowScreencast", "screencast_disabled"
-	case routes.CapDownload:
-		return "download", "security.allowDownload", "download_disabled"
-	case routes.CapCookies:
-		return "cookies", "security.allowCookies", "cookies_disabled"
-	case routes.CapUpload:
-		return "upload", "security.allowUpload", "upload_disabled"
-	case routes.CapStateExport:
-		return "stateExport", "security.allowStateExport", "state_export_disabled"
-	case routes.CapNetworkIntercept:
-		return "networkIntercept", "security.allowNetworkIntercept", "network_intercept_disabled"
-	default:
-		return string(cap), "security.allow" + string(cap), string(cap) + "_disabled"
+	if meta, ok := routes.Meta(cap); ok {
+		return meta.Label, meta.Setting, meta.DisabledCode
 	}
+	return string(cap), "", ""
 }
 
-// RegisterShorthandRoutes registers all shorthand proxy routes on the mux,
-// binding them to the given handler. It also registers capability-gated
-// routes (evaluate, download, upload, screencast, macro) using the
-// orchestrator's security settings.
-//
-// Routes are sourced from the shared routes.Core() catalogue.
 func RegisterShorthandRoutes(mux *http.ServeMux, orch *orchestrator.Orchestrator, handler http.HandlerFunc) {
 	wrapped := orch.WrapShorthand(handler)
 

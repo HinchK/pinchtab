@@ -79,6 +79,22 @@ func (h *Handlers) resolveActionRequestSelector(ctx context.Context, tabID strin
 	return actionSelectorResolution{status: http.StatusConflict}, fmt.Errorf("topmost dialog changed twice during selector resolution; retry after the page settles")
 }
 
+// resolveActionRequestDestination runs a scratch request through the source resolver so a
+// drag destination accepts the same selector vocabulary, with the same frame and modal
+// scoping, as the source.
+func (h *Handlers) resolveActionRequestDestination(ctx context.Context, tabID string, req *bridge.ActionRequest) (actionSelectorResolution, error) {
+	if req.ToSelector == "" || req.ToNodeID != 0 {
+		return actionSelectorResolution{}, nil
+	}
+	destination := bridge.ActionRequest{Kind: req.Kind, TabID: req.TabID, Selector: req.ToSelector}
+	resolution, err := h.resolveActionRequestSelector(ctx, tabID, &destination)
+	if err != nil {
+		return resolution, fmt.Errorf("drag destination: %w", err)
+	}
+	req.ToNodeID = destination.NodeID
+	return resolution, nil
+}
+
 func (h *Handlers) resolveActionRequestSelectorInScope(
 	ctx context.Context,
 	tabID, frameID string,
@@ -90,7 +106,7 @@ func (h *Handlers) resolveActionRequestSelectorInScope(
 
 	if handled, err := h.applySemanticActionSelectorInScope(ctx, tabID, frameID, modalNodeID, sel, req); handled {
 		if err != nil {
-			return actionSelectorResolution{status: semanticSelectorHTTPStatus(err)}, err
+			return actionSelectorResolution{status: statusForElementErr(err)}, err
 		}
 		return actionSelectorResolution{}, nil
 	}

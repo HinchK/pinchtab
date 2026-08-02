@@ -2,7 +2,7 @@
 
 ## Overview
 
-The AutoSolver system provides modular, semantic-first browser automation for PinchTab. It evolves the existing `internal/solver` framework (PR #395) into a general-purpose automation agent capable of handling CAPTCHAs, login flows, signup flows, multi-step navigation, and onboarding sequences.
+The AutoSolver system provides modular, semantic-first browser automation for PinchTab. It grew out of an earlier single-purpose challenge-solver framework into a general-purpose automation agent capable of handling CAPTCHAs, login flows, signup flows, multi-step navigation, and onboarding sequences.
 
 ### Design Principles
 
@@ -73,10 +73,9 @@ internal/autosolver/
 │   ├── llm.go             # LLM provider skeleton with structured prompts
 │   └── trim.go            # HTML trimming for token efficiency
 └── solvers/
-    ├── cloudflare.go      # Cloudflare Turnstile (new interface, no chromedp)
+    ├── cloudflare.go      # Cloudflare Turnstile solver
     ├── jschallenge.go     # Generic JavaScript challenge/interstitial solver
-    ├── jschallenge_test.go
-    └── legacy.go          # Compatibility shim for existing solver.Solver
+    └── jschallenge_test.go
 ```
 
 ## Core Interfaces
@@ -240,4 +239,4 @@ if result.Solved {
 
 ## Backward Compatibility
 
-The existing `internal/solver` package (PR #395) is still present for compatibility, but challenge APIs are now backed by `internal/autosolver`. The `CloudflareSolver` in `bridge/cloudflare.go` remains available, and a `LegacyAdapter` shim (`solvers/legacy.go`) can wrap legacy `solver.Solver` implementations into the new `autosolver.Solver` interface.
+`internal/autosolver` is the only solver framework. The predecessor package, its duplicate Cloudflare solver in `bridge/cloudflare.go` and the `LegacyAdapter` shim that was to bridge them are all deleted: nothing ever wired the adapter up, so the second registry had no readers while every solver-wide refactor still had to edit its copy of each solver.

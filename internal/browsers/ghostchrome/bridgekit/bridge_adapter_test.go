@@ -1050,3 +1050,66 @@ func TestAdapterNavigate_SkipStaticGoesStraightToChrome(t *testing.T) {
 		t.Fatal("SkipStatic must not run the static fetch")
 	}
 }
+
+// The zero backend node ids this route writes into Refs and Targets are the
+// feature, not an oversight: a static fetch has no CDP nodes at all, and the refs
+// exist so an agent can read the page before anything escalates to Chrome. Zero
+// there means "a known ref with no live node yet" — a third state, which
+// RefCache.Lookup refuses for RESOLUTION only.
+//
+// That pairing invites one specific tidy — "Lookup refuses zeros, so why store
+// them?" — and taking it would leave static-mode snapshots ref-less, which is the
+// whole feature. Nothing else in the tree objects to removing these two writes, so
+// this is where that is pinned: every ref-bearing node must appear in both maps.
+func TestAdapterSnapshot_StaticAcceptedKeepsARefEntryPerRefBearingNode(t *testing.T) {
+	ts := newRichTestServer()
+	defer ts.Close()
+
+	lite := staticfetch.NewBrowser()
+	defer func() { _ = lite.Close() }()
+
+	mock := &mockChromeBridge{}
+	adapter := newTestAdapter(t, lite, mock)
+
+	if _, err := lite.Navigate(context.Background(), ts.URL); err != nil {
+		t.Fatalf("static Navigate: %v", err)
+	}
+
+	result, err := adapter.Snapshot(context.Background(), "", "all", bridge.ContentParams{})
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if mock.snapshotCalled {
+		t.Fatal("chrome Snapshot was called, so this is not the static-accepted route this test exists for")
+	}
+
+	refBearing := make([]string, 0, len(result.Nodes))
+	for _, n := range result.Nodes {
+		if n.Ref != "" {
+			refBearing = append(refBearing, n.Ref)
+		}
+	}
+	if len(refBearing) == 0 {
+		t.Fatal("the static snapshot produced no ref-bearing nodes, so this test would pass vacuously")
+	}
+
+	for _, ref := range refBearing {
+		id, inRefs := result.Refs[ref]
+		target, inTargets := result.Targets[ref]
+		if !inRefs || !inTargets {
+			t.Errorf("ref %q is on a returned node but missing from Refs (%v) / Targets (%v): a static snapshot whose refs are absent from the cache maps cannot be acted on after escalation, which is what these entries exist for",
+				ref, inRefs, inTargets)
+			continue
+		}
+		// The stored value is the documented third state. A real id here would be an
+		// improvement, not a defect — but RefCache.Lookup's doc comment states this
+		// invariant, so it has to be revisited in the same change.
+		if id != 0 || target != (bridge.RefTarget{}) {
+			t.Errorf("ref %q stores id %d / target %+v; the static route has no CDP nodes, so if it learned real ids, update RefCache.Lookup's doc comment about the zero third state with it",
+				ref, id, target)
+		}
+	}
+	if len(result.Refs) != len(refBearing) || len(result.Targets) != len(refBearing) {
+		t.Errorf("Refs has %d entries and Targets %d, want one per ref-bearing node (%d)", len(result.Refs), len(result.Targets), len(refBearing))
+	}
+}

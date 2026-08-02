@@ -50,6 +50,9 @@ func (h *Handlers) enforceCurrentTabDomainPolicy(w http.ResponseWriter, r *http.
 	currentURL, err := h.Bridge.CurrentURL(lookupCtx)
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			if h.refuseIfDialogBlocked(w, tabID) {
+				return "", false
+			}
 			httpx.ErrorCode(
 				w,
 				http.StatusServiceUnavailable,
@@ -82,10 +85,9 @@ func (h *Handlers) applyTabPolicyState(w http.ResponseWriter, state bridge.TabPo
 		w.Header().Set("X-IDPI-Warning", state.Reason)
 	}
 	if state.Blocked {
-		httpx.ErrorCode(w, http.StatusForbidden, "idpi_domain_blocked",
-			fmt.Sprintf("current tab blocked by IDPI: %s", state.Reason), false, map[string]any{
-				"url": state.CurrentURL,
-			})
+		writeIDPIDomainBlocked(w,
+			fmt.Sprintf("current tab blocked by IDPI: %s", state.Reason),
+			idpiDriftedTabDetails(state.CurrentURL))
 		return state.CurrentURL, false
 	}
 	return state.CurrentURL, true
@@ -101,10 +103,9 @@ func (h *Handlers) enforceURLDomainPolicy(w http.ResponseWriter, url string) boo
 
 	state := bridge.EvaluateTabPolicy(url, h.Config.IDPI, h.Config.AllowedDomains)
 	if state.Blocked {
-		httpx.ErrorCode(w, http.StatusForbidden, "idpi_domain_blocked",
-			fmt.Sprintf("url blocked by IDPI: %s", state.Reason), false, map[string]any{
-				"url": url,
-			})
+		writeIDPIDomainBlocked(w,
+			fmt.Sprintf("url blocked by IDPI: %s", state.Reason),
+			idpiRefusedURLDetails(url))
 		return false
 	}
 	return true

@@ -1,46 +1,23 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/browsers"
+	"github.com/pinchtab/pinchtab/internal/safelog"
 )
 
 // SetConfigValue sets a dotted path in FileConfig (e.g., "server.port", "instanceDefaults.mode").
+// The section vocabulary lives once, in configSections.
 func SetConfigValue(fc *FileConfig, path string, value string) error {
-	parts := strings.SplitN(path, ".", 2)
-	if len(parts) != 2 {
-		return fmt.Errorf("invalid path %q (expected section.field, e.g., server.port)", path)
+	section, field, err := lookupConfigSection(path)
+	if err != nil {
+		return err
 	}
-
-	section, field := parts[0], parts[1]
-
-	switch section {
-	case "server":
-		return setServerField(&fc.Server, field, value)
-	case "browser":
-		return setBrowserField(&fc.Browser, field, value)
-	case "browsers":
-		return setBrowsersField(&fc.Browsers, field, value)
-	case "instanceDefaults":
-		return setInstanceDefaultsField(&fc.InstanceDefaults, field, value)
-	case "security":
-		return setSecurityField(&fc.Security, field, value)
-	case "profiles":
-		return setProfilesField(&fc.Profiles, field, value)
-	case "multiInstance":
-		return setMultiInstanceField(&fc.MultiInstance, field, value)
-	case "timeouts":
-		return setTimeoutsField(&fc.Timeouts, field, value)
-	case "observability":
-		return setObservabilityField(&fc.Observability, field, value)
-	case "sessions":
-		return setSessionsField(&fc.Sessions, field, value)
-	default:
-		return fmt.Errorf("unknown section %q (valid: server, browser, browsers, instanceDefaults, security, profiles, multiInstance, timeouts, observability, sessions)", section)
-	}
+	return section.set(fc, field, value)
 }
 
 func setServerField(s *ServerConfig, field, value string) error {
@@ -53,6 +30,29 @@ func setServerField(s *ServerConfig, field, value string) error {
 		s.Token = value
 	case "stateDir":
 		s.StateDir = value
+	case "logLevel":
+		if _, err := safelog.ParseLevel(value); err != nil {
+			return fmt.Errorf("server.logLevel: %w", err)
+		}
+		s.LogLevel = strings.ToLower(strings.TrimSpace(value))
+	case "networkBufferSize":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("server.networkBufferSize must be a number: %w", err)
+		}
+		s.NetworkBufferSize = &n
+	case "retainNetworkBodies":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("server.retainNetworkBodies must be true or false: %w", err)
+		}
+		s.RetainNetworkBodies = &b
+	case "retainNetworkBodyMaxBytes":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("server.retainNetworkBodyMaxBytes must be a number: %w", err)
+		}
+		s.RetainNetworkBodyMaxBytes = &n
 	case "trustProxyHeaders":
 		b, err := parseBool(value)
 		if err != nil {
@@ -96,6 +96,14 @@ func setBrowserField(b *BrowserConfig, field, value string) error {
 		b.BrowserBinary = value
 	case "extraFlags":
 		b.BrowserExtraFlags = value
+	case "remoteDebuggingPort":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("browser.remoteDebuggingPort must be a number: %w", err)
+		}
+		b.BrowserDebugPort = &n
+	case "extensionPaths":
+		b.ExtensionPaths = parseCSVList(value)
 	case "defaultTarget":
 		b.DefaultTarget = value
 	case "fallbackOrder":
@@ -258,7 +266,7 @@ func setActivityField(a *ActivityFileConfig, field, value string) error {
 		}
 		a.RetentionDays = &n
 	case "stateDir":
-		a.StateDir = value
+		return errors.New(ActivityStateDirRefusal)
 	default:
 		return fmt.Errorf("unknown field observability.activity.%s", field)
 	}
@@ -296,7 +304,41 @@ func setSessionsField(s *SessionsFileConfig, field, value string) error {
 	if strings.HasPrefix(field, "dashboard.") {
 		return setDashboardSessionField(&s.Dashboard, strings.TrimPrefix(field, "dashboard."), value)
 	}
+	if strings.HasPrefix(field, "agent.") {
+		return setAgentSessionField(&s.Agent, strings.TrimPrefix(field, "agent."), value)
+	}
 	return fmt.Errorf("unknown field sessions.%s", field)
+}
+
+// setAgentSessionField is the write half of getAgentSessionField. mode is stored as given
+// and left to ValidateFileConfig, which is where every other enumerated string in this
+// editor is checked — a second vocabulary here would be a copy of the validator's.
+func setAgentSessionField(s *AgentSessionFileConfig, field, value string) error {
+	switch field {
+	case "enabled":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("sessions.agent.enabled: %w", err)
+		}
+		s.Enabled = &b
+	case "mode":
+		s.Mode = value
+	case "idleTimeoutSec":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("sessions.agent.idleTimeoutSec must be a number: %w", err)
+		}
+		s.IdleTimeoutSec = &n
+	case "maxLifetimeSec":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("sessions.agent.maxLifetimeSec must be a number: %w", err)
+		}
+		s.MaxLifetimeSec = &n
+	default:
+		return fmt.Errorf("unknown field sessions.agent.%s", field)
+	}
+	return nil
 }
 
 func setDashboardSessionField(s *DashboardSessionFileConfig, field, value string) error {
@@ -415,6 +457,12 @@ func setInstanceDefaultsField(c *InstanceDefaultsConfig, field, value string) er
 		c.StealthLevel = value
 	case "tabEvictionPolicy":
 		c.TabEvictionPolicy = value
+	case "dialogAutoAccept":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("instanceDefaults.dialogAutoAccept: %w", err)
+		}
+		c.DialogAutoAccept = &b
 	default:
 		return fmt.Errorf("unknown field instanceDefaults.%s", field)
 	}
@@ -433,10 +481,33 @@ func setTabPolicyField(tp *TabPolicyDefaults, field, value string) error {
 			return fmt.Errorf("instanceDefaults.tabPolicy.closeDelaySec must be a number: %w", err)
 		}
 		tp.CloseDelaySec = &n
+	case "restore":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("instanceDefaults.tabPolicy.restore: %w", err)
+		}
+		tp.Restore = &b
 	default:
 		return fmt.Errorf("unknown field instanceDefaults.tabPolicy.%s", field)
 	}
 	return nil
+}
+
+// securityBoolFields is the set the shared boolean parse below is allowed to serve. It is
+// checked before the parse so an unknown field is refused as unknown.
+var securityBoolFields = map[string]bool{
+	"allowEvaluate":         true,
+	"allowClipboard":        true,
+	"allowMacro":            true,
+	"allowScreencast":       true,
+	"allowDownload":         true,
+	"allowCookies":          true,
+	"allowStateExport":      true,
+	"allowUpload":           true,
+	"allowNetworkIntercept": true,
+	"allowFileScheme":       true,
+	"enableActionGuards":    true,
+	"trustLoopbackProxy":    true,
 }
 
 func setSecurityField(s *SecurityConfig, field, value string) error {
@@ -509,8 +580,19 @@ func setSecurityField(s *SecurityConfig, field, value string) error {
 		}
 		s.MaxRedirects = &n
 		return nil
+	case "stateEncryptionKey":
+		key := value
+		s.StateEncryptionKey = &key
+		return nil
 	}
 
+	// Everything left in this section is a boolean, so the parse can be shared — but only
+	// after the field is known. Parsing first made an unrecognised security field report a
+	// boolean complaint about its value, which hid the unknown-field refusal behind a
+	// message about the wrong thing.
+	if !securityBoolFields[field] {
+		return fmt.Errorf("unknown field security.%s", field)
+	}
 	b, err := parseBool(value)
 	if err != nil {
 		return fmt.Errorf("security.%s: %w", field, err)
@@ -529,6 +611,8 @@ func setSecurityField(s *SecurityConfig, field, value string) error {
 		s.AllowDownload = &b
 	case "allowCookies":
 		s.AllowCookies = &b
+	case "allowStateExport":
+		s.AllowStateExport = &b
 	case "allowUpload":
 		s.AllowUpload = &b
 	case "allowNetworkIntercept":
@@ -551,6 +635,15 @@ func setProfilesField(p *ProfilesConfig, field, value string) error {
 		p.BaseDir = value
 	case "defaultProfile":
 		p.DefaultProfile = value
+	case "quarantineKeep":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("profiles.quarantineKeep must be a number: %w", err)
+		}
+		if n < 0 {
+			return fmt.Errorf("profiles.quarantineKeep must be >= 0 (0 keeps every quarantined profile)")
+		}
+		p.QuarantineKeep = &n
 	default:
 		return fmt.Errorf("unknown field profiles.%s", field)
 	}
@@ -680,8 +773,172 @@ func setIDPIField(s *SecurityConfig, field, value string) error {
 		i.WrapContent = b
 	case "customPatterns":
 		i.CustomPatterns = parseCSVList(value)
+	case "scanTimeoutSec":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("security.idpi.scanTimeoutSec must be a number: %w", err)
+		}
+		i.ScanTimeoutSec = n
+	case "shieldThreshold":
+		n, err := strconv.Atoi(value)
+		if err != nil {
+			return fmt.Errorf("security.idpi.shieldThreshold must be a number: %w", err)
+		}
+		if n < 0 || n > 100 {
+			return fmt.Errorf("security.idpi.shieldThreshold must be between 0 and 100")
+		}
+		i.ShieldThreshold = n
 	default:
 		return fmt.Errorf("unknown field security.idpi.%s", field)
 	}
+	return nil
+}
+
+func setSchedulerField(s *SchedulerFileConfig, field, value string) error {
+	switch field {
+	case "enabled":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("scheduler.enabled: %w", err)
+		}
+		s.Enabled = &b
+	case "strategy":
+		s.Strategy = value
+	case "maxQueueSize":
+		return setIntPtrField(&s.MaxQueueSize, "scheduler.maxQueueSize", value)
+	case "maxPerAgent":
+		return setIntPtrField(&s.MaxPerAgent, "scheduler.maxPerAgent", value)
+	case "maxInflight":
+		return setIntPtrField(&s.MaxInflight, "scheduler.maxInflight", value)
+	case "maxPerAgentInflight":
+		return setIntPtrField(&s.MaxPerAgentFlight, "scheduler.maxPerAgentInflight", value)
+	case "resultTTLSec":
+		return setIntPtrField(&s.ResultTTLSec, "scheduler.resultTTLSec", value)
+	case "workerCount":
+		return setIntPtrField(&s.WorkerCount, "scheduler.workerCount", value)
+	case "maxBatchSize":
+		return setIntPtrField(&s.MaxBatchSize, "scheduler.maxBatchSize", value)
+	default:
+		return fmt.Errorf("unknown field scheduler.%s", field)
+	}
+	return nil
+}
+
+func setAutoSolverField(a *AutoSolverFileConfig, field, value string) error {
+	if rest, ok := strings.CutPrefix(field, "external."); ok {
+		return setAutoSolverExternalField(&a.External, rest, value)
+	}
+	if rest, ok := strings.CutPrefix(field, "credentials."); ok {
+		return setAutoSolverCredentialsField(&a.Credentials, rest, value)
+	}
+
+	switch field {
+	case "enabled":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("autoSolver.enabled: %w", err)
+		}
+		a.Enabled = &b
+	case "autoTrigger":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("autoSolver.autoTrigger: %w", err)
+		}
+		a.AutoTrigger = &b
+	case "triggerOnNavigate":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("autoSolver.triggerOnNavigate: %w", err)
+		}
+		a.TriggerOnNavigate = &b
+	case "triggerOnAction":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("autoSolver.triggerOnAction: %w", err)
+		}
+		a.TriggerOnAction = &b
+	case "llmFallback":
+		b, err := parseBool(value)
+		if err != nil {
+			return fmt.Errorf("autoSolver.llmFallback: %w", err)
+		}
+		a.LLMFallback = &b
+	case "maxAttempts":
+		return setIntPtrField(&a.MaxAttempts, "autoSolver.maxAttempts", value)
+	case "solverTimeoutSec":
+		return setIntPtrField(&a.SolverTimeoutSec, "autoSolver.solverTimeoutSec", value)
+	case "retryBaseDelayMs":
+		return setIntPtrField(&a.RetryBaseDelayMs, "autoSolver.retryBaseDelayMs", value)
+	case "retryMaxDelayMs":
+		return setIntPtrField(&a.RetryMaxDelayMs, "autoSolver.retryMaxDelayMs", value)
+	case "llmProvider":
+		a.LLMProvider = value
+	case "solvers":
+		a.Solvers = parseCSVList(value)
+	default:
+		return fmt.Errorf("unknown field autoSolver.%s", field)
+	}
+	return nil
+}
+
+func setAutoSolverExternalField(e *AutoSolverExtConf, field, value string) error {
+	switch field {
+	case "capsolverKey":
+		e.CapsolverKey = value
+	case "twoCaptchaKey":
+		e.TwoCaptchaKey = value
+	default:
+		return fmt.Errorf("unknown field autoSolver.external.%s", field)
+	}
+	return nil
+}
+
+func setAutoSolverCredentialsField(c *AutoSolverCredentialsConf, field, value string) error {
+	switch {
+	case strings.HasPrefix(field, "login."):
+		switch strings.TrimPrefix(field, "login.") {
+		case "user":
+			c.Login.User = value
+		case "password":
+			c.Login.Password = value
+		default:
+			return fmt.Errorf("unknown field autoSolver.credentials.%s", field)
+		}
+	case strings.HasPrefix(field, "signup."):
+		switch strings.TrimPrefix(field, "signup.") {
+		case "name":
+			c.Signup.Name = value
+		case "email":
+			c.Signup.Email = value
+		case "password":
+			c.Signup.Password = value
+		default:
+			return fmt.Errorf("unknown field autoSolver.credentials.%s", field)
+		}
+	case strings.HasPrefix(field, "form."):
+		switch strings.TrimPrefix(field, "form.") {
+		case "field1":
+			c.Form.Field1 = value
+		case "field2":
+			c.Form.Field2 = value
+		case "email":
+			c.Form.Email = value
+		default:
+			return fmt.Errorf("unknown field autoSolver.credentials.%s", field)
+		}
+	default:
+		return fmt.Errorf("unknown field autoSolver.credentials.%s", field)
+	}
+	return nil
+}
+
+// setIntPtrField parses value into an int and points field at it, naming the full path
+// in the refusal — the same shape every numeric setter in this package uses.
+func setIntPtrField(field **int, path, value string) error {
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return fmt.Errorf("%s must be a number: %w", path, err)
+	}
+	*field = &n
 	return nil
 }

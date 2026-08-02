@@ -16,7 +16,7 @@ flowchart LR
 Key design decisions:
 
 - **No direct Chrome dependency** — the MCP process has no CDP connection. All browser work is delegated to the PinchTab instance.
-- **Any deployment works** — use `--server` flag to point at a local server, Docker container, or remote host.
+- **Any deployment works** — use `--server` flag to point at a local server, Docker container, or remote host; a non-loopback host needs its own credential in `PINCHTAB_TOKEN` (e.g. `PINCHTAB_TOKEN=<token> pinchtab --server http://remote:9867 mcp`), since the local config's `server.token` is never sent off the machine.
 - **Stateless protocol layer** — the MCP server holds no browser state itself; it is purely a translation adapter.
 
 ## Transport
@@ -115,7 +115,7 @@ URL validation lives in `handleNavigate` (`handlers_navigation.go`), which calls
 ## Security Considerations
 
 - **`pinchtab_eval`** calls `/evaluate`, which requires `security.allowEvaluate: true` in the PinchTab config. It returns HTTP 403 by default. This is intentional — arbitrary JS execution is a separate opt-in from browser control.
-- **`pinchtab_cookies`** calls `/cookies`, which requires `security.allowCookies: true`. Cookie values can expose session credentials, so cookie operations are disabled by default.
+- **`pinchtab_cookies`** and **`pinchtab_cookies_set`** call `/cookies`, which requires `security.allowCookies: true`. Cookie values can expose session credentials, and setting one grants a session, so cookie operations are disabled by default.
 - **URL validation** — `pinchtab_navigate` rejects non-HTTP/HTTPS URLs to prevent SSRF via `file://`, `javascript:`, or custom schemes.
 - **Token forwarding** — the MCP client forwards the configured bearer token to PinchTab, so access control at the PinchTab layer applies to all tool calls.
 - **Wait caps** — `pinchtab_wait` and `pinchtab_wait_for_selector` enforce a 30-second maximum to prevent agent runaway.

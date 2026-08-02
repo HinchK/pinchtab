@@ -17,6 +17,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 	"github.com/pinchtab/pinchtab/internal/navguard"
+	"github.com/pinchtab/pinchtab/internal/remedy"
 )
 
 // HandleNavigate navigates a tab to a URL or creates a new tab.
@@ -190,19 +191,6 @@ func (h *Handlers) resolveNavigateBrowser(w http.ResponseWriter, r *http.Request
 	return routing, true
 }
 
-// idpiAllowlistHint appends a copy-pasteable remediation to an IDPI domain-block
-// error so the user isn't left knowing only the cause. Widening the allowlist
-// reduces isolation, so the hint says so and points at the security guide.
-func idpiAllowlistHint(url string) string {
-	host, ok := navguard.ExtractHost(url)
-	if !ok || strings.TrimSpace(host) == "" {
-		return ""
-	}
-	return fmt.Sprintf(". To allow it, run: pinchtab config set security.allowedDomains "+
-		"\"$(pinchtab config get security.allowedDomains),%s\" then: pinchtab server restart "+
-		"(this widens what automation may reach — see docs/guides/security.md)", host)
-}
-
 // idpiScannerHint appends remediation to an IDPI content-scanner block, which
 // otherwise states only the cause. Unlike the domain allowlist, a scanner block
 // can be a false positive on legitimate pages, so the fix is to relax strict mode
@@ -225,7 +213,9 @@ func (h *Handlers) validateNavigateTargets(w http.ResponseWriter, r *http.Reques
 	domainResult := h.IDPIGuard.CheckDomain(url)
 	if domainResult.Blocked {
 		h.recordNavigateRequest(r, tabID, url)
-		httpx.Error(w, http.StatusForbidden, fmt.Errorf("navigation blocked by IDPI: %s%s", domainResult.Reason, idpiAllowlistHint(url)))
+		writeIDPIDomainBlocked(w,
+			fmt.Sprintf("navigation blocked by IDPI: %s", domainResult.Reason),
+			idpiRefusedURLDetails(url))
 		return navTargets{}, false
 	}
 	if domainResult.Threat {
@@ -255,15 +245,7 @@ func (h *Handlers) validateNavigateTargets(w http.ResponseWriter, r *http.Reques
 // records it as activity, and returns it for the execute phase (the static-first
 // and escalation paths may replace it).
 func (h *Handlers) recordNavigateRoute(r *http.Request, routing browserRouting) *browserops.RouteMetadata {
-	navRoute := browserops.SingleBrowserRoute(routing.Browser)
-	navRoute.Attempts = append(navRoute.Attempts, browserops.RouteAttempt{
-		Browser:  routing.Browser,
-		Accepted: routing.Decision.Decision == browsers.DecisionHandle,
-		Reason:   routing.Decision.Reason,
-	})
-	if routing.RequestBrowser != "" {
-		navRoute.RequestedBrowser = routing.RequestBrowser
-	}
+	navRoute := routeMetadataFor(routing)
 	h.recordActivity(r, activity.Update{Route: navRoute})
 	return navRoute
 }
@@ -439,6 +421,9 @@ func (h *Handlers) executeNavigate(w http.ResponseWriter, r *http.Request, req n
 			return
 		}
 		WriteTabContextError(w, err, 404)
+		return
+	}
+	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedTabID) {
 		return
 	}
 	// Navigate signals fresh work on this tab — drop any pending auto-close
@@ -708,12 +693,15 @@ func isNavigateAbortedOnBinary(err error, url string) bool {
 	return false
 }
 
+// The pair used to be inverted: the remedy held the bare verb "download" and the hint held
+// the command. The URL is known here, so the remedy is the whole command.
+var downloadInstead = remedy.Declare(`pinchtab download "<url>"`)
+
 func navigateErrorWithHint(w http.ResponseWriter, code int, err error, url string) {
 	if isNavigateAbortedOnBinary(err, url) {
-		httpx.ErrorCode(w, 502, "nav_binary_aborted", fmt.Sprintf("navigate: %s", err.Error()), false, map[string]any{
-			"remedy": "download",
-			"hint":   fmt.Sprintf("Chrome cannot render binary/compressed files. Use: pinchtab download %q", url),
-		})
+		httpx.ErrorCode(w, 502, "nav_binary_aborted", fmt.Sprintf("navigate: %s", err.Error()), false,
+			remedy.Details("Chrome cannot render binary/compressed files, so this URL has to be downloaded instead.",
+				downloadInstead.Fill(url)))
 		return
 	}
 	httpx.Error(w, code, fmt.Errorf("navigate: %w", err))

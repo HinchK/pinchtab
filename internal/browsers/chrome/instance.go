@@ -33,47 +33,41 @@ func NewInstance(browserCtx context.Context, headless bool) *Instance {
 var _ browsers.RuntimeInstance = (*Instance)(nil)
 
 func (i *Instance) CaptureScreenshot(ctx context.Context, format string, quality int, clip *cdptk.ScreenshotClip) ([]byte, error) {
-	var buf []byte
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
-		// Wake the target's renderer before capturing. Background / non-
-		// foreground tabs throttle their compositor and stop painting, so
-		// captureScreenshot blocks until the action deadline (~30s). A
-		// best-effort BringToFront resumes painting for the target we are
-		// about to capture; the error is ignored so providers whose CDP proxy
-		// does not implement it still capture normally.
-		_ = page.BringToFront().Do(c)
+	const beyondViewport = false
+	vp := cdptk.ClipViewport(clip)
 
-		var cdpFormat page.CaptureScreenshotFormat
-		switch format {
-		case "png":
-			cdpFormat = page.CaptureScreenshotFormatPng
-		default:
-			cdpFormat = page.CaptureScreenshotFormatJpeg
-		}
+	buf, err := cdptk.CaptureWithSurfaceFallback(cdptk.CaptureFromSurface(beyondViewport, vp), func(fromSurface bool) ([]byte, error) {
+		var buf []byte
+		err := chromedp.Run(ctx, chromedp.ActionFunc(func(c context.Context) error {
+			// Wake the target's renderer before capturing. Background / non-
+			// foreground tabs throttle their compositor and stop painting, so
+			// captureScreenshot blocks until the action deadline (~30s). A
+			// best-effort BringToFront resumes painting for the target we are
+			// about to capture; the error is ignored so providers whose CDP proxy
+			// does not implement it still capture normally.
+			_ = page.BringToFront().Do(c)
 
-		// WithFromSurface(false) reads the renderer's current view directly
-		// instead of waiting for a fresh compositor surface frame. On idle
-		// pages in headed browsers (e.g. Cloak) the surface stops swapping
-		// frames, so the default fromSurface=true blocks until the action
-		// deadline (~30s) — stalling one-shot screenshots and polling
-		// screencast alike. In headless Chrome the flag is a no-op.
-		shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(false)
-		if clip != nil {
-			shot = shot.WithClip(&page.Viewport{
-				X:      clip.X,
-				Y:      clip.Y,
-				Width:  clip.Width,
-				Height: clip.Height,
-				Scale:  clip.Scale,
-			})
-		}
-		if cdpFormat == page.CaptureScreenshotFormatJpeg && quality > 0 {
-			shot = shot.WithQuality(int64(quality))
-		}
-		var err error
-		buf, err = shot.Do(c)
-		return err
-	}))
+			var cdpFormat page.CaptureScreenshotFormat
+			switch format {
+			case "png":
+				cdpFormat = page.CaptureScreenshotFormatPng
+			default:
+				cdpFormat = page.CaptureScreenshotFormatJpeg
+			}
+
+			shot := page.CaptureScreenshot().WithFormat(cdpFormat).WithFromSurface(fromSurface)
+			if vp != nil {
+				shot = shot.WithClip(vp)
+			}
+			if cdpFormat == page.CaptureScreenshotFormatJpeg && quality > 0 {
+				shot = shot.WithQuality(int64(quality))
+			}
+			var err error
+			buf, err = shot.Do(c)
+			return err
+		}))
+		return buf, err
+	})
 	if err != nil {
 		return nil, fmt.Errorf("screenshot: %w", err)
 	}

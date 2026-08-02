@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -206,5 +207,111 @@ func TestHandleContextCancellation(t *testing.T) {
 	}
 	if !r.IsError {
 		t.Error("expected error result when context is cancelled")
+	}
+}
+
+// The set tool exists because the MCP surface was read-only while the CLI was
+// delete-only, and every argument it declares must actually travel: an argument the
+// schema advertises but the handler drops is worse than an absent one.
+func TestHandleCookiesSetForwardsEveryDeclaredArgument(t *testing.T) {
+	var seen struct {
+		path string
+		body map[string]any
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen.path = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&seen.body); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"set":1,"failed":0,"total":1}`))
+	}))
+	defer srv.Close()
+
+	callTool(t, "pinchtab_cookies_set", map[string]any{
+		"name":     "session",
+		"value":    "abc123",
+		"url":      "https://example.com/app",
+		"domain":   "example.com",
+		"path":     "/",
+		"sameSite": "Lax",
+		"secure":   true,
+		"httpOnly": true,
+		"expires":  float64(1893456000),
+		"tabId":    "t1",
+	}, srv)
+
+	if seen.path != "/cookies" {
+		t.Fatalf("path = %q, want /cookies", seen.path)
+	}
+	if seen.body["tabId"] != "t1" || seen.body["url"] != "https://example.com/app" {
+		t.Errorf("body = %+v, want the tab and url forwarded", seen.body)
+	}
+	cookies, ok := seen.body["cookies"].([]any)
+	if !ok || len(cookies) != 1 {
+		t.Fatalf("body = %+v, want one cookie", seen.body)
+	}
+	cookie, _ := cookies[0].(map[string]any)
+	for key, want := range map[string]any{
+		"name":     "session",
+		"value":    "abc123",
+		"domain":   "example.com",
+		"path":     "/",
+		"sameSite": "Lax",
+		"secure":   true,
+		"httpOnly": true,
+		"expires":  float64(1893456000),
+	} {
+		if cookie[key] != want {
+			t.Errorf("cookie[%q] = %v, want %v — declared in the tool schema but not forwarded", key, cookie[key], want)
+		}
+	}
+}
+
+// Every argument the handler reads is declared, so the schema-derived validator sees
+// it and a model can discover it.
+func TestCookiesSetToolDeclaresEveryArgumentItReads(t *testing.T) {
+	var tool *mcp.Tool
+	for i, candidate := range allTools() {
+		if candidate.Name == "pinchtab_cookies_set" {
+			tool = &allTools()[i]
+		}
+	}
+	if tool == nil {
+		t.Fatal("pinchtab_cookies_set is not in allTools(), so tools/list never advertises it")
+	}
+	if _, ok := rawHandlerMap(NewClient("http://example.invalid", ""))["pinchtab_cookies_set"]; !ok {
+		t.Fatal("pinchtab_cookies_set has no handler, so NewServer panics on it")
+	}
+
+	for _, arg := range []string{"name", "value", "url", "domain", "path", "sameSite", "secure", "httpOnly", "expires", "tabId"} {
+		if _, ok := tool.InputSchema.Properties[arg]; !ok {
+			t.Errorf("the handler reads %q but the schema does not declare it", arg)
+		}
+	}
+	for _, required := range []string{"name", "value"} {
+		if !slices.Contains(tool.InputSchema.Required, required) {
+			t.Errorf("%q is not required, so a call omitting it reaches the server as an empty cookie", required)
+		}
+	}
+}
+
+// An empty value blanks a cookie; RequireString accepts it, so the tool must not treat
+// it as a missing argument.
+func TestHandleCookiesSetAcceptsAnEmptyValue(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"set":1,"failed":0,"total":1}`))
+	}))
+	defer srv.Close()
+
+	callTool(t, "pinchtab_cookies_set", map[string]any{"name": "session", "value": ""}, srv)
+
+	cookies, ok := body["cookies"].([]any)
+	if !ok || len(cookies) != 1 {
+		t.Fatalf("body = %+v, want the cookie to reach the server", body)
+	}
+	if cookie, _ := cookies[0].(map[string]any); cookie["value"] != "" {
+		t.Errorf("cookie = %+v, want an empty value preserved", cookie)
 	}
 }

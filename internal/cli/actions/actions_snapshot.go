@@ -39,6 +39,6 @@ func Snapshot(client *http.Client, base, token string, cmd *cobra.Command, selec
 	if v, _ := cmd.Flags().GetString("tab"); v != "" {
 		params.Set("tabId", v)
 	}
-	result := apiclient.DoGet(client, base, token, "/snapshot", params)
+	result := apiclient.DoGetCapturingVocab(client, base, token, "/snapshot", params, params.Get("tabId"))
 	apiclient.SuggestNextAction("snapshot", result)
 }

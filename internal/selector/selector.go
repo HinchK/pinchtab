@@ -15,6 +15,9 @@
 //	"testid:submit"   → Test id locator
 //	"last:button"     → Positional selector wrapper
 //
+// Prefixes match case-insensitively, so "CSS:#login" and "css:#login" are the
+// same selector. Values are never case-folded.
+//
 // Bare strings that look like CSS selectors (start with ., #, [,
 // or contain tag-like patterns) are treated as CSS. Everything else
 // without a prefix is treated as a ref if it matches the eN pattern,
@@ -97,7 +100,7 @@ func (s Selector) IsEmpty() bool {
 
 // Parse interprets a selector string and returns a typed Selector.
 //
-// Explicit prefixes take priority:
+// Explicit prefixes take priority and match case-insensitively:
 //
 //	"css:..."    → CSS
 //	"xpath:..."  → XPath
@@ -130,50 +133,8 @@ func Parse(s string) Selector {
 		return Selector{}
 	}
 
-	if after, ok := cutPrefix(s, "css:"); ok {
-		return Selector{Kind: KindCSS, Value: after}
-	}
-	if after, ok := cutPrefix(s, "xpath:"); ok {
-		return Selector{Kind: KindXPath, Value: after}
-	}
-	if after, ok := cutPrefix(s, "text:"); ok {
-		return Selector{Kind: KindText, Value: after}
-	}
-	if after, ok := cutPrefix(s, "find:"); ok {
-		return Selector{Kind: KindSemantic, Value: after}
-	}
-	if after, ok := cutPrefix(s, "semantic:"); ok {
-		return Selector{Kind: KindSemantic, Value: after}
-	}
-	if after, ok := cutPrefix(s, "role:"); ok {
-		return Selector{Kind: KindRole, Value: after}
-	}
-	if after, ok := cutPrefix(s, "label:"); ok {
-		return Selector{Kind: KindLabel, Value: after}
-	}
-	if after, ok := cutPrefix(s, "placeholder:"); ok {
-		return Selector{Kind: KindPlaceholder, Value: after}
-	}
-	if after, ok := cutPrefix(s, "alt:"); ok {
-		return Selector{Kind: KindAlt, Value: after}
-	}
-	if after, ok := cutPrefix(s, "title:"); ok {
-		return Selector{Kind: KindTitle, Value: after}
-	}
-	if after, ok := cutPrefix(s, "testid:"); ok {
-		return Selector{Kind: KindTestID, Value: after}
-	}
-	if after, ok := cutPrefix(s, "first:"); ok {
-		return Selector{Kind: KindFirst, Value: after}
-	}
-	if after, ok := cutPrefix(s, "last:"); ok {
-		return Selector{Kind: KindLast, Value: after}
-	}
-	if after, ok := cutPrefix(s, "nth:"); ok {
-		return Selector{Kind: KindNth, Value: after}
-	}
-	if after, ok := cutPrefix(s, "ref:"); ok {
-		return Selector{Kind: KindRef, Value: after}
+	if kind, value, ok := cutKnownPrefix(s); ok {
+		return Selector{Kind: kind, Value: value}
 	}
 
 	if strings.HasPrefix(s, "//") || strings.HasPrefix(s, "(//") {
@@ -272,12 +233,37 @@ func (s Selector) SemanticQuery() (string, bool) {
 			return s.String(), true
 		}
 	case KindNth:
-		_, raw, ok := splitNthSelectorValue(s.Value)
-		if ok && rawSelectorCanUseSemantic(raw) {
-			return s.String(), true
+		index, raw, err := ParseNth(s.Value)
+		if err == nil && rawSelectorCanUseSemantic(raw) {
+			return fmt.Sprintf("%s%d:%s", nthPrefix, index+semanticNthOffset, raw), true
 		}
 	}
 	return "", false
+}
+
+// semanticNthOffset translates PinchTab's zero-based nth into the one-based nth the
+// semantic matcher publishes. It is an adapter between two documented grammars, not an
+// off-by-one to be simplified away: the matcher's README states that nth:<n> is 1-based,
+// nth:1 selects the first ordered candidate and nth:0 is not the first match, while this
+// project documents nth as zero-based for every selector kind. Both remain correct; the
+// boundary converts. Removing it makes the documented nth:0 match nothing.
+const semanticNthOffset = 1
+
+const nthPrefix = "nth:"
+
+// SemanticNthBase splits a positional nth wrapper over a semantic form into the
+// caller's ZERO-based index and the bare query underneath it, for a caller that has to
+// say how many matches the unwrapped selector had. It answers false for every other
+// selector, including first:/last:, which cannot be out of range while any match exists.
+func (s Selector) SemanticNthBase() (index int, base string, ok bool) {
+	if s.Kind != KindNth {
+		return 0, "", false
+	}
+	index, raw, err := ParseNth(s.Value)
+	if err != nil || !rawSelectorCanUseSemantic(raw) {
+		return 0, "", false
+	}
+	return index, raw, true
 }
 
 func rawSelectorCanUseSemantic(raw string) bool {
@@ -290,25 +276,71 @@ func rawSelectorCanUseSemantic(raw string) bool {
 	}
 }
 
-func splitNthSelectorValue(value string) (int, string, bool) {
+// ParseNth splits the value of an "nth:" selector into its zero-based index and
+// the nested selector. This package owns the selector grammar, so resolvers must
+// use this rather than re-deriving the split: the eligibility checks here and
+// the resolution path must agree on what a valid nth selector is.
+func ParseNth(value string) (index int, nested string, err error) {
 	rawIndex, rawSelector, ok := strings.Cut(value, ":")
 	if !ok {
-		return 0, "", false
+		return 0, "", fmt.Errorf("nth selector requires nth:<index>:<selector>")
 	}
 	rawSelector = strings.TrimSpace(rawSelector)
 	if rawSelector == "" {
-		return 0, "", false
+		return 0, "", fmt.Errorf("nth selector requires a nested selector")
 	}
-	index, err := strconv.Atoi(strings.TrimSpace(rawIndex))
-	if err != nil || index < 0 {
-		return 0, "", false
+	index, convErr := strconv.Atoi(strings.TrimSpace(rawIndex))
+	if convErr != nil || index < 0 {
+		return 0, "", fmt.Errorf("nth selector index must be a zero-based non-negative integer")
 	}
-	return index, rawSelector, true
+	return index, rawSelector, nil
 }
 
-func cutPrefix(s, prefix string) (string, bool) {
-	if strings.HasPrefix(s, prefix) {
-		return s[len(prefix):], true
+// prefixKind binds one explicit prefix to the Kind it produces.
+type prefixKind struct {
+	Prefix string
+	Kind   Kind
+}
+
+// prefixKinds is the one vocabulary of explicit selector prefixes. Parse and
+// HasKnownPrefix both read it, so a new kind is a single edit that cannot be
+// half-applied. Several prefixes may share a Kind: "find:" and "semantic:"
+// both produce KindSemantic.
+//
+// The unprefixed forms Parse also accepts — "//div" and "(//div)" as XPath, a
+// bare "e5" as a ref — are pattern matches rather than prefixes and stay out,
+// so HasKnownPrefix keeps meaning what its name says.
+var prefixKinds = []prefixKind{
+	{"css:", KindCSS},
+	{"xpath:", KindXPath},
+	{"text:", KindText},
+	{"find:", KindSemantic},
+	{"semantic:", KindSemantic},
+	{"role:", KindRole},
+	{"label:", KindLabel},
+	{"placeholder:", KindPlaceholder},
+	{"alt:", KindAlt},
+	{"title:", KindTitle},
+	{"testid:", KindTestID},
+	{"first:", KindFirst},
+	{"last:", KindLast},
+	{"nth:", KindNth},
+	{"ref:", KindRef},
+}
+
+// HasKnownPrefix reports whether s starts with an explicit selector prefix
+// Parse recognises. It answers false for the unprefixed forms Parse
+// auto-detects, such as "//div" and "e5".
+func HasKnownPrefix(s string) bool {
+	_, _, ok := cutKnownPrefix(strings.TrimSpace(s))
+	return ok
+}
+
+func cutKnownPrefix(s string) (Kind, string, bool) {
+	for _, pk := range prefixKinds {
+		if len(s) >= len(pk.Prefix) && strings.EqualFold(s[:len(pk.Prefix)], pk.Prefix) {
+			return pk.Kind, s[len(pk.Prefix):], true
+		}
 	}
-	return s, false
+	return KindNone, s, false
 }

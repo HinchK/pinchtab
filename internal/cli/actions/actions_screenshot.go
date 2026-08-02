@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/cli"
@@ -88,13 +87,15 @@ func Screenshot(client *http.Client, base, token string, cmd *cobra.Command) {
 		if err != nil {
 			cli.Fatal("Decode image: %v", err)
 		}
-		if outFile == "" {
+		autoNamed := outFile == ""
+		if autoNamed {
 			outFile = fmt.Sprintf("screenshot-%s%s", time.Now().Format("20060102-150405"), ext)
 		}
-		if err := os.WriteFile(outFile, img, 0600); err != nil {
+		saved, err := writeOutputFile(outFile, autoNamed, img)
+		if err != nil {
 			cli.Fatal("Write failed: %v", err)
 		}
-		fmt.Println(cli.StyleStdout(cli.SuccessStyle, fmt.Sprintf("Saved %s (%d bytes)", outFile, len(img))))
+		printSaved(saved, len(img))
 		// Print a human-readable legend so the operator can correlate visual
 		// labels with refs at a glance. The bracketed number must match what
 		// the overlay draws (the numeric portion of the ref) — using i+1
@@ -115,15 +116,17 @@ func Screenshot(client *http.Client, base, token string, cmd *cobra.Command) {
 	}
 
 	params.Set("raw", "true")
-	if outFile == "" {
+	autoNamed := outFile == ""
+	if autoNamed {
 		outFile = fmt.Sprintf("screenshot-%s%s", time.Now().Format("20060102-150405"), ext)
 	}
 	data := apiclient.DoGetRaw(client, base, token, "/screenshot", params)
 	if data == nil {
 		return
 	}
-	if err := os.WriteFile(outFile, data, 0600); err != nil {
+	saved, err := writeOutputFile(outFile, autoNamed, data)
+	if err != nil {
 		cli.Fatal("Write failed: %v", err)
 	}
-	fmt.Println(cli.StyleStdout(cli.SuccessStyle, fmt.Sprintf("Saved %s (%d bytes)", outFile, len(data))))
+	printSaved(saved, len(data))
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
@@ -107,16 +108,95 @@ func Profiles(client *http.Client, base, token string, cmd *cobra.Command) {
 		os.Exit(1)
 	}
 
-	if len(profiles) == 0 {
-		fmt.Println("No profiles available")
+	fmt.Print(formatProfileList(profiles))
+}
+
+// ProfilesPrune reclaims quarantine backlog. Without --confirm it reports what would go
+// and frees nothing, so the bare invocation is safe for an agent to run.
+func ProfilesPrune(client *http.Client, base, token string, cmd *cobra.Command) {
+	confirm, _ := cmd.Flags().GetBool("confirm")
+	profile, _ := cmd.Flags().GetString("profile")
+	body := map[string]any{"confirm": confirm}
+	if profile != "" {
+		body["profile"] = profile
+	}
+
+	if jsonOutput, _ := cmd.Flags().GetBool("json"); jsonOutput {
+		apiclient.DoPost(client, base, token, "/profiles/prune", body)
 		return
 	}
 
+	raw := apiclient.DoPostRaw(client, base, token, "/profiles/prune", body)
+	var resp struct {
+		Removed    bool  `json:"removed"`
+		Count      int   `json:"count"`
+		TotalBytes int64 `json:"totalBytes"`
+		Profiles   []struct {
+			Name  string `json:"name"`
+			Bytes int64  `json:"bytes"`
+		} `json:"profiles"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to parse prune response: %v\n", err)
+		os.Exit(1)
+	}
+
+	if resp.Count == 0 {
+		fmt.Println("No quarantined profiles to reclaim")
+		return
+	}
+	for _, prof := range resp.Profiles {
+		fmt.Printf("%s\t%s\n", prof.Name, formatBytes(prof.Bytes))
+	}
+	if resp.Removed {
+		fmt.Printf("\nReclaimed %d quarantined profile(s), %s freed\n", resp.Count, formatBytes(resp.TotalBytes))
+		return
+	}
+	fmt.Printf("\n%d quarantined profile(s), %s reclaimable. Nothing was removed; re-run with --confirm.\n", resp.Count, formatBytes(resp.TotalBytes))
+}
+
+// formatProfileList lists user profiles first, then the quarantined
+// directories under a heading carrying their count and combined size, so an
+// operator sees what quarantine is holding without inferring it from names.
+func formatProfileList(profiles []map[string]any) string {
+	if len(profiles) == 0 {
+		return "No profiles available\n"
+	}
+
+	var live, quarantined strings.Builder
+	quarantinedCount := 0
+	quarantinedBytes := int64(0)
 	for _, prof := range profiles {
 		id, _ := prof["id"].(string)
 		name, _ := prof["name"].(string)
-		fmt.Printf("%s\t%s\n", id, name)
+		size, _ := prof["diskUsage"].(float64)
+		if isQuarantined, _ := prof["quarantined"].(bool); isQuarantined {
+			quarantinedCount++
+			quarantinedBytes += int64(size)
+			fmt.Fprintf(&quarantined, "%s\t%s\t%s\n", id, name, formatBytes(int64(size)))
+			continue
+		}
+		fmt.Fprintf(&live, "%s\t%s\n", id, name)
 	}
+
+	out := live.String()
+	if quarantinedCount > 0 {
+		out += fmt.Sprintf("\nQuarantined (%d, %s total):\n%s", quarantinedCount, formatBytes(quarantinedBytes), quarantined.String())
+	}
+	return out
+}
+
+func formatBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for rest := n / unit; rest >= unit; rest /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 func decodeProfilesResponse(body []byte) ([]map[string]any, error) {

@@ -54,6 +54,8 @@ func maybeRunWizard() {
 
 func Execute() {
 	safelog.InstallDefault()
+	installUnknownSubcommandGuard(rootCmd)
+	rootCmd.SetArgs(rewriteNegativeNumberArgs(rootCmd, os.Args[1:]))
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(commandExitCode(err))

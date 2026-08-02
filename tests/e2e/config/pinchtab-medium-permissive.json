@@ -30,7 +30,6 @@
     "maxPerAgent": 3,
     "maxInflight": 2,
     "workerCount": 2,
-    "maxBatchSize": 5,
     "resultTTLSec": 120
   },
   "security": {

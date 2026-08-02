@@ -17,6 +17,10 @@ type request struct {
 	url     string
 	body    map[string]any
 	headers map[string]string
+	// respHeaders, when non-nil, receives the response headers so a caller can
+	// read one (the vocabulary token) without changing doRequest's return shape,
+	// which mustRequest and the other verbs share.
+	respHeaders *http.Header
 }
 
 func buildURL(base, path string, params url.Values) string {
@@ -49,6 +53,9 @@ func doRequest(client *http.Client, token string, r request) (int, []byte, error
 		return 0, nil, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if r.respHeaders != nil {
+		*r.respHeaders = resp.Header
+	}
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, body, nil
 }

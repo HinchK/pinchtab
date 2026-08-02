@@ -1,6 +1,11 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	browseractions "github.com/pinchtab/pinchtab/internal/cli/actions"
 	"github.com/spf13/cobra"
@@ -88,14 +93,19 @@ var dragCmd = &cobra.Command{
 	Short: "Drag from one target to another (or by pixel offset)",
 	Long: `Drag a DOM element.
 
-Two forms:
+Two forms, both one HTTP "drag" action. They differ in how the endpoint of the
+drag is expressed — a target or an offset — and both drive the interpolated
+pointer sequence HTML5 drag-and-drop needs, so a draggable element fires
+dragstart and the destination receives drop.
+
   pinchtab drag <from> <to>
-      Synthesizes mouse-move → mouse-down → mouse-move → mouse-up.
-      Each target is a selector (CSS, ref, text:) or an "x,y" coord pair.
+      TARGET form: drag onto another element. Each target is a selector (CSS,
+      ref, text:) or an "x,y" coord pair. Symmetric with the HTTP /action body
+      {"kind":"drag","selector":"...","toSelector":"..."}.
 
   pinchtab drag <selector> --drag-x <n> --drag-y <n>
-      Single-step HTTP "drag" action with pixel offsets from the element's
-      current position. Symmetric with the HTTP /action body
+      OFFSET form: drag by a pixel delta from the element's current position,
+      for handles and sliders with no element to drop onto. Symmetric with
       {"kind":"drag","selector":"...","dragX":N,"dragY":N}.`,
 	Args: cobra.RangeArgs(1, 2),
 	Run: func(cmd *cobra.Command, args []string) {
@@ -110,10 +120,12 @@ var focusCmd = newOptionalRefActionCmd("focus <ref>", "Focus element", "focus")
 var scrollCmd = &cobra.Command{
 	Use:   "scroll <pixels|direction|selector>",
 	Short: "Scroll the page by pixels, in a direction, or to an element",
-	Long: `Scroll the page. The single positional argument is interpreted by precedence:
+	Long: `Scroll the page. Give either --dy/--dx or one positional argument.
 
-  1. Integer → scrollY in pixels (positive down, negative up).
-     pinchtab scroll 800
+  1. Pixels: --dy <n> vertically, --dx <n> horizontally (positive down/right).
+     A negative count works either way; both forms take --tab in any position.
+     pinchtab scroll --dy 800
+     pinchtab scroll --dy -300
      pinchtab scroll -300
 
   2. Direction keyword: up | down | left | right (defaults to 800px per step).
@@ -127,14 +139,59 @@ var scrollCmd = &cobra.Command{
      pinchtab scroll '//footer'
      pinchtab scroll 'text:Load more'
 
+A positional integer still works for a positive count (pinchtab scroll 800).
+
 Precedence: integer and direction keywords win over selector parsing so that
 'up'/'down' are treated as directions, not as CSS tag selectors.`,
-	Args: cobra.MinimumNArgs(1),
+	Args: scrollArgs,
 	Run: func(cmd *cobra.Command, args []string) {
 		runCLI(func(rt cliRuntime) {
 			browseractions.ActionSimple(rt.client, rt.base, rt.token, "scroll", args, cmd)
 		})
 	},
+}
+
+// scrollArgs refuses a second positional, which is what made a mistyped scroll
+// silently scroll the WRONG tab: a negative count used to be spellable only as
+// `scroll -- -300`, everything after `--` is a positional, and MinimumNArgs(1)
+// accepted `--tab <id>` as args[1:] and dropped it — so the action ran on the
+// current tab and reported OK. A hand-written `--` still lands here, and still
+// refuses. It also refuses the empty and the doubly-specified forms, since
+// --dy/--dx and the positional are two spellings of one argument.
+func scrollArgs(cmd *cobra.Command, args []string) error {
+	byFlag := cmd.Flags().Changed("dy") || cmd.Flags().Changed("dx")
+	if len(args) > 1 {
+		return fmt.Errorf("accepts at most 1 positional argument, received %d (%s); a negative count needs no escape (pinchtab scroll -300), and flags must not follow --", len(args), strings.Join(args, " "))
+	}
+	if len(args) == 0 && !byFlag {
+		return fmt.Errorf("needs a positional <pixels|direction|selector> or --dy/--dx")
+	}
+	if len(args) == 1 && byFlag {
+		return fmt.Errorf("give either %q or --dy/--dx, not both", args[0])
+	}
+	// The server owns this rule; the local copy only saves a round trip.
+	if len(args) == 1 {
+		if px, err := strconv.Atoi(args[0]); err == nil && px == 0 {
+			return errZeroScrollDelta
+		}
+	} else if byFlag && scrollFlagDelta(cmd, "dy") == 0 && scrollFlagDelta(cmd, "dx") == 0 {
+		return errZeroScrollDelta
+	}
+	return nil
+}
+
+var errZeroScrollDelta = errors.New("a zero delta is not a scroll: pass a non-zero count, a direction, or a selector to scroll into view")
+
+// scrollFlagDelta is the value of an int scroll flag, 0 when unset or unreadable.
+func scrollFlagDelta(cmd *cobra.Command, name string) int {
+	if !cmd.Flags().Changed(name) {
+		return 0
+	}
+	value, err := cmd.Flags().GetInt(name)
+	if err != nil {
+		return 0
+	}
+	return value
 }
 
 var selectCmd = newSimpleActionCmd("select <ref> <value>", "Select option in dropdown", "select", cobra.MinimumNArgs(2))

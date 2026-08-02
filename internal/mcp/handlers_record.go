@@ -12,10 +12,6 @@ import (
 	"github.com/pinchtab/pinchtab/internal/readiness"
 )
 
-// maxRecordFileBytes caps the output file written by record_stop to prevent
-// unbounded disk writes (matches the server-side maxOutputBytes).
-const maxRecordFileBytes = 256 << 20 // 256 MiB
-
 func handleRecordStart(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		file, err := r.RequireString("file")
@@ -187,29 +183,6 @@ func safeRecordPath(file string) (string, error) {
 	}
 
 	return cleaned, nil
-}
-
-// streamToFile writes from r to path using O_CREATE|O_EXCL (no overwrite),
-// capped at maxRecordFileBytes. Returns the number of bytes written.
-func streamToFile(path string, r io.Reader) (int64, error) {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return 0, err
-	}
-
-	n, copyErr := io.Copy(f, io.LimitReader(r, maxRecordFileBytes+1))
-	if closeErr := f.Close(); closeErr != nil && copyErr == nil {
-		copyErr = closeErr
-	}
-	if copyErr != nil {
-		_ = os.Remove(path)
-		return 0, copyErr
-	}
-	if n > maxRecordFileBytes {
-		_ = os.Remove(path)
-		return 0, fmt.Errorf("recording exceeds %d MiB limit", maxRecordFileBytes>>20)
-	}
-	return n, nil
 }
 
 func handleRecordStatus(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {

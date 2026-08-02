@@ -9,6 +9,7 @@ import (
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/page"
+	"github.com/pinchtab/pinchtab/internal/cdptk"
 )
 
 type screenshotExecutor struct {
@@ -103,29 +104,6 @@ func TestClampScale(t *testing.T) {
 	}
 }
 
-func TestCaptureFromSurface(t *testing.T) {
-	cases := []struct {
-		name           string
-		beyondViewport bool
-		clip           *page.Viewport
-		want           bool
-	}{
-		{name: "plain viewport capture", want: false},
-		{name: "beyond viewport forces surface", beyondViewport: true, want: true},
-		{name: "native-scale clip stays off", clip: &page.Viewport{Scale: 1}, want: false},
-		{name: "zero-scale clip treated as native", clip: &page.Viewport{Scale: 0}, want: false},
-		{name: "downscaled clip forces surface", clip: &page.Viewport{Scale: 0.25}, want: true},
-		{name: "upscaled clip forces surface", clip: &page.Viewport{Scale: 2}, want: true},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := captureFromSurface(c.beyondViewport, c.clip); got != c.want {
-				t.Fatalf("captureFromSurface(%v, %+v) = %v, want %v", c.beyondViewport, c.clip, got, c.want)
-			}
-		})
-	}
-}
-
 func TestProjectBoundsToClip(t *testing.T) {
 	nodes := []A11yNode{
 		{
@@ -196,4 +174,39 @@ func TestScaledScreenshotClip(t *testing.T) {
 			t.Fatalf("expected nil clip, got %+v", clip)
 		}
 	})
+}
+
+// CDP discards a scale-0 clip and returns the whole viewport, no error. The chrome path
+// once shipped exactly that defect, so every path a clip takes to CDP must leave the
+// conversion with a non-zero Scale — including the no-rescale early return, which used to
+// hand the caller's clip through verbatim.
+func TestEveryCapturePathNormalisesAZeroScaleClip(t *testing.T) {
+	unset := func() *page.Viewport {
+		return &page.Viewport{X: 40, Y: 60, Width: 120, Height: 60}
+	}
+	for _, tc := range []struct {
+		name      string
+		clip      *page.Viewport
+		optsScale float64
+		wantScale float64
+	}{
+		{name: "no rescale requested", clip: unset(), optsScale: 0, wantScale: 1},
+		{name: "explicit native rescale", clip: unset(), optsScale: 1, wantScale: 1},
+		{name: "real rescale multiplies the native default", clip: unset(), optsScale: 2, wantScale: 2},
+		{name: "real rescale multiplies an explicit scale", clip: &page.Viewport{X: 40, Y: 60, Width: 120, Height: 60, Scale: 1.5}, optsScale: 2, wantScale: 3},
+		{name: "Bridge.CaptureScreenshot converts through cdptk first", clip: cdptk.ClipViewport(&cdptk.ScreenshotClip{X: 40, Y: 60, Width: 120, Height: 60}), optsScale: 0, wantScale: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := scaledScreenshotClip(ScreenshotOpts{Clip: tc.clip, Scale: tc.optsScale}, 0, 0, 0, 0)
+			if got == nil {
+				t.Fatal("expected a clip")
+			}
+			if got.Scale != tc.wantScale {
+				t.Fatalf("scale = %v, want %v — a scale-0 clip reaching CDP is silently discarded", got.Scale, tc.wantScale)
+			}
+			if got.X != 40 || got.Y != 60 || got.Width != 120 || got.Height != 60 {
+				t.Fatalf("geometry changed: %+v", got)
+			}
+		})
+	}
 }

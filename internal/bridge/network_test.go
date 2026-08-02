@@ -98,6 +98,12 @@ func TestNetworkBuffer_TruncatesOversizedFields(t *testing.T) {
 	if len(entry.PostData) > testMaxNetworkPostDataBytes {
 		t.Fatalf("PostData length = %d, want <= %d", len(entry.PostData), testMaxNetworkPostDataBytes)
 	}
+	if !entry.PostDataTruncated {
+		t.Error("a request body cut by the buffer reports no truncation, so a reader of the entry sees a clipped body as complete")
+	}
+	if entry.PostDataSkipped {
+		t.Errorf("a cut body must not also report skipped: %q", entry.PostDataSkipReason)
+	}
 	totalHeaderBytes := 0
 	for key, value := range entry.RequestHeaders {
 		totalHeaderBytes += len(key) + len(value)

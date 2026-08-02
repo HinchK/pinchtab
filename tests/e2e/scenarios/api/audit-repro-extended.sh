@@ -11,6 +11,8 @@ source "${GROUP_DIR}/../../helpers/api.sh"
 NORMALIZE="${GROUP_DIR}/../../fixtures/audit-site/normalize-report.jq"
 GOLDEN="${GROUP_DIR}/../../fixtures/audit-site/golden-report.json"
 RUN_BODY="{\"sitemapUrl\":\"${FIXTURES_URL}/audit-site/sitemap.xml\",\"options\":{\"screenshot\":false},\"concurrency\":1}"
+ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-/results}"
+ARTIFACT_PREFIX="${ARTIFACT_DIR}/audit-repro-${PINCHTAB_E2E_BROWSER:-chrome}"
 
 # ─────────────────────────────────────────────────────────────────
 start_test "two identical audit runs normalize byte-identical"
@@ -22,6 +24,11 @@ RUN_ONE=$(echo "$RESULT" | jq -S -f "$NORMALIZE")
 pt_post /audit -d "$RUN_BODY"
 assert_ok "second audit run"
 RUN_TWO=$(echo "$RESULT" | jq -S -f "$NORMALIZE")
+
+# Matrix runs previously overwrote the next provider's report, losing the one
+# normalized payload needed to diagnose a provider-only golden mismatch.
+mkdir -p "$ARTIFACT_DIR"
+printf '%s\n' "$RUN_ONE" > "${ARTIFACT_PREFIX}-live.json"
 
 if [ -n "$RUN_ONE" ] && [ "$RUN_ONE" = "$RUN_TWO" ]; then
   pass_assert "normalized reports are byte-identical"
@@ -37,11 +44,28 @@ start_test "normalized report matches the checked-in golden"
 
 if [ ! -f "$GOLDEN" ]; then
   fail_assert "golden report exists at $GOLDEN"
-elif diff -q <(echo "$RUN_ONE") "$GOLDEN" >/dev/null 2>&1; then
-  pass_assert "live report matches golden-report.json"
 else
-  fail_assert "live report diverges from golden-report.json (schema/content drift; see normalize-report.jq header for how to regenerate)"
-  diff <(echo "$RUN_ONE") "$GOLDEN" | head -30
+  # Cloak omits CapRuntimeConsoleEvents: to avoid the Runtime.enable
+  # bot-detection vector it never enables the Runtime domain, and the
+  # Console-domain fallback it uses instead cannot observe uncaught page errors
+  # (those are delivered only via Runtime.exceptionThrown). So on cloak
+  # browser.jsErrors is structurally always 0 and legitimately diverges from the
+  # chrome-generated golden. Drop that field from both sides for cloak only;
+  # every other provider still asserts the count exactly.
+  GOLDEN_CMP=$(cat "$GOLDEN")
+  LIVE_CMP="$RUN_ONE"
+  if [ "${PINCHTAB_E2E_BROWSER:-chrome}" = "cloak" ]; then
+    LIVE_CMP=$(echo "$RUN_ONE" | jq -S 'del(.pages[].browser.jsErrors?)')
+    GOLDEN_CMP=$(echo "$GOLDEN_CMP" | jq -S 'del(.pages[].browser.jsErrors?)')
+  fi
+
+  if diff -q <(echo "$LIVE_CMP") <(echo "$GOLDEN_CMP") >/dev/null 2>&1; then
+    pass_assert "live report matches golden-report.json"
+  else
+    fail_assert "live report diverges from golden-report.json (schema/content drift; see normalize-report.jq header for how to regenerate)"
+    diff -u <(echo "$GOLDEN_CMP") <(echo "$LIVE_CMP") > "${ARTIFACT_PREFIX}-golden.diff" || true
+    head -30 "${ARTIFACT_PREFIX}-golden.diff"
+  fi
 fi
 
 end_test

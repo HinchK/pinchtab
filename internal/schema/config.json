@@ -169,6 +169,10 @@
         "stateDir": {
           "type": "string"
         },
+        "logLevel": {
+          "type": "string",
+          "description": "Minimum log level for the server: debug, info (default), warn or error. Matching is case-insensitive, so no enum here — safelog.ParseLevel is the single authority and reports the accepted values. A daemon-installed or auto-started server passes no flags, so this key is the only way to set the level there."
+        },
         "engine": {
           "type": "string",
           "enum": [
@@ -440,6 +444,12 @@
         "defaultProfile": {
           "type": "string",
           "default": "default"
+        },
+        "quarantineKeep": {
+          "type": "integer",
+          "minimum": 0,
+          "default": 1,
+          "description": "How many quarantined copies of one profile to keep when a new quarantine is created, newest first. 0 keeps every one."
         }
       }
     },
@@ -766,6 +776,9 @@
           "$ref": "#/definitions/nonNegativeNullableInteger"
         },
         "workerCount": {
+          "$ref": "#/definitions/nonNegativeNullableInteger"
+        },
+        "maxBatchSize": {
           "$ref": "#/definitions/nonNegativeNullableInteger"
         }
       }

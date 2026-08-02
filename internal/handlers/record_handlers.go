@@ -10,20 +10,16 @@ import (
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
+	"github.com/pinchtab/pinchtab/internal/fileout"
 	"github.com/pinchtab/pinchtab/internal/httpx"
+	"github.com/pinchtab/pinchtab/internal/routes"
 	"github.com/pinchtab/pinchtab/internal/session"
 )
 
 // HandleRecordStart starts a recording session for a tab.
 func (h *Handlers) HandleRecordStart(w http.ResponseWriter, r *http.Request) {
 	if !h.Config.AllowScreencast {
-		httpx.ErrorCode(w, 403, "recording_disabled",
-			httpx.DisabledEndpointMessage("recording", "security.allowScreencast"), false,
-			map[string]any{
-				"setting": "security.allowScreencast",
-				"hint":    "Recording requires screen capture to be enabled.",
-				"remedy":  "pinchtab config set security.allowScreencast true",
-			})
+		h.writeCapabilityDisabled(w, routes.CapScreencast)
 		return
 	}
 
@@ -108,6 +104,11 @@ func (h *Handlers) HandleRecordStart(w http.ResponseWriter, r *http.Request) {
 // and the endpoint returns the path immediately. If discard is true, frames are
 // dropped without encoding. Use /record/status to check encoding progress.
 func (h *Handlers) HandleRecordStop(w http.ResponseWriter, r *http.Request) {
+	if !h.Config.AllowScreencast {
+		h.writeCapabilityDisabled(w, routes.CapScreencast)
+		return
+	}
+
 	var req struct {
 		Discard bool `json:"discard"`
 	}
@@ -126,6 +127,13 @@ func (h *Handlers) HandleRecordStop(w http.ResponseWriter, r *http.Request) {
 	owner := authenticatedOwner(r)
 	result, err := h.recorder.stop(owner, outputPath)
 	if err != nil {
+		// The path is RESERVED before stop, because stop needs it. Reserving now
+		// creates a real file, so a refused stop — no active recording, a foreign
+		// owner — has to give the name back or every rejected request leaves a
+		// 0-byte recording behind.
+		if outputPath != "" {
+			_ = os.Remove(outputPath)
+		}
 		httpx.ErrorCode(w, 400, "recording_error", err.Error(), false, nil)
 		return
 	}
@@ -150,21 +158,28 @@ func (h *Handlers) HandleRecordStop(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// recordingsOutputPath returns a unique output path inside the server-controlled
-// recordings directory. The caller never chooses the path — only the server does.
+// recordingsOutputPath returns a reserved output path inside the server-controlled
+// recordings directory. The caller never chooses the path — only the server does. The
+// encoder writes over the 0-byte placeholder fileout leaves behind.
 func (h *Handlers) recordingsOutputPath() (string, error) {
 	dir := filepath.Join(h.Config.StateDir, "recordings")
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("create recordings dir: %w", err)
 	}
-	format := h.recorder.activeFormat()
-	ext := "." + format
-	name := fmt.Sprintf("rec_%s%s", time.Now().Format("20060102_150405"), ext)
-	return filepath.Join(dir, name), nil
+	base := "rec_" + time.Now().Format("20060102_150405")
+	path, err := fileout.ReserveUnique(dir, base, "."+h.recorder.activeFormat())
+	if err != nil {
+		return "", fmt.Errorf("reserve recording path: %w", err)
+	}
+	return path, nil
 }
 
 // HandleRecordStatus returns the current recording status.
 func (h *Handlers) HandleRecordStatus(w http.ResponseWriter, r *http.Request) {
+	if !h.Config.AllowScreencast {
+		h.writeCapabilityDisabled(w, routes.CapScreencast)
+		return
+	}
 	httpx.JSON(w, 200, h.recorder.status())
 }
 

@@ -446,8 +446,8 @@ start_test "pinchtab reload --snap"
 pt_ok nav "${FIXTURES_URL}/form.html"
 pt_ok reload --snap
 
-# Output should contain OK and snapshot
-assert_output_contains "OK" "reload succeeded"
+# Reload prints the landed URL before the requested snapshot.
+assert_output_contains "form.html" "reload returned the landed URL"
 assert_output_contains "textbox" "snapshot contains form input"
 
 end_test

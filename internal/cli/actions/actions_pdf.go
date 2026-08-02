@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/cli"
@@ -72,7 +71,8 @@ func PDF(client *http.Client, base, token string, cmd *cobra.Command) {
 		params.Set("path", v)
 	}
 
-	if outFile == "" {
+	autoNamed := outFile == ""
+	if autoNamed {
 		outFile = fmt.Sprintf("page-%s.pdf", time.Now().Format("20060102-150405"))
 	}
 
@@ -85,8 +85,9 @@ func PDF(client *http.Client, base, token string, cmd *cobra.Command) {
 	if data == nil {
 		return
 	}
-	if err := os.WriteFile(outFile, data, 0600); err != nil {
+	saved, err := writeOutputFile(outFile, autoNamed, data)
+	if err != nil {
 		cli.Fatal("Write failed: %v", err)
 	}
-	fmt.Println(cli.StyleStdout(cli.SuccessStyle, fmt.Sprintf("Saved %s (%d bytes)", outFile, len(data))))
+	printSaved(saved, len(data))
 }

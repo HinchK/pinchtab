@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -16,8 +19,11 @@ import (
 	"github.com/pinchtab/pinchtab/internal/browsers"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/httpx"
+	"github.com/pinchtab/pinchtab/internal/remedy"
 	"github.com/pinchtab/pinchtab/internal/routes"
+	"github.com/pinchtab/pinchtab/internal/selector"
 	"github.com/pinchtab/pinchtab/internal/session"
+	"github.com/pinchtab/semantic/recovery"
 )
 
 func resolveOwner(r *http.Request, fallback string) string {
@@ -45,40 +51,6 @@ func (h *Handlers) enforceTabLease(tabID, owner string) error {
 		return fmt.Errorf("tab %s is locked by %s", tabID, lock.Owner)
 	}
 	return nil
-}
-
-func (h *Handlers) enforceTabNotPausedForHandoff(tabID string) error {
-	if tabID == "" {
-		return nil
-	}
-	ctrl, ok := h.handoffController()
-	if !ok {
-		return nil
-	}
-	state, exists := ctrl.TabHandoffState(tabID)
-	if !exists || state.Status != "paused_handoff" {
-		return nil
-	}
-	if state.Reason != "" {
-		return fmt.Errorf("tab %s is paused for human handoff (%s)", tabID, state.Reason)
-	}
-	return fmt.Errorf("tab %s is paused for human handoff", tabID)
-}
-
-// buildActionRoute assembles the route metadata recorded by the single, batch,
-// and macro action endpoints: a single-browser route plus one attempt reflecting
-// the handle decision, with the originally requested browser when provided.
-func buildActionRoute(resolvedBrowser, requestBrowser string, decision browsers.HandleDecision) *browserops.RouteMetadata {
-	route := browserops.SingleBrowserRoute(resolvedBrowser)
-	route.Attempts = append(route.Attempts, browserops.RouteAttempt{
-		Browser:  resolvedBrowser,
-		Accepted: decision.Decision == browsers.DecisionHandle,
-		Reason:   decision.Reason,
-	})
-	if requestBrowser != "" {
-		route.RequestedBrowser = requestBrowser
-	}
-	return route
 }
 
 // rejectMixedBrowsers returns the first action's browser as the request browser,
@@ -116,20 +88,90 @@ func rejectMultiStepSubmitClicks(w http.ResponseWriter, actions []bridge.ActionR
 	return true
 }
 
-// dialogAwareActionError shapes a per-action error message: it surfaces a blocking
-// dialog's own message, or a hint when a click timed out with a pending dialog,
-// otherwise the caller-supplied fallback.
-func (h *Handlers) dialogAwareActionError(err error, kind, tabID, fallback string) string {
+// A stale ref whose target submits a form is refused, and the only correct next move is to
+// re-read the page and click the ref that is actually there. `--submit` is the wrong advice
+// from this state — it answers 404 from the same staleness — so the remedy is the snapshot.
+const staleSubmitTargetHint = "The ref came from an older snapshot and now resolves to a control that submits a form. Nothing was dispatched. Take a fresh snapshot and click the ref it reports; do not retry this ref, and do not add --submit, which cannot resolve a stale ref either."
+
+var reSnapshot = remedy.Declare("pinchtab snap")
+
+func staleSubmitTargetDetails() map[string]any {
+	details := remedy.Details(staleSubmitTargetHint, reSnapshot.Remedy())
+	// The submit family reports dispatch state on every refusal, and this one is the
+	// reason the card exists: nothing was clicked.
+	details["dispatched"] = false
+	return details
+}
+
+// writeTargetNotFound is the one response for a target that cannot be resolved, whichever
+// path exhausted it. 404 rather than 500 because the request named something that is not
+// there; retryable is absent because an absent target stays absent. The recovery record
+// carries the matcher's score and threshold when there is one — diagnosis belongs in
+// details, never in the sentence a caller reads as the reason.
+func writeTargetNotFound(w http.ResponseWriter, err error, rr *recovery.RecoveryResult) {
+	details := map[string]any{"dispatched": false}
+	if rr != nil {
+		details["recovery"] = rr
+	}
+	httpx.ErrorCode(w, http.StatusNotFound, "ref_not_found", err.Error(), false, details)
+}
+
+// actionFailureIsRetryable answers the only question the flag promises: could repeating the
+// IDENTICAL request plausibly succeed. It used to be !submitClick, which says whether the
+// caller declared a submit and nothing about the failure, so every unresolvable ref and
+// every unsatisfiable body was advertised as worth retrying. A permanently unsatisfiable
+// failure never is, and a dispatch that may already have landed must not be repeated
+// whatever the error was.
+func actionFailureIsRetryable(err error, dispatchMayHaveLanded bool) bool {
+	if err == nil || dispatchMayHaveLanded {
+		return false
+	}
+	return !errors.Is(err, ErrTargetNotFound) && !errors.Is(err, bridge.ErrInvalidActionRequest)
+}
+
+const navigationChangedHint = "The action navigated the page, which the guard reports unless the request declares it: set waitNav true to wait for the navigation, or submit true when the click submits a form. From the CLI those are --wait-nav and --submit."
+
+// The ref stays a placeholder: this guard reports on an action it did not receive the ref
+// for — it is reached from the post-action navigation check, which sees only the error —
+// so there is no value here to interpolate. The alternative flag stays in the hint,
+// because a remedy names one command to run.
+var navigationChangedRemedy = remedy.Declare("pinchtab click <ref> --wait-nav")
+
+func navigationChangedDetails(err error) map[string]any {
+	details := remedy.Details(navigationChangedHint, navigationChangedRemedy.Remedy())
+	if url := navigatedToURL(err); url != "" {
+		details["url"] = url
+	}
+	return details
+}
+
+func navigatedToURL(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	idx := strings.LastIndex(message, " -> ")
+	if idx < 0 {
+		return ""
+	}
+	return strings.TrimSpace(message[idx+len(" -> "):])
+}
+
+func (h *Handlers) mapDialogBlockingError(err error, kind, tabID string) (string, *bridge.DialogState, bool) {
 	var dialogErr *bridge.ErrDialogBlocking
 	if errors.As(err, &dialogErr) {
-		return err.Error()
+		return err.Error(), &bridge.DialogState{Type: dialogErr.DialogType, Message: dialogErr.DialogMessage}, true
 	}
-	if isClickTimeoutWithPendingDialog(err, kind, tabID, h.Bridge) {
-		dm := h.Bridge.GetDialogManager()
-		if ds := dm.GetPending(tabID); ds != nil {
-			return fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q) — use --dialog-action accept|dismiss",
-				kind, ds.Type, ds.Message)
-		}
+	if isTimeoutWithPendingDialog(err, tabID, h.Bridge) {
+		dialog := pendingTabDialog(h.Bridge, tabID)
+		return fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q)", kind, dialog.Type, dialog.Message), dialog, true
+	}
+	return "", nil, false
+}
+
+func (h *Handlers) dialogAwareActionError(err error, kind, tabID, fallback string) string {
+	if message, _, ok := h.mapDialogBlockingError(err, kind, tabID); ok {
+		return message
 	}
 	return fallback
 }
@@ -176,10 +218,154 @@ func (h *Handlers) runResolvedActionStep(
 	return actionResult{Index: index, Success: true, Result: res}, nextCtx, nextTabID
 }
 
-func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
+// queryUndecodedActionFields maps each bridge.ActionRequest JSON key the GET form does not
+// decode to why. It is the OWNER of that fact: the GET branch refuses a request carrying one
+// of these, and the query/body parity guard excuses exactly these from comparison. A shift
+// click sent as ?modifiers=8 used to answer 200 for a plain click, so an undecoded field
+// recorded here but not enforced is a wrong action reported as success.
+var queryUndecodedActionFields = map[string]string{
+	"hasText":   "derived: the flag comes from the presence of text/value, so it is not a parameter of its own",
+	"hasToXY":   "derived: the flag comes from the presence of toX/toY",
+	"mode":      "the GET form cannot express it; a caller needing it must POST",
+	"frameW":    "the GET form cannot express it; a caller needing it must POST",
+	"frameH":    "the GET form cannot express it; a caller needing it must POST",
+	"modifiers": "the GET form cannot express it; a caller needing a key chord must POST",
+	"dragX":     "the GET form cannot express it; a caller needing a drag must POST",
+	"dragY":     "the GET form cannot express it; a caller needing a drag must POST",
+	"toNodeId":  "the GET form cannot express it; a caller needing a drag destination by node must POST",
+	"waitNav":   "the GET form cannot express it; a caller needing to wait for navigation must POST",
+	"fast":      "the GET form cannot express it; a caller needing it must POST",
+	"humanize":  "the GET form cannot express it; a caller needing humanized input must POST",
+}
+
+// unsupportedQueryFields names every recorded field the query supplies, sorted, so the
+// refusal is the same message on every run rather than whichever key the map yielded first.
+// Presence follows the decoder's own rule — a non-empty value — so ?humanize= is absent
+// rather than an unsupported request.
+func unsupportedQueryFields(q url.Values) []string {
+	var offenders []string
+	for key := range queryUndecodedActionFields {
+		if strings.TrimSpace(q.Get(key)) != "" {
+			offenders = append(offenders, key)
+		}
+	}
+	sort.Strings(offenders)
+	return offenders
+}
+
+// getOnlyActionQueryKeys are the parameters HandleAction reads from the query ITSELF, which
+// bridge.ActionRequest therefore does not declare. They exist because the GET form has no JSON
+// body to carry them, so deriving the allow-list from the request type alone refuses a
+// parameter this handler implements — the refusal would name the key as "not a parameter of
+// /action" while the code reading it sits in the same function.
+//
+// Each entry records why it is GET-only. TestEveryQueryParameterActionReadsIsAllowed is the
+// guard that keeps this in step: it walks every r.URL.Query().Get literal in actions.go and
+// requires the key to be allowed, so the next GET-only parameter cannot be silently refused.
+var getOnlyActionQueryKeys = map[string]string{
+	"timeout": "per-request action timeout in seconds; the GET form has no body to carry it, so HandleAction reads it from the query",
+}
+
+// actionQueryKeys is the complete set of meaningful /action query parameters, derived from its
+// TWO owners rather than listed by hand: every field bridge.ActionRequest declares, plus what
+// the handler reads from the query itself. A field added to either is accepted with no edit
+// here, and anything else is a typo or a stray parameter the GET form would drop without a word.
+var actionQueryKeys = actionRequestJSONKeys()
+
+func actionRequestJSONKeys() map[string]struct{} {
+	keys := make(map[string]struct{})
+	for _, field := range reflect.VisibleFields(reflect.TypeOf(bridge.ActionRequest{})) {
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			keys[name] = struct{}{}
+		}
+	}
+	for key := range getOnlyActionQueryKeys {
+		keys[key] = struct{}{}
+	}
+	return keys
+}
+
+// unknownQueryFields names every supplied parameter the request type does not declare, sorted
+// so the refusal reads the same on every run. Presence follows the decoder's own rule — a
+// non-empty value — so ?_= is absent rather than an unknown request.
+func unknownQueryFields(q url.Values) []string {
+	var unknown []string
+	for key := range q {
+		if _, known := actionQueryKeys[key]; known {
+			continue
+		}
+		if strings.TrimSpace(q.Get(key)) == "" {
+			continue
+		}
+		unknown = append(unknown, key)
+	}
+	sort.Strings(unknown)
+	return unknown
+}
+
+func unknownQueryFieldsError(unknown []string) error {
+	named := make([]string, 0, len(unknown))
+	for _, key := range unknown {
+		if near := nearestActionQueryKey(key); near != "" {
+			named = append(named, fmt.Sprintf("%s (did you mean %s?)", key, near))
+			continue
+		}
+		named = append(named, key)
+	}
+	return fmt.Errorf("%s: not a parameter of /action and would be silently dropped; check the spelling or send the request as POST /action with a JSON body", strings.Join(named, ", "))
+}
+
+func nearestActionQueryKey(key string) string {
+	if len(key) < 4 {
+		return ""
+	}
+	best := ""
+	bestDistance := 0
+	for candidate := range actionQueryKeys {
+		distance := editDistance(strings.ToLower(key), strings.ToLower(candidate))
+		if best == "" || distance < bestDistance || (distance == bestDistance && candidate < best) {
+			best, bestDistance = candidate, distance
+		}
+	}
+	if bestDistance > 2 {
+		return ""
+	}
+	return best
+}
+
+func editDistance(a, b string) int {
+	previous := make([]int, len(b)+1)
+	current := make([]int, len(b)+1)
+	for j := range previous {
+		previous[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		current[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			current[j] = min(previous[j]+1, min(current[j-1]+1, previous[j-1]+cost))
+		}
+		previous, current = current, previous
+	}
+	return previous[len(b)]
+}
+
+func decodeActionRequest(w http.ResponseWriter, r *http.Request) (bridge.ActionRequest, bool) {
 	var req bridge.ActionRequest
 	if r.Method == http.MethodGet {
 		q := r.URL.Query()
+		if offenders := unsupportedQueryFields(q); len(offenders) > 0 {
+			httpx.Error(w, 400, fmt.Errorf("%s cannot be sent as query parameters and would be silently dropped; send this as POST /action with a JSON body", strings.Join(offenders, ", ")))
+			return bridge.ActionRequest{}, false
+		}
+		if unknown := unknownQueryFields(q); len(unknown) > 0 {
+			httpx.Error(w, 400, unknownQueryFieldsError(unknown))
+			return bridge.ActionRequest{}, false
+		}
 		d := newQueryDecoder(q)
 		req.Kind = bridge.CanonicalActionKind(q.Get("kind"))
 		req.TabID = q.Get("tabId")
@@ -188,6 +374,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		req.Selector = q.Get("selector")
 		req.Text = q.Get("text")
 		req.Value = q.Get("value")
+		req.HasText = d.present("text") || d.present("value")
 		req.Key = q.Get("key")
 		req.DialogAction = strings.ToLower(strings.TrimSpace(q.Get("dialogAction")))
 		req.DialogText = q.Get("dialogText")
@@ -203,6 +390,15 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		var hasXYParam bool
 		d.Bool("hasXY", &hasXYParam)
 		req.HasXY = req.HasXY || hasXYParam
+		req.ToSelector = q.Get("toSelector")
+		if d.present("toX") {
+			d.Float("toX", &req.ToX)
+			req.HasToXY = true
+		}
+		if d.present("toY") {
+			d.Float("toY", &req.ToY)
+			req.HasToXY = true
+		}
 		req.Button = q.Get("button")
 		d.Bool("dismissBanners", &req.DismissBanners)
 		d.Bool("dismissKnownInterstitials", &req.DismissKnownInterstitials)
@@ -212,20 +408,69 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			d.Bool("autoSwitch", &autoSwitch)
 			req.AutoSwitch = &autoSwitch
 		}
-		d.Int("deltaX", &req.DeltaX)
-		d.Int("deltaY", &req.DeltaY)
+		if d.present("scrollX") {
+			d.Int("scrollX", &req.ScrollX)
+			req.HasScroll = true
+		}
+		if d.present("scrollY") {
+			d.Int("scrollY", &req.ScrollY)
+			req.HasScroll = true
+		}
+		var hasScrollParam bool
+		d.Bool("hasScroll", &hasScrollParam)
+		req.HasScroll = req.HasScroll || hasScrollParam
+		if d.present("deltaX") {
+			d.Int("deltaX", &req.DeltaX)
+			req.HasDelta = true
+		}
+		if d.present("deltaY") {
+			d.Int("deltaY", &req.DeltaY)
+			req.HasDelta = true
+		}
+		var hasDeltaParam bool
+		d.Bool("hasDelta", &hasDeltaParam)
+		req.HasDelta = req.HasDelta || hasDeltaParam
 		req.Browser = q.Get("browser")
+		req.Vocab = q.Get("vocab")
 		if err := d.Err(); err != nil {
 			httpx.Error(w, 400, err)
-			return
+			return bridge.ActionRequest{}, false
 		}
-	} else {
-		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-			httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
-			return
-		}
-		req.Kind = bridge.CanonicalActionKind(req.Kind)
-		req.DialogAction = strings.ToLower(strings.TrimSpace(req.DialogAction))
+		return req, true
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
+		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
+		return bridge.ActionRequest{}, false
+	}
+	req.Kind = bridge.CanonicalActionKind(req.Kind)
+	req.DialogAction = strings.ToLower(strings.TrimSpace(req.DialogAction))
+	return req, true
+}
+
+const vocabHeader = "X-PinchTab-Vocab"
+
+const vocabSupersededCode = "vocab_superseded"
+
+func actionTargetsRef(req bridge.ActionRequest) bool {
+	if req.NodeID != 0 {
+		return false
+	}
+	if strings.TrimSpace(req.Ref) != "" {
+		return true
+	}
+	return selector.Parse(req.Selector).Kind == selector.KindRef
+}
+
+func writeVocabSuperseded(w http.ResponseWriter, tabID string) {
+	httpx.ErrorCode(w, http.StatusConflict, vocabSupersededCode,
+		"ref vocabulary superseded: a newer snapshot renumbered this tab's refs, so a ref from the earlier snapshot no longer denotes the node it named — re-snapshot and use the refs from the latest response",
+		true, map[string]any{"tabId": tabID})
+}
+
+func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
+	req, ok := decodeActionRequest(w, r)
+	if !ok {
+		return
 	}
 
 	routing, ok := h.resolveBrowserForRequest(w, r, req.TabID, strings.TrimSpace(req.Browser), browsers.RequestIntent{
@@ -235,14 +480,11 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	requestBrowser := routing.RequestBrowser
 	resolvedBrowser := routing.Browser
-	handleDecision := routing.Decision
 	effectiveCfg := routing.EffectiveCfg
 
 	req.Browser = resolvedBrowser
 
-	// Single endpoint returns 400 for bad input, unlike batch which returns 200 with per-action errors.
 	if req.Kind == "" {
 		httpx.Error(w, 400, fmt.Errorf("missing required field 'kind'"))
 		return
@@ -253,6 +495,17 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := bridge.ValidateSubmitAction(req.Kind, req); err != nil {
 		httpx.ErrorCode(w, http.StatusBadRequest, "invalid_submit_action", err.Error(), false, nil)
+		return
+	}
+	// Here rather than only inside the bridge action: the ghost-chrome proxy answers
+	// fill from its static browser before the Chrome action runs, so a check living in
+	// actionFill alone would be bypassed for one provider.
+	if err := bridge.ValidateFillAction(req.Kind, req); err != nil {
+		httpx.ErrorCode(w, http.StatusBadRequest, "missing_fill_text", err.Error(), false, nil)
+		return
+	}
+	if err := bridge.ValidateButtonAction(req.Kind, req); err != nil {
+		httpx.ErrorCode(w, http.StatusBadRequest, "invalid_mouse_button", err.Error(), false, nil)
 		return
 	}
 	h.recordActionRequest(r, req)
@@ -287,17 +540,29 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			httpx.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
 			return
 		}
+		if h.refuseIfDialogBlocked(w, resolvedTabID) {
+			return
+		}
 		if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
 			return
 		}
-		if err := h.enforceTabNotPausedForHandoff(resolvedTabID); err != nil {
-			httpx.ErrorCode(w, 409, "tab_paused_handoff", err.Error(), false, h.handoffErrorDetails(resolvedTabID))
+		if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedTabID) {
 			return
 		}
 		defer h.armAutoCloseIfEnabled(resolvedTabID)
 	}
 	h.recordResolvedTab(r, resolvedTabID)
 	w.Header().Set(activity.HeaderPTTabID, resolvedTabID)
+
+	if req.Vocab == "" {
+		req.Vocab = r.Header.Get(vocabHeader)
+	}
+	if req.Vocab != "" && actionTargetsRef(req) {
+		if cache := h.Bridge.GetRefCache(resolvedTabID); cache != nil && cache.DomEpoch != "" && cache.DomEpoch != req.Vocab {
+			writeVocabSuperseded(w, resolvedTabID)
+			return
+		}
+	}
 
 	actionTimeout := effectiveCfg.ActionTimeout
 	if r.Method == http.MethodGet {
@@ -323,15 +588,35 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 
 	selectorResolution, err := h.resolveActionRequestSelector(tCtx, resolvedTabID, &req)
 	if err != nil {
-		httpx.Error(w, selectorResolution.httpStatus(), err)
+		h.errorWithCrashContext(w, selectorResolution.httpStatus(), err)
 		return
+	}
+	destinationResolution, err := h.resolveActionRequestDestination(tCtx, resolvedTabID, &req)
+	if err != nil {
+		h.errorWithCrashContext(w, destinationResolution.httpStatus(), err)
+		return
+	}
+	// Both ends of a drag come from one snapshot, so a stale destination gets the
+	// same refresh-and-recover the source does instead of an unconditional 404;
+	// only a destination that still cannot be found refuses, naming the
+	// destination. A destination that resolved is intent-cached like the source,
+	// so a later recovery refresh can descriptor-match it rather than trusting a
+	// positional ref against a new snapshot.
+	if destinationResolution.refMissing {
+		h.refreshRefCache(tCtx, resolvedTabID)
+		if err := h.refreshActionSecondaryTargets(tCtx, resolvedTabID, &req); err != nil {
+			writeTargetNotFound(w, err, nil)
+			return
+		}
+	} else if req.ToSelector != "" && req.ToNodeID != 0 && h.Recovery != nil {
+		if toSel := selector.Parse(req.ToSelector); toSel.Kind == selector.KindRef {
+			h.cacheActionIntent(resolvedTabID, bridge.ActionRequest{Ref: toSel.Value})
+		}
 	}
 	refMissing := selectorResolution.refMissing
 	submitClick := bridge.IsSubmitClick(req.Kind, req)
 	if submitClick && refMissing {
-		httpx.ErrorCode(w, http.StatusNotFound, "submit_target_not_found", fmt.Sprintf("ref %s not found - take a /snapshot first", req.Ref), false, map[string]any{
-			"dispatched": false,
-		})
+		httpx.ErrorCode(w, http.StatusNotFound, "submit_target_not_found", refNotFound(req.Ref).Error(), false, staleSubmitTargetDetails())
 		return
 	}
 	if submitClick && req.NodeID <= 0 {
@@ -341,18 +626,12 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache intent before execution so recovery can reconstruct the query.
-	// Only cache when the ref IS in the snapshot — otherwise we'd overwrite
-	// the richer /find-cached entry (which has the Query) with a blank one.
 	if req.Ref != "" && h.Recovery != nil && !refMissing {
 		h.cacheActionIntent(resolvedTabID, req)
 	}
 
-	// If ref was not in snapshot cache, attempt semantic recovery before
-	// returning 404. This handles the common case where a page reload
-	// cleared the snapshot (DeleteRefCache) but the intent is still cached.
-	if refMissing && (req.Ref == "" || h.Recovery == nil) {
-		httpx.Error(w, 404, fmt.Errorf("ref %s not found - take a /snapshot first", req.Ref))
+	if refMissing && h.Recovery == nil {
+		writeTargetNotFound(w, refNotFound(req.Ref), nil)
 		return
 	}
 
@@ -368,7 +647,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	result, actionBackend, recoveryResult, actionErr := h.executeActionResilient(tCtx, &req, effectiveCfg, resolvedTabID, refMissing)
-	submitTimeoutWithDialog := submitClick && isClickTimeoutWithPendingDialog(actionErr, req.Kind, resolvedTabID, h.Bridge)
+	submitTimeoutWithDialog := submitClick && isTimeoutWithPendingDialog(actionErr, resolvedTabID, h.Bridge)
 	if submitClick && !submitTimeoutWithDialog && (actionErr == nil || errors.Is(actionErr, context.DeadlineExceeded)) {
 		actionTimedOut := errors.Is(actionErr, context.DeadlineExceeded)
 		dispatch := "acknowledged"
@@ -399,49 +678,52 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	if actionErr != nil {
 		if strings.HasPrefix(actionErr.Error(), "unknown action") {
 			kinds := h.Bridge.AvailableActions()
-			httpx.JSON(w, 400, map[string]string{
-				"error": fmt.Sprintf("%s - valid values: %s", actionErr.Error(), strings.Join(kinds, ", ")),
-			})
+			message := fmt.Sprintf("%s - valid values: %s", actionErr.Error(), strings.Join(kinds, ", "))
+			httpx.JSONError(w, 400, "unknown_action_kind", message, map[string]string{"error": message})
+			return
+		}
+		if errors.Is(actionErr, bridge.ErrInvalidActionRequest) {
+			httpx.ErrorCode(w, http.StatusBadRequest, "invalid_action_request", fmt.Sprintf("action %s: %v", req.Kind, actionErr), false, nil)
+			return
+		}
+		if errors.Is(actionErr, ErrStaleSubmitTarget) {
+			httpx.ErrorCode(w, http.StatusNotFound, "submit_target_not_found",
+				refNotFound(req.Ref).Error(), false, staleSubmitTargetDetails())
 			return
 		}
 		if errors.Is(actionErr, bridge.ErrUnexpectedNavigation) {
-			httpx.ErrorCode(w, 409, "navigation_changed", actionErr.Error(), false, nil)
+			details := navigationChangedDetails(actionErr)
+			// A navigation reported after a recovered click has to say WHICH element was
+			// clicked: the caller named a ref that no longer resolved, so the dispatch went
+			// to whatever recovery matched. Without this the 409 discloses the navigation
+			// and hides the substitution.
+			if recoveryResult != nil {
+				details["recovery"] = recoveryResult
+			}
+			httpx.ErrorCode(w, 409, "navigation_changed", actionErr.Error(), false, details)
 			return
 		}
 		if browserops.IsIDPIBlocked(actionErr) {
 			httpx.ErrorCode(w, http.StatusForbidden, "idpi_blocked", actionErr.Error(), false, nil)
 			return
 		}
-		var dialogErr *bridge.ErrDialogBlocking
-		if errors.As(actionErr, &dialogErr) {
-			httpx.ErrorCode(w, 500, "dialog_blocking", actionErr.Error(), false, map[string]any{
-				"suggestion":     "use --dialog-action accept or --dialog-action dismiss",
-				"dialog_type":    dialogErr.DialogType,
-				"dialog_message": dialogErr.DialogMessage,
-			})
+		if message, dialog, ok := h.mapDialogBlockingError(actionErr, req.Kind, resolvedTabID); ok {
+			writeDialogBlocked(w, resolvedTabID, dialog, message)
 			return
 		}
-		if isClickTimeoutWithPendingDialog(actionErr, req.Kind, resolvedTabID, h.Bridge) {
-			dm := h.Bridge.GetDialogManager()
-			dialogState := dm.GetPending(resolvedTabID)
-			msg := fmt.Sprintf("action %s timed out; a JavaScript dialog is blocking (%s: %q)",
-				req.Kind, dialogState.Type, dialogState.Message)
-			httpx.ErrorCode(w, 500, "dialog_blocking", msg, false, map[string]any{
-				"suggestion":     "use --dialog-action accept or --dialog-action dismiss",
-				"dialog_type":    dialogState.Type,
-				"dialog_message": dialogState.Message,
-			})
+		if errors.Is(actionErr, ErrTargetNotFound) {
+			writeTargetNotFound(w, actionErr, recoveryResult)
 			return
 		}
-		retryable := !submitClick
+		dispatchMayHaveLanded := submitClick
 		var details map[string]any
-		if submitClick {
+		if dispatchMayHaveLanded {
 			details = map[string]any{
 				"dispatch":   "unconfirmed",
 				"doNotRetry": true,
 			}
 		}
-		httpx.ErrorCode(w, 500, "action_failed", fmt.Sprintf("action %s: %v", req.Kind, actionErr), retryable, details)
+		h.errorCodeWithCrashContext(w, 500, "action_failed", fmt.Sprintf("action %s: %v", req.Kind, actionErr), actionFailureIsRetryable(actionErr, dispatchMayHaveLanded), details)
 		return
 	}
 
@@ -450,22 +732,16 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if actionBackend != "static" {
 		h.maybeAutoSolve(tCtx, resolvedTabID, autoSolverTriggerAction)
-		// Banner dismissal only makes sense when the click triggered a
-		// navigation (waitNav settles us on a fresh page). Without waitNav we
-		// skip — the caller is interacting within the current document and
-		// any banner has either been dismissed already or is irrelevant.
 		if req.WaitNav && req.DismissBanners {
 			h.dismissBanners(tCtx, resolvedTabID, true)
 		}
 	}
-	// If the click opened (and auto-switched to) a new tab, point the
-	// request-scoped current tab at it so the next action lands there.
 	if switched := switchedTabFromActionResult(result); switched != "" {
 		h.setCurrentTabForRequest(r, switched)
 		markCreatedTab(w, switched)
 		h.recordResolvedTab(r, switched)
 	}
-	actionRoute := buildActionRoute(resolvedBrowser, requestBrowser, handleDecision)
+	actionRoute := routeMetadataFor(routing)
 	h.recordActivity(r, activity.Update{Route: actionRoute})
 	resp := map[string]any{"success": true, "result": result, "route": actionRoute}
 	if recoveryResult != nil {
@@ -516,8 +792,6 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 	if !ok {
 		return
 	}
-	resolvedBrowser := routing.Browser
-	handleDecision := routing.Decision
 	effectiveCfg := routing.EffectiveCfg
 
 	var ctx context.Context
@@ -565,7 +839,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 			return
 		}
 		if err := h.enforceTabNotPausedForHandoff(resolvedTabID); err != nil {
-			results = append(results, actionResult{Index: i, Success: false, Error: err.Error()})
+			results = append(results, h.handoffPausedActionResult(i, resolvedTabID, err))
 			if req.StopOnError {
 				break
 			}
@@ -608,7 +882,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 		}
 	}
 
-	batchRoute := buildActionRoute(resolvedBrowser, requestBrowser, handleDecision)
+	batchRoute := routeMetadataFor(routing)
 	h.writeMultiStepActionResult(w, r, ctx, resolvedTabID, results, len(req.Actions), batchRoute, nil)
 }
 
@@ -639,7 +913,7 @@ func (h *Handlers) runMultiStepActionTail(
 		cancel()
 		*results = append(*results, actionResult{
 			Index: index, Success: false,
-			Error: fmt.Sprintf("ref %s not found - take a /snapshot first", step.Ref),
+			Error: refNotFound(step.Ref).Error(),
 		})
 		return ctx, resolvedTabID, stopOnError
 	}
@@ -729,6 +1003,7 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	macroIntentBrowser := macroResolvedBrowser
 	macroHandleDecision, err := checkBrowserCanHandle(macroResolvedBrowser, browsers.RequestIntent{
 		Shape:         browsers.ShapeInteraction,
 		StateChanging: true,
@@ -784,7 +1059,7 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := h.enforceTabNotPausedForHandoff(resolvedTabID); err != nil {
-			results = append(results, actionResult{Index: i, Success: false, Error: err.Error()})
+			results = append(results, h.handoffPausedActionResult(i, resolvedTabID, err))
 			if req.StopOnError {
 				break
 			}
@@ -815,6 +1090,12 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	macroRoute := buildActionRoute(macroResolvedBrowser, macroRequestBrowser, macroHandleDecision)
+	macroRoute := routeMetadataFor(browserRouting{
+		Browser:        macroResolvedBrowser,
+		IntentBrowser:  macroIntentBrowser,
+		RequestBrowser: macroRequestBrowser,
+		EffectiveCfg:   macroEffectiveCfg,
+		Decision:       macroHandleDecision,
+	})
 	h.writeMultiStepActionResult(w, r, ctx, resolvedTabID, results, len(req.Steps), macroRoute, map[string]any{"kind": "macro"})
 }

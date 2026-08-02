@@ -6,12 +6,12 @@
 
 ## Summary
 
-**Summary score: 85/100**
+**Mean accessibility score: 85/100**
 
-| Page | Score | Load | Broken assets | Console errors | Status |
-|---|---|---|---|---|---|
-| Audit Fixture Site | 70 | 200 ms | 2 | 1 | ok |
-| http://fixtures/audit-site/down.html | 0 | - | 0 | 0 | error: navigation failed: net::ERR_CONNECTION_REFUSED |
+| Page | Score | Load | Broken assets | Console errors | Uncaught JS errors | Status |
+|---|---|---|---|---|---|---|
+| Audit Fixture Site | 70 | 200 ms | 2 | 1 | 1 | 1 uncaught JS error(s) |
+| http://fixtures/audit-site/down.html | 0 | - | 0 | 0 | 0 | error: navigation failed: net::ERR_CONNECTION_REFUSED |
 
 ## SEO & Metadata
 
@@ -44,6 +44,7 @@
 
 ### Audit Fixture Site
 
+- `uncaught` Uncaught: ReferenceError: undefinedFn is not defined
 - `error` boom
 - `warning` careful
 
@@ -66,8 +67,9 @@
 
 1. Serve the site over https.
 2. Fix 2 broken asset reference(s) — see Broken Assets.
-3. Investigate 1 console error(s) — see Console & JS Errors.
-4. Improve accessibility on 1 page(s) scoring below 100 — see Usability Issues.
-5. Address 1 security finding(s) — see Security Findings.
-6. Re-check 1 page(s) that failed to audit.
+3. Fix 1 uncaught JS error(s) — each halts the script that raised it; see Console & JS Errors.
+4. Investigate 1 console error(s) — see Console & JS Errors.
+5. Improve accessibility on 1 page(s) scoring below 100 — see Usability Issues.
+6. Address 1 security finding(s) — see Security Findings.
+7. Re-check 1 page(s) that failed to audit.
 

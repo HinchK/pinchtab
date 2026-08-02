@@ -38,6 +38,16 @@ var profilesCmd = &cobra.Command{
 	},
 }
 
+var profilesPruneCmd = &cobra.Command{
+	Use:   "prune",
+	Short: "Reclaim disk from quarantined profiles (lists only unless --confirm)",
+	Run: func(cmd *cobra.Command, args []string) {
+		runCLI(func(rt cliRuntime) {
+			browseractions.ProfilesPrune(rt.client, rt.base, rt.token, cmd)
+		})
+	},
+}
+
 var activityCmd = &cobra.Command{
 	Use:   "activity",
 	Short: "List recorded activity events",

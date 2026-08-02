@@ -5,6 +5,7 @@
 package session
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -261,7 +262,7 @@ func (s *Store) authenticate(token string, touch bool) (*Session, bool) {
 			sess.LastSeenAt = now
 			job, persist = s.maybeSnapshotTouchLocked(now)
 		}
-		match = sess
+		match = cloneSessionLocked(sess)
 		ok = true
 	}()
 
@@ -307,9 +308,16 @@ func (s *Store) Touch(sessionID string) bool {
 	return true
 }
 
-// Get returns a defensive copy of a session by its public ID. Callers must not
-// be able to mutate store-owned state outside the store lock, so the Grants
-// slice is cloned rather than aliased.
+// cloneSessionLocked returns a copy no caller can use to mutate store-owned
+// state outside the store lock: the Grants slice is cloned rather than aliased.
+// Caller must hold s.mu.
+func cloneSessionLocked(sess *Session) *Session {
+	cp := *sess
+	cp.Grants = append([]string(nil), sess.Grants...)
+	return &cp
+}
+
+// Get returns a defensive copy of a session by its public ID.
 func (s *Store) Get(sessionID string) (*Session, bool) {
 	if s == nil {
 		return nil, false
@@ -320,13 +328,10 @@ func (s *Store) Get(sessionID string) (*Session, bool) {
 	if !ok {
 		return nil, false
 	}
-	cp := *sess
-	cp.Grants = append([]string(nil), sess.Grants...)
-	return &cp, true
+	return cloneSessionLocked(sess), true
 }
 
-// List returns defensive copies of all sessions. Each element's Grants slice is
-// cloned so callers cannot mutate store-owned state through the returned values.
+// List returns defensive copies of all sessions.
 func (s *Store) List() []Session {
 	if s == nil {
 		return nil
@@ -336,9 +341,7 @@ func (s *Store) List() []Session {
 
 	out := make([]Session, 0, len(s.sessions))
 	for _, sess := range s.sessions {
-		cp := *sess
-		cp.Grants = append([]string(nil), sess.Grants...)
-		out = append(out, cp)
+		out = append(out, *cloneSessionLocked(sess))
 	}
 	return out
 }
@@ -414,11 +417,59 @@ func (s *Store) UpdateConfig(cfg Config) {
 	s.dispatchLifecycle(events)
 }
 
+// MaintenanceInterval is how often RunMaintenance sweeps expired sessions.
+const MaintenanceInterval = 5 * time.Minute
+
+// PruneExpired drops revoked and expired sessions, persists the result, and
+// dispatches the resulting lifecycle events so downstream bindings are cleared.
+func (s *Store) PruneExpired() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	events := s.pruneExpiredLocked()
+	var (
+		job     snapshotJob
+		persist bool
+	)
+	if len(events) > 0 {
+		job, persist = s.snapshotLocked()
+	}
+	s.mu.Unlock()
+	if persist {
+		s.writeSnapshot(job)
+	}
+	s.dispatchLifecycle(events)
+}
+
+// RunMaintenance sweeps expired sessions until ctx is done. Expiry is otherwise
+// only noticed when a session's own token is presented again, so a session that
+// is simply abandoned — the usual end of an agent run — is never detected, and
+// it plus any downstream binding keyed on its id survive for the life of the
+// process.
+func (s *Store) RunMaintenance(ctx context.Context) {
+	if s == nil {
+		return
+	}
+	t := time.NewTicker(MaintenanceInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			s.PruneExpired()
+		}
+	}
+}
+
 // Enabled reports whether session auth is enabled.
 func (s *Store) Enabled() bool {
 	if s == nil {
 		return false
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.cfg.Enabled
 }
 
@@ -427,6 +478,8 @@ func (s *Store) Mode() string {
 	if s == nil {
 		return "off"
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.cfg.Mode
 }
 
@@ -563,6 +616,7 @@ func (s *Store) loadPersisted() {
 type snapshotJob struct {
 	snapshot persistedStore
 	seq      uint64
+	path     string
 }
 
 // snapshotLocked builds a self-contained value-copy snapshot of every session
@@ -580,7 +634,7 @@ func (s *Store) snapshotLocked() (snapshotJob, bool) {
 	for _, sess := range s.sessions {
 		snapshot.Sessions = append(snapshot.Sessions, sess.toPersisted())
 	}
-	return snapshotJob{snapshot: snapshot, seq: s.saveSeq}, true
+	return snapshotJob{snapshot: snapshot, seq: s.saveSeq, path: s.cfg.PersistPath}, true
 }
 
 // maybeSnapshotTouchLocked builds a snapshot for a LastSeen-only update at most
@@ -599,6 +653,9 @@ func (s *Store) maybeSnapshotTouchLocked(now time.Time) (snapshotJob, bool) {
 // serialize on saveMu; a snapshot older than one already written is skipped so a
 // stale snapshot can never clobber a fresher one.
 func (s *Store) writeSnapshot(job snapshotJob) {
+	if job.path == "" {
+		return
+	}
 	s.saveMu.Lock()
 	defer s.saveMu.Unlock()
 	if job.seq <= s.writtenSeq {
@@ -610,31 +667,30 @@ func (s *Store) writeSnapshot(job snapshotJob) {
 	if err != nil {
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(s.cfg.PersistPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(job.path), 0755); err != nil {
 		return
 	}
-	// Atomic write: temp file + rename
-	tmpPath := s.cfg.PersistPath + ".tmp"
+	tmpPath := job.path + ".tmp"
 	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
 		return
 	}
-	_ = os.Rename(tmpPath, s.cfg.PersistPath)
+	_ = os.Rename(tmpPath, job.path)
 }
 
 func generateSessionID() (string, error) {
-	buf := make([]byte, 8)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return "ses_" + hex.EncodeToString(buf), nil
+	return generatePrefixedHex(idRandomBytes)
 }
 
 func generateToken() (string, error) {
-	buf := make([]byte, 24)
+	return generatePrefixedHex(tokenRandomBytes)
+}
+
+func generatePrefixedHex(size int) (string, error) {
+	buf := make([]byte, size)
 	if _, err := rand.Read(buf); err != nil {
 		return "", err
 	}
-	return "ses_" + hex.EncodeToString(buf), nil
+	return IDPrefix + hex.EncodeToString(buf), nil
 }
 
 func hashToken(token string) [32]byte {

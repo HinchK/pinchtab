@@ -108,11 +108,11 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var flat []bridge.A11yNode
-	var refs map[string]int64
 	var url, title string
 	var scopeNodeID int64
 
 	frameScope := h.selectorFrameID(resolvedTabID)
+	scopeInfo := h.frameDisclosureFor(tCtx, resolvedTabID, frameScope)
 	ghostRoute := snapChromeRoute != nil && snapChromeRoute.UsedBrowser == config.BrowserGhostChrome
 	var modalOpen bool
 	if frameScope != "" || selector != "" || !ghostRoute {
@@ -125,7 +125,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			if !ghostRoute {
 				modalNodeID, modalOpen, modalErr = bridge.TopmostModalNodeID(tCtx, frameScope)
 				if modalErr != nil {
-					httpx.Error(w, selectorResolutionHTTPStatus(modalErr), fmt.Errorf("resolve topmost dialog: %w", modalErr))
+					httpx.Error(w, selectorResolutionHTTPStatus(modalErr), modalErr)
 					return
 				}
 			}
@@ -155,7 +155,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		flat, refs = bridge.BuildSnapshot(rawNodes, filter, maxDepth)
+		flat, _ = bridge.BuildSnapshot(rawNodes, filter, maxDepth)
 		_ = bridge.EnrichA11yNodesWithDOMMetadata(tCtx, flat)
 		url, _ = h.Bridge.CurrentURL(tCtx)
 		title, _ = h.Bridge.CurrentTitle(tCtx)
@@ -169,7 +169,6 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		flat = result.Nodes
-		refs = result.Refs
 		url = result.URL
 		title = result.Title
 		if result.Route != nil {
@@ -212,18 +211,15 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		flat, truncated = bridge.TruncateToTokens(flat, maxTokens, format)
 	}
 
+	prev := h.Bridge.GetRefCache(resolvedTabID)
 	var prevNodes []bridge.A11yNode
-	if doDiff {
-		if prev := h.Bridge.GetRefCache(resolvedTabID); prev != nil {
-			prevNodes = prev.Nodes
-		}
+	if doDiff && prev != nil {
+		prevNodes = prev.Nodes
 	}
 
-	h.Bridge.SetRefCache(resolvedTabID, &bridge.RefCache{
-		Refs:    refs,
-		Targets: bridge.RefTargetsFromNodes(flat),
-		Nodes:   flat,
-	})
+	cache := bridge.EpochRefs(prev, flat)
+	h.Bridge.SetRefCache(resolvedTabID, cache)
+	w.Header().Set(vocabHeader, cache.DomEpoch)
 
 	h.recordResolvedURL(r, url)
 
@@ -243,26 +239,26 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		timestamp := time.Now().Format("20060102-150405")
-		var filename string
+		timestamp := exportTimestamp()
+		var ext string
 		var content []byte
 
 		switch format {
 		case "text":
-			filename = fmt.Sprintf("snapshot-%s.txt", timestamp)
-			textContent := fmt.Sprintf("# %s\n# %s\n# %d nodes\n# %s\n\n%s",
-				title, url, len(flat), time.Now().Format(time.RFC3339),
+			ext = ".txt"
+			textContent := fmt.Sprintf("%s\n# %s\n\n%s",
+				snapshotTextHeader(title, url, len(flat), scopeInfo), time.Now().Format(time.RFC3339),
 				bridge.FormatSnapshotText(flat))
 			content = []byte(textContent)
 		case "yaml":
-			filename = fmt.Sprintf("snapshot-%s.yaml", timestamp)
-			data := map[string]any{
+			ext = ".yaml"
+			data := scopeInfo.attach(map[string]any{
 				"url":       url,
 				"title":     title,
 				"timestamp": time.Now().Format(time.RFC3339),
 				"nodes":     flat,
 				"count":     len(flat),
-			}
+			})
 			if doDiff && prevNodes != nil {
 				added, changed, removed := bridge.DiffSnapshot(prevNodes, flat)
 				data["diff"] = true
@@ -283,14 +279,14 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		default:
-			filename = fmt.Sprintf("snapshot-%s.json", timestamp)
-			data := map[string]any{
+			ext = ".json"
+			data := scopeInfo.attach(map[string]any{
 				"url":       url,
 				"title":     title,
 				"timestamp": time.Now().Format(time.RFC3339),
 				"nodes":     flat,
 				"count":     len(flat),
-			}
+			})
 			if doDiff && prevNodes != nil {
 				added, changed, removed := bridge.DiffSnapshot(prevNodes, flat)
 				data["diff"] = true
@@ -312,7 +308,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		filePath := filepath.Join(snapshotDir, filename)
+		var filePath string
 		if outputPath != "" {
 			safe, err := httpx.SafeCreatePath(h.Config.StateDir, outputPath)
 			if err != nil {
@@ -330,10 +326,19 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 				httpx.Error(w, 500, fmt.Errorf("create output dir: %w", err))
 				return
 			}
-		}
-		if err := os.WriteFile(filePath, content, 0600); err != nil {
-			httpx.Error(w, 500, fmt.Errorf("write snapshot: %w", err))
-			return
+			// A caller-named path keeps overwriting: this fix is about generated
+			// default names, and a caller who names a file is entitled to replace it.
+			if err := os.WriteFile(filePath, content, 0600); err != nil {
+				httpx.Error(w, 500, fmt.Errorf("write snapshot: %w", err))
+				return
+			}
+		} else {
+			var err error
+			filePath, err = writeUniqueFile(snapshotDir, "snapshot-"+timestamp, ext, content)
+			if err != nil {
+				httpx.Error(w, 500, fmt.Errorf("write snapshot: %w", err))
+				return
+			}
 		}
 
 		httpx.JSON(w, 200, map[string]any{
@@ -352,8 +357,8 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		if format == "compact" {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.WriteHeader(200)
-			_, _ = fmt.Fprintf(w, "# %s | %s | %d nodes | +%d ~%d -%d",
-				title, url, len(flat), len(added), len(changed), len(removed))
+			_, _ = fmt.Fprintf(w, "%s | +%d ~%d -%d",
+				snapshotCompactHeader(title, url, len(flat), scopeInfo), len(added), len(changed), len(removed))
 			if truncated {
 				_, _ = fmt.Fprintf(w, " (truncated to ~%d tokens)", maxTokens)
 			}
@@ -366,7 +371,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		httpx.JSON(w, 200, map[string]any{
+		httpx.JSON(w, 200, scopeInfo.attach(map[string]any{
 			"url":     url,
 			"title":   title,
 			"route":   snapChromeRoute,
@@ -380,7 +385,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 				"removed": len(removed),
 				"total":   len(flat),
 			},
-		})
+		}))
 		return
 	}
 
@@ -388,7 +393,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	case "compact":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(200)
-		_, _ = fmt.Fprintf(w, "# %s | %s | %d nodes", title, url, len(flat))
+		_, _ = fmt.Fprintf(w, "%s", snapshotCompactHeader(title, url, len(flat), scopeInfo))
 		if truncated {
 			_, _ = fmt.Fprintf(w, " (truncated to ~%d tokens)", maxTokens)
 		}
@@ -404,7 +409,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	case "text":
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(200)
-		_, _ = fmt.Fprintf(w, "# %s\n# %s\n# %d nodes\n", title, url, len(flat))
+		_, _ = fmt.Fprintf(w, "%s\n", snapshotTextHeader(title, url, len(flat), scopeInfo))
 		if scopedEmptyHint != "" {
 			_, _ = fmt.Fprintf(w, "# hint: %s\n", scopedEmptyHint)
 		}
@@ -415,12 +420,12 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		_, _ = w.Write([]byte(content))
 	case "yaml":
-		data := map[string]any{
+		data := scopeInfo.attach(map[string]any{
 			"url":   url,
 			"title": title,
 			"nodes": flat,
 			"count": len(flat),
-		}
+		})
 		if scopedEmptyHint != "" {
 			data["hint"] = scopedEmptyHint
 		}
@@ -433,13 +438,14 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 		_, _ = w.Write(yamlContent)
 	default:
-		resp := map[string]any{
-			"url":   url,
-			"title": title,
-			"route": snapChromeRoute,
-			"nodes": flat,
-			"count": len(flat),
-		}
+		resp := scopeInfo.attach(map[string]any{
+			"url":             url,
+			"title":           title,
+			"route":           snapChromeRoute,
+			"nodes":           flat,
+			"count":           len(flat),
+			"vocabularyToken": cache.DomEpoch,
+		})
 		if truncated {
 			resp["truncated"] = true
 			resp["maxTokens"] = maxTokens
@@ -456,6 +462,27 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.JSON(w, 200, resp)
 	}
+}
+
+// snapshotCompactHeader and snapshotTextHeader are the one place each header shape is built,
+// so the scope marker cannot reach three of the four sites that print one. The marker keeps
+// title and url meaning what they always meant — the TAB's document — and adds the fact that
+// the nodes below came from a frame inside it; re-pointing url at the frame would make one
+// field mean two things depending on invisible state, which is the defect being fixed.
+func snapshotCompactHeader(title, url string, count int, scope *frameDisclosure) string {
+	parts := []string{"# " + title, url}
+	if marker := scope.marker(); marker != "" {
+		parts = append(parts, marker)
+	}
+	return strings.Join(append(parts, fmt.Sprintf("%d nodes", count)), " | ")
+}
+
+func snapshotTextHeader(title, url string, count int, scope *frameDisclosure) string {
+	header := fmt.Sprintf("# %s\n# %s\n", title, url)
+	if marker := scope.marker(); marker != "" {
+		header += "# " + marker + "\n"
+	}
+	return header + fmt.Sprintf("# %d nodes", count)
 }
 
 func (h *Handlers) scopedSnapshotNodes(

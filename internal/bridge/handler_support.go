@@ -3,12 +3,14 @@ package bridge
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/fetch"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/chromedp"
+	"github.com/pinchtab/pinchtab/internal/stealth"
 )
 
 func (b *Bridge) EnableFetchWithAuth(ctx context.Context) error {
@@ -170,14 +172,31 @@ func (b *Bridge) GetRawCookies(ctx context.Context) ([]RawCookie, error) {
 	return result, nil
 }
 
+// SetUserAgentOverride refuses an empty UserAgent rather than forwarding it. An
+// empty string is not "leave it alone" at the CDP layer: Emulation.setUserAgentOverride
+// applies it, so the tab then advertises an empty navigator.userAgent and sends a
+// blank User-Agent header — louder than whatever it replaced, on the path whose
+// purpose is to be quieter. The guard lives here because this is an exported
+// BridgeAPI method: the implementation is what covers future callers and any other
+// implementation of the interface, not the one handler that calls it today.
+//
+// It does not make an empty override unreachable everywhere: internal/stealth's
+// launch path builds emulation.SetUserAgentOverride(persona.UserAgent) directly. That
+// path needs no guard for a checked reason — BuildPersona reduces the version first
+// and ReducedBrowserVersion falls back, so persona.UserAgent cannot be empty — so do
+// not add a second copy of this check there.
 func (b *Bridge) SetUserAgentOverride(ctx context.Context, params UserAgentOverrideParams) error {
+	if strings.TrimSpace(params.UserAgent) == "" {
+		return fmt.Errorf("user agent override must not be empty")
+	}
+	override := userAgentOverrideAction(params, b.browserVersion())
 	return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		p := emulation.SetUserAgentOverride(params.UserAgent).WithPlatform(params.Platform)
-		if params.AcceptLanguage != "" {
-			p = p.WithAcceptLanguage(params.AcceptLanguage)
-		}
-		return p.Do(ctx)
+		return override.Do(ctx)
 	}))
+}
+
+func (b *Bridge) browserVersion() string {
+	return stealth.ResolveBrowserVersion(b.Config)
 }
 
 func (b *Bridge) SetLocaleOverride(ctx context.Context, locale string) error {

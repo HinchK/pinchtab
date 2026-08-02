@@ -2,10 +2,14 @@ package config
 
 import (
 	"context"
+	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
+	"github.com/pinchtab/pinchtab/internal/autosolver"
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/browsers"
 	_ "github.com/pinchtab/pinchtab/internal/browsers/chrome"
 	_ "github.com/pinchtab/pinchtab/internal/browsers/cloak"
@@ -1109,5 +1113,197 @@ func TestValidationAcceptsRegisteredStubProvider(t *testing.T) {
 		if strings.Contains(e.Error(), "stub-target") && strings.Contains(e.Error(), "unknown") {
 			t.Fatalf("stub target provider should be accepted; got error: %s", e.Error())
 		}
+	}
+}
+
+// A misspelled solver name never failed at run time; it changed which solvers
+// ran, and in opposite directions depending on how many other names matched.
+func TestValidateFileConfig_UnknownSolverName(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		solvers []string
+		bad     string
+	}{
+		{
+			name:    "one typo beside a good name silently dropped that solver",
+			solvers: []string{"cloudlfare", "semantic"},
+			bad:     "cloudlfare",
+		},
+		{
+			name:    "every name a typo silently ran the whole registry",
+			solvers: []string{"cloudlfare"},
+			bad:     "cloudlfare",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := ValidateFileConfig(&FileConfig{
+				AutoSolver: AutoSolverFileConfig{Solvers: tc.solvers},
+			})
+
+			var msg string
+			for _, err := range errs {
+				if strings.Contains(err.Error(), tc.bad) {
+					msg = err.Error()
+				}
+			}
+			if msg == "" {
+				t.Fatalf("solvers %v produced no error naming %q: %v", tc.solvers, tc.bad, errs)
+			}
+			if !strings.Contains(msg, "autoSolver.solvers") {
+				t.Errorf("error does not name the field: %s", msg)
+			}
+			for _, known := range catalog.Names() {
+				if !strings.Contains(msg, known) {
+					t.Errorf("error does not list the valid name %q: %s", known, msg)
+				}
+			}
+		})
+	}
+}
+
+// Key-gated solvers are valid names whether or not their key is set — naming
+// one without its key is a different mistake, not an unknown solver.
+func TestValidateFileConfig_KnownSolverNamesAccepted(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		solvers []string
+	}{
+		{"full set", catalog.Names()},
+		{"subset", []string{"cloudflare", "semantic"}},
+		{"reordering", []string{"semantic", "jschallenge", "cloudflare"}},
+		{"key-gated without any key configured", catalog.KeyGated()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := ValidateFileConfig(&FileConfig{
+				AutoSolver: AutoSolverFileConfig{Solvers: tc.solvers},
+			})
+			for _, err := range errs {
+				if strings.Contains(err.Error(), "autoSolver.solvers") {
+					t.Errorf("solvers %v rejected: %s", tc.solvers, err)
+				}
+			}
+		})
+	}
+}
+
+// The shipped default must satisfy the validator it now passes through.
+func TestValidateFileConfig_DefaultSolversAreKnown(t *testing.T) {
+	for _, name := range autosolver.DefaultConfig().Solvers {
+		if !catalog.IsKnown(name) {
+			t.Errorf("default config names solver %q, which validation rejects (known: %v)", name, catalog.Names())
+		}
+	}
+}
+
+// A file that already carries the key keeps loading — validation errors are non-fatal
+// diagnostics here — but it no longer does so in silence: the same reason the setter gives
+// is reported, so the operator learns the value is dead rather than discovering it never
+// took effect.
+// A file that already carries the key keeps loading and still says so — but from the
+// non-gating list. It rode the gating list once, and because every caller that decides
+// whether a write may proceed gates on that list, one inert key aborted every later config
+// write. Which list the diagnostic lives in IS the behaviour here.
+func TestActivityStateDirIsAdvisoryRatherThanGating(t *testing.T) {
+	root := t.TempDir()
+	body := `{"server":{"stateDir":` + quoteJSON(root) + `},
+		"observability":{"activity":{"stateDir":"/tmp/elsewhere"}}}`
+	writeConfigForGet(t, body)
+
+	fc, _, err := LoadFileConfig()
+	if err != nil {
+		t.Fatalf("LoadFileConfig() error = %v; a file carrying the key must still load", err)
+	}
+
+	for _, e := range ValidateFileConfig(fc) {
+		if strings.Contains(e.Error(), "observability.activity.stateDir") {
+			t.Errorf("gating validation reported %q; an inert key must not gate a save", e)
+		}
+	}
+
+	advisories := FileConfigAdvisories(fc)
+	found := ""
+	for _, advisory := range advisories {
+		if strings.Contains(advisory, "observability.activity.stateDir") {
+			found = advisory
+		}
+	}
+	if found == "" {
+		t.Fatalf("advisories = %v, want one naming the ignored key: silently swallowing it is not the fix", advisories)
+	}
+	if found != ActivityStateDirAdvisory {
+		t.Errorf("advisory = %q, want %q", found, ActivityStateDirAdvisory)
+	}
+
+	cfg, diags, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v; the advisory must not make an existing config unloadable", err)
+	}
+	if !hasDiagnostic(diags, slog.LevelWarn, "config setting has no effect") {
+		t.Errorf("load diagnostics = %v, want the advisory reported at load", diags)
+	}
+	if want := filepath.Join(root, "activity"); cfg.ActivityLogDir() != want {
+		t.Errorf("ActivityLogDir() = %q, want the derived %q", cfg.ActivityLogDir(), want)
+	}
+}
+
+// The severity split has to hold in both directions: carrying the key in a file is an
+// advisory, and SETTING it is still an error on that write.
+func TestSettingTheIgnoredKeyIsStillRefusedWhileCarryingItIsNot(t *testing.T) {
+	fc := DefaultFileConfig()
+	if err := SetConfigValue(&fc, "observability.activity.stateDir", "/tmp/elsewhere"); err == nil {
+		t.Fatal("config set observability.activity.stateDir was accepted")
+	}
+
+	carrying := DefaultFileConfig()
+	carrying.Observability.Activity.StateDir = "/tmp/elsewhere"
+	if errs := ValidateFileConfig(&carrying); len(errs) > 0 {
+		t.Errorf("carrying the key produced gating errors %v, want none", errs)
+	}
+	if len(FileConfigAdvisories(&carrying)) != 1 {
+		t.Errorf("advisories = %v, want exactly the ignored-key notice", FileConfigAdvisories(&carrying))
+	}
+}
+
+// The guardrail on the tier: a genuinely invalid value must keep gating, or this fix trades
+// a blocked agent for a config that saves nonsense.
+func TestARealValidationErrorStillGates(t *testing.T) {
+	fc := DefaultFileConfig()
+	fc.Server.Port = "99999"
+	fc.Observability.Activity.StateDir = "/tmp/elsewhere"
+
+	errs := ValidateFileConfig(&fc)
+	if len(errs) == 0 {
+		t.Fatal("an out-of-range port produced no gating error")
+	}
+	for _, e := range errs {
+		if strings.Contains(e.Error(), "observability.activity.stateDir") {
+			t.Errorf("gating errors include the advisory %q", e)
+		}
+	}
+}
+
+// The advisory instructs nothing, which is the point of the rewording: the key is inert, so
+// there is nothing to do, and the text it replaced named an action no command performs. The
+// refusal DOES instruct, and what it names has to be a real, settable key.
+func TestTheIgnoredKeyTextsInstructOnlyWhatTheProductCanDo(t *testing.T) {
+	for _, banned := range []string{"remove", "delete", "unset"} {
+		if strings.Contains(strings.ToLower(ActivityStateDirAdvisory), banned) {
+			t.Errorf("advisory = %q, want no %q instruction: no shipped command does that to a key", ActivityStateDirAdvisory, banned)
+		}
+	}
+	for _, want := range []string{"observability.activity.stateDir", "ignored", "<server.stateDir>/activity"} {
+		if !strings.Contains(ActivityStateDirAdvisory, want) {
+			t.Errorf("advisory = %q, want it to carry %q", ActivityStateDirAdvisory, want)
+		}
+	}
+
+	if !strings.Contains(ActivityStateDirRefusal, "set server.stateDir") {
+		t.Fatalf("refusal = %q, want it to name the setting that moves the logs", ActivityStateDirRefusal)
+	}
+	// The remedy the refusal names must be a key `config set` accepts, or the text
+	// dead-ends the same way "remove the key" did.
+	fc := DefaultFileConfig()
+	if err := SetConfigValue(&fc, "server.stateDir", t.TempDir()); err != nil {
+		t.Errorf("the refusal names server.stateDir but config set rejects it: %v", err)
 	}
 }

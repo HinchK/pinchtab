@@ -9,9 +9,24 @@ import (
 // maxWaitMS caps wait/timeout durations for safety.
 const maxWaitMS = 30_000
 
+// handlerMap is the only place tool handlers are assembled, so the argument
+// checks cannot be bypassed by a caller — production or test — that builds its
+// own handler set.
 func handlerMap(c *Client) map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	raw := rawHandlerMap(c)
+	checked := make(map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error), len(raw))
+	for name, h := range raw {
+		checked[name] = withTypedArgChecks(name, h)
+	}
+	return checked
+}
+
+func rawHandlerMap(c *Client) map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error){
 		"pinchtab_navigate":   handleNavigate(c),
+		"pinchtab_back":       handleHistoryNav(c, "back"),
+		"pinchtab_forward":    handleHistoryNav(c, "forward"),
+		"pinchtab_reload":     handleHistoryNav(c, "reload"),
 		"pinchtab_snapshot":   handleSnapshot(c),
 		"pinchtab_frame":      handleFrame(c),
 		"pinchtab_screenshot": handleScreenshot(c),
@@ -41,6 +56,7 @@ func handlerMap(c *Client) map[string]func(context.Context, mcp.CallToolRequest)
 		"pinchtab_close_tab":       handleCloseTab(c),
 		"pinchtab_health":          handleHealth(c),
 		"pinchtab_cookies":         handleCookies(c),
+		"pinchtab_cookies_set":     handleCookiesSet(c),
 		"pinchtab_connect_profile": handleConnectProfile(c),
 
 		"pinchtab_wait":              handleWait(),

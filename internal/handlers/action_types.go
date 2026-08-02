@@ -14,6 +14,8 @@ type actionResult struct {
 	Success bool           `json:"success"`
 	Result  map[string]any `json:"result,omitempty"`
 	Error   string         `json:"error,omitempty"`
+	Code    string         `json:"code,omitempty"`
+	Details map[string]any `json:"details,omitempty"`
 }
 
 func countSuccessful(results []actionResult) int {

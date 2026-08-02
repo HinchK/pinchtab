@@ -43,6 +43,9 @@ func sampleReport() audit.AuditReport {
 					{Level: "warning", Message: "careful"},
 					{Level: "log", Message: "ignored in report"},
 				},
+				JSErrors: []audit.JSError{
+					{Message: "Uncaught: ReferenceError: undefinedFn is not defined\n    at http://fixtures/audit-site/index.html:5:64", URL: "http://fixtures/audit-site/index.html", Line: 4, Column: 63},
+				},
 				BrokenAssets: []audit.BrokenAsset{
 					{URL: "http://fixtures/audit-site/assets/missing.png", ResourceType: "image", Status: 404},
 					{URL: "http://fixtures/api", ResourceType: "xhr", Error: "net::ERR_FAILED"},

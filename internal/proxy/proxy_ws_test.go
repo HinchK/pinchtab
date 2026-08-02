@@ -21,10 +21,17 @@ func TestFilterProxyWSHeaders_StripsSensitiveHeaders(t *testing.T) {
 
 	filtered := filterProxyWSHeaders(headers)
 
-	for _, forbidden := range []string{"Authorization", "Cookie", "X-Forwarded-For", "X-Request-Id"} {
+	for _, forbidden := range []string{"Authorization", "Cookie", "X-Forwarded-For"} {
 		if got := filtered.Get(forbidden); got != "" {
 			t.Fatalf("%s should have been stripped, got %q", forbidden, got)
 		}
+	}
+
+	// A WebSocket hop is traced like any other, so the request id is forwarded here too,
+	// through the same owner the HTTP hop uses. Asserted beside the headers that stay
+	// stripped: the allow-list still refuses it, and the forward re-adds it after.
+	if got := filtered.Get("X-Request-Id"); got != "request-123" {
+		t.Fatalf("X-Request-Id = %q, want the outer id forwarded so the instance logs the same one", got)
 	}
 	for _, allowed := range []string{"Connection", "Upgrade", "Sec-WebSocket-Key", "Sec-WebSocket-Version", "Sec-WebSocket-Protocol", "Sec-WebSocket-Extensions"} {
 		if got := filtered.Get(allowed); got == "" {

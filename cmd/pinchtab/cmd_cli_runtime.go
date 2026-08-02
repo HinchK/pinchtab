@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -10,6 +12,7 @@ import (
 	"github.com/pinchtab/pinchtab/internal/activity"
 	"github.com/pinchtab/pinchtab/internal/browsers"
 	"github.com/pinchtab/pinchtab/internal/browsers/runtimekit"
+	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
 	"github.com/pinchtab/pinchtab/internal/cli/output"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/spf13/cobra"
@@ -72,8 +75,8 @@ func runCLIWithServerCheck(cfg *config.RuntimeConfig, command string, fn func(cl
 // preflightBrowserBinary fails fast with an actionable message when the active
 // provider has no usable browser, instead of letting the launch silently retry
 // and surface only the bridge's generic "instance not ready after 10s" timeout.
-// It mirrors the launch-time resolution in bridge/runtime.InitBrowser (explicit
-// browser.binary wins over discovery) so it can't diverge from what actually runs.
+// It shares runtimekit.ResolveEffectiveBrowser with bridge/runtime.InitBrowser,
+// so it cannot diverge from what actually runs.
 func preflightBrowserBinary(cfg *config.RuntimeConfig) error {
 	if cfg == nil || strings.TrimSpace(cfg.CDPAttachURL) != "" {
 		return nil // attaching to an external CDP endpoint; no local binary needed
@@ -101,10 +104,11 @@ func preflightBrowserBinary(cfg *config.RuntimeConfig) error {
 }
 
 func newCLIRuntime(cfg *config.RuntimeConfig) cliRuntime {
+	base := resolveCLIBase(cfg)
 	return cliRuntime{
 		client: newCLIHTTPClient(resolveCLIAgentID()),
-		base:   resolveCLIBase(cfg),
-		token:  resolveCLIToken(cfg),
+		base:   base,
+		token:  tokenForBaseOrExit(cfg, base),
 	}
 }
 
@@ -136,6 +140,29 @@ func resolveDefaultCLIBase(cfg *config.RuntimeConfig) string {
 	return fmt.Sprintf("http://127.0.0.1:%s", cfg.Port)
 }
 
+// resolveTabStateEndpoint resolves the server the cached current tab belongs to,
+// with the SAME precedence the command being guarded uses: --server/PINCHTAB_SERVER,
+// else the configured port; token from PINCHTAB_SESSION/PINCHTAB_TOKEN, else the
+// config file's. The tab probe used the env-only resolvers with a hardcoded 9867
+// fallback, so with a configured port it probed a different server than the command
+// — found nothing listening, assumed the stale tab valid, and refreshed its own
+// freshness window. Same target, so the probe can self-heal.
+//
+// The credential is the same EXCEPT against a non-loopback base with only the config
+// file's server.token: there the probe DEGRADES to an unauthenticated request rather
+// than exiting, because it runs on every command and must not kill one that would
+// refuse properly at its own site. Either way the config token does not leave the
+// machine; the probe simply learns less.
+var resolveTabStateEndpoint = func() (base, token string) {
+	cfg := config.Load()
+	base = resolveBaseURL(resolveDefaultCLIBase(cfg))
+	token, err := resolveCLIToken(cfg, base)
+	if err != nil {
+		return base, ""
+	}
+	return base, token
+}
+
 // resolveBaseURL returns the server base URL from flag/env/default.
 // Shared by both the full CLI runtime path and the lightweight tab probe.
 func resolveBaseURL(defaultBase string) string {
@@ -148,15 +175,6 @@ func resolveBaseURL(defaultBase string) string {
 	return defaultBase
 }
 
-// resolveToken returns the auth token from env vars (session takes precedence).
-// Shared by both the full CLI runtime path and the lightweight tab probe.
-func resolveToken() string {
-	if s := os.Getenv("PINCHTAB_SESSION"); s != "" {
-		return s
-	}
-	return os.Getenv("PINCHTAB_TOKEN")
-}
-
 func canAutoStartServerForCLI(cfg *config.RuntimeConfig, baseURL string) bool {
 	if serverURL != "" || os.Getenv("PINCHTAB_SERVER") != "" {
 		return false
@@ -164,11 +182,68 @@ func canAutoStartServerForCLI(cfg *config.RuntimeConfig, baseURL string) bool {
 	return strings.TrimRight(baseURL, "/") == resolveDefaultCLIBase(cfg)
 }
 
-func resolveCLIToken(cfg *config.RuntimeConfig) string {
-	if t := resolveToken(); t != "" {
-		return t
+// resolveCLIToken is the ONE owner pairing a credential with its destination.
+// The config file's server.token is a secret for the LOCAL server: it is only
+// ever sent to a loopback base, so a typo'd or hostile --server host cannot
+// receive it — an explicit env credential travels anywhere the caller says.
+func resolveCLIToken(cfg *config.RuntimeConfig, base string) (string, error) {
+	if s := os.Getenv("PINCHTAB_SESSION"); s != "" {
+		apiclient.UseTokenSource("the PINCHTAB_SESSION environment variable")
+		return s, nil
 	}
-	return cfg.Token
+	if t := os.Getenv("PINCHTAB_TOKEN"); t != "" {
+		apiclient.UseTokenSource("the PINCHTAB_TOKEN environment variable")
+		return t, nil
+	}
+	// The emptiness test comes FIRST: with no server.token there is nothing to withhold, so
+	// refusing would name a secret that does not exist and would break a legitimate flow —
+	// a tokenless server on a LAN or in Docker — for no security gain. That is the same test
+	// the loopback predicate itself was chosen by. With no credential the remote answers its
+	// own honest 401.
+	if cfg.Token == "" {
+		return "", nil
+	}
+	if !loopbackBase(base) {
+		return "", fmt.Errorf("refusing to send the local config's server.token to %s: set PINCHTAB_TOKEN (or PINCHTAB_SESSION) with the credential for that host", base)
+	}
+	apiclient.UseTokenSource("server.token in " + cliTokenConfigPath())
+	return cfg.Token, nil
+}
+
+// tokenForBaseOrExit is the terminal wrapper for command paths: the refusal
+// happens here, before any client or request exists.
+func tokenForBaseOrExit(cfg *config.RuntimeConfig, base string) string {
+	token, err := resolveCLIToken(cfg, base)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "pinchtab: %v\n", err)
+		osExit(1)
+	}
+	return token
+}
+
+var osExit = os.Exit
+
+func loopbackBase(base string) bool {
+	u, err := url.Parse(base)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	if host == "" {
+		return false
+	}
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func cliTokenConfigPath() string {
+	if p := strings.TrimSpace(os.Getenv("PINCHTAB_CONFIG")); p != "" {
+		return p
+	}
+	return config.DefaultConfigPath()
 }
 
 func resolveCLIAgentID() string {

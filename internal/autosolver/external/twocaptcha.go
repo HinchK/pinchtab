@@ -28,7 +28,7 @@ func NewTwoCaptcha(cfg TwoCaptchaConfig) *TwoCaptcha {
 	return &TwoCaptcha{config: cfg}
 }
 
-func (t *TwoCaptcha) Name() string  { return "twocaptcha" }
+func (t *TwoCaptcha) Name() string  { return autosolver.TwoCaptchaSolverName }
 func (t *TwoCaptcha) Priority() int { return 210 }
 
 // CanHandle checks if the page contains a supported CAPTCHA type.
@@ -63,7 +63,7 @@ func (t *TwoCaptcha) CanHandle(ctx context.Context, page autosolver.Page) (bool,
 // This is a skeleton implementation. The actual HTTP client logic
 // (submit → poll → inject) must be filled in with the 2Captcha API protocol.
 func (t *TwoCaptcha) Solve(ctx context.Context, page autosolver.Page, executor autosolver.ActionExecutor) (*autosolver.Result, error) {
-	result := &autosolver.Result{SolverUsed: "twocaptcha"}
+	result := &autosolver.Result{SolverUsed: t.Name()}
 
 	if t.config.APIKey == "" {
 		result.Error = "2captcha API key not configured"

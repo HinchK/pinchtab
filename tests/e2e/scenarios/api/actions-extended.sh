@@ -695,7 +695,7 @@ end_test
 # JavaScript dialog handling via click --dialog-action
 # ─────────────────────────────────────────────────────────────────
 
-start_test "click alert without dialogAction: fast-fail with dialog_blocking error"
+start_test "click alert without dialogAction: fast-fail with dialog_blocked error"
 
 pt_post /navigate "{\"url\":\"${FIXTURES_URL}/buttons.html\"}"
 assert_ok "navigate to buttons"
@@ -703,13 +703,13 @@ assert_ok "navigate to buttons"
 pt_get /snapshot
 ALERT_REF=$(echo "$RESULT" | jq -r '[.nodes[] | select(.name == "Trigger Alert")][0].ref // empty')
 
-# Click without dialogAction should fail fast with dialog_blocking error
+# Click without dialogAction should fail fast with dialog_blocked error.
 _CLICK_T0=$(get_time_ms)
 pt_post /action "{\"kind\":\"click\",\"ref\":\"${ALERT_REF}\"}"
 _CLICK_T1=$(get_time_ms)
 
 assert_not_ok "click without dialogAction fails"
-assert_json_eq "$RESULT" '.code' 'dialog_blocking' "error code is dialog_blocking"
+assert_json_eq "$RESULT" '.code' 'dialog_blocked' "error code is dialog_blocked"
 
 # Verify fast-fail: should complete in under 2 seconds (not 30s timeout)
 _CLICK_ELAPSED=$((_CLICK_T1 - _CLICK_T0))

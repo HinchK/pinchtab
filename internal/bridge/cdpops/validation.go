@@ -38,37 +38,28 @@ func PointerPointForNode(ctx context.Context, backendNodeID int64, requireTopMos
 		return 0, 0, fmt.Errorf("scroll into view: %w", err)
 	}
 
-	var resolveResult json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId": backendNodeID,
-		}, &resolveResult)
-	})); err != nil {
-		return 0, 0, fmt.Errorf("resolve node: %w", err)
-	}
-
-	var resolved struct {
-		Object struct {
-			ObjectID string `json:"objectId"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(resolveResult, &resolved); err != nil {
+	objectID, err := IsolatedNodeObjectID(ctx, backendNodeID)
+	if err != nil {
 		return 0, 0, err
 	}
-	if strings.TrimSpace(resolved.Object.ObjectID) == "" {
-		return 0, 0, fmt.Errorf("resolve node: backend node %d not found", backendNodeID)
-	}
 
+	// view/doc come from the node, never from the ambient globals. In the main
+	// world those globals were the node's own frame; in an isolated world the
+	// handle carries no such guarantee, and reading them there would compute the
+	// style, the frame walk, the viewport bounds and the occlusion hit-test
+	// against the top frame for a node that lives in an iframe.
 	const probeJS = `function() {
+		const view = (this.ownerDocument && this.ownerDocument.defaultView) || window;
+		const doc = this.ownerDocument || document;
 		const r = this.getBoundingClientRect();
-		const style = window.getComputedStyle(this);
+		const style = view.getComputedStyle(this);
 		const localX = r.left + (r.width / 2);
 		const localY = r.top + (r.height / 2);
 		let x = localX;
 		let y = localY;
-		let topWindow = window;
+		let topWindow = view;
 		try {
-			let current = window;
+			let current = view;
 			while (current && current.parent && current !== current.parent) {
 				const frameEl = current.frameElement;
 				if (!frameEl) {
@@ -85,15 +76,15 @@ func PointerPointForNode(ctx context.Context, backendNodeID int64, requireTopMos
 			// the frame-local coordinates and let higher layers decide whether that
 			// target is safely actionable.
 		}
-		const viewportWidth = topWindow && topWindow.innerWidth ? topWindow.innerWidth : window.innerWidth;
-		const viewportHeight = topWindow && topWindow.innerHeight ? topWindow.innerHeight : window.innerHeight;
+		const viewportWidth = topWindow && topWindow.innerWidth ? topWindow.innerWidth : view.innerWidth;
+		const viewportHeight = topWindow && topWindow.innerHeight ? topWindow.innerHeight : view.innerHeight;
 		const inViewport = x >= 0 && y >= 0 && x <= viewportWidth && y <= viewportHeight;
 		const visible = !!style && style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity || '1') > 0;
 		const pointerEvent = style ? String(style.pointerEvents || '') : '';
 		let occluded = false;
 		let topTag = '';
-		if (localX >= 0 && localY >= 0 && localX <= window.innerWidth && localY <= window.innerHeight) {
-			const top = document.elementFromPoint(localX, localY);
+		if (localX >= 0 && localY >= 0 && localX <= view.innerWidth && localY <= view.innerHeight) {
+			const top = doc.elementFromPoint(localX, localY);
 			if (top) {
 				topTag = String(top.tagName || '').toLowerCase();
 				const related = top === this || this.contains(top) || top.contains(this);
@@ -117,7 +108,7 @@ func PointerPointForNode(ctx context.Context, backendNodeID int64, requireTopMos
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.callFunctionOn", map[string]any{
 			"functionDeclaration": probeJS,
-			"objectId":            resolved.Object.ObjectID,
+			"objectId":            objectID,
 			"returnByValue":       true,
 		}, &probeRaw)
 	})); err != nil {

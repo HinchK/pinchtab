@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -26,7 +25,7 @@ func attachIndicatorScript(port string) (string, error) {
 	if err != nil || value < 1 || value > 65535 {
 		return "", fmt.Errorf("invalid bridge port %q", port)
 	}
-	portJSON, _ := json.Marshal(value)
+	portLiteral := strconv.Itoa(value)
 	return fmt.Sprintf(`(() => {
   const key = "__pinchtabAttachIndicators";
   const port = %s;
@@ -51,7 +50,7 @@ func attachIndicatorScript(port string) (string, error) {
     if (document.head) state.observer.observe(document.head, {subtree:true, childList:true, characterData:true});
   };
   if (document.head) state.start(); else document.addEventListener("DOMContentLoaded", state.start, {once:true});
-})()`, portJSON), nil
+})()`, portLiteral), nil
 }
 
 func clearAttachIndicatorScript(port string) (string, error) {
@@ -59,7 +58,7 @@ func clearAttachIndicatorScript(port string) (string, error) {
 	if err != nil || value < 1 || value > 65535 {
 		return "", fmt.Errorf("invalid bridge port %q", port)
 	}
-	portJSON, _ := json.Marshal(value)
+	portLiteral := strconv.Itoa(value)
 	return fmt.Sprintf(`(() => {
   const key = "__pinchtabAttachIndicators";
   const port = %s;
@@ -81,7 +80,7 @@ func clearAttachIndicatorScript(port string) (string, error) {
     return;
   }
   document.title = "[PinchTab " + ports.map(p => ":" + p).join(",") + "] " + clean;
-})()`, portJSON), nil
+})()`, portLiteral), nil
 }
 
 func (b *Bridge) installAttachIndicator(ctx context.Context, tabID string) error {

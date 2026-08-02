@@ -138,7 +138,18 @@ func (m *systemdUserManager) ManualInstructions() string {
 	return b.String()
 }
 
+// unitValue escapes a value for a systemd unit file. systemd expands "%" as a
+// specifier prefix (%h, %i, ...), so a literal percent in a path must be
+// doubled or the daemon starts against a mangled location.
+func unitValue(value string) string {
+	return strings.ReplaceAll(value, "%", "%%")
+}
+
 func renderSystemdUnit(execPath, configPath, stdoutPath, stderrPath string) string {
+	execPath = unitValue(execPath)
+	configPath = unitValue(configPath)
+	stdoutPath = unitValue(stdoutPath)
+	stderrPath = unitValue(stderrPath)
 	return fmt.Sprintf(`[Unit]
 Description=Pinchtab Browser Service
 After=network.target

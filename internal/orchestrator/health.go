@@ -91,7 +91,6 @@ func (o *Orchestrator) applyStartupOutcome(inst *InstanceInternal, p startupProb
 				inst.URL = p.resolvedURL
 				inst.Instance.URL = p.resolvedURL
 			}
-			o.syncInstanceToManager(&inst.Instance)
 			eventType = "instance.started"
 			slog.Info("instance ready", "id", inst.ID, "port", inst.Port)
 		} else if p.exitedEarly {
@@ -118,6 +117,9 @@ func (o *Orchestrator) applyStartupOutcome(inst *InstanceInternal, p startupProb
 			slog.Error("instance failed to start", "id", inst.ID, "reason", string(inst.lastFailureReason))
 		}
 	}
+	// The repository holds a snapshot, so every status transition must re-sync;
+	// error and timeout outcomes used to reach it only by sharing this struct.
+	o.syncInstanceToManager(&inst.Instance)
 	instCopy := inst.Instance
 	o.mu.Unlock()
 	if eventType != "" {
@@ -134,6 +136,7 @@ func (o *Orchestrator) finalizeInstanceExit(inst *InstanceInternal, p startupPro
 	if inst.Status == "running" || inst.Status == "stopping" {
 		inst.Status = "stopped"
 		wasStopped = true
+		o.syncInstanceToManager(&inst.Instance)
 	}
 	instCopy := inst.Instance
 	o.mu.Unlock()

@@ -125,7 +125,7 @@ func (h *Handlers) countSemantic(ctx context.Context, tabID string, sel selector
 		return 0, fmt.Errorf("selector %q is not a semantic query", sel.String())
 	}
 	if h.Matcher == nil {
-		return 0, fmt.Errorf("semantic selectors require a matcher (not configured)")
+		return 0, ErrSemanticMatcherUnavailable
 	}
 
 	frameID := h.selectorFrameID(tabID)

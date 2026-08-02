@@ -22,7 +22,7 @@ func TestQuarantineCorruptedProfile(t *testing.T) {
 		t.Fatalf("write marker: %v", err)
 	}
 
-	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("quarantineCorruptedProfile: %v", err)
 	}
@@ -54,7 +54,7 @@ func TestQuarantineCorruptedProfile(t *testing.T) {
 func TestQuarantineCorruptedProfile_MissingDir(t *testing.T) {
 	t.Parallel()
 
-	path, err := quarantineCorruptedProfile(filepath.Join(t.TempDir(), "does-not-exist"))
+	path, err := quarantineCorruptedProfile(filepath.Join(t.TempDir(), "does-not-exist"), KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("missing dir should not error: %v", err)
 	}
@@ -66,10 +66,10 @@ func TestQuarantineCorruptedProfile_MissingDir(t *testing.T) {
 func TestQuarantineCorruptedProfile_EmptyPath(t *testing.T) {
 	t.Parallel()
 
-	if _, err := quarantineCorruptedProfile(""); err == nil {
+	if _, err := quarantineCorruptedProfile("", KeepAllQuarantinedProfiles); err == nil {
 		t.Fatal("expected error for empty profile dir")
 	}
-	if _, err := quarantineCorruptedProfile("   "); err == nil {
+	if _, err := quarantineCorruptedProfile("   ", KeepAllQuarantinedProfiles); err == nil {
 		t.Fatal("expected error for blank profile dir")
 	}
 }
@@ -345,7 +345,7 @@ func TestQuarantineCorruptedProfile_WaitsForBrowserExit(t *testing.T) {
 		chromeExitPollInterval = oldPoll
 	})
 
-	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("quarantineCorruptedProfile: %v", err)
 	}
@@ -382,11 +382,98 @@ func TestQuarantineCorruptedProfile_ProceedsAfterWaitTimeout(t *testing.T) {
 		chromeExitPollInterval = oldPoll
 	})
 
-	quarantinePath, err := quarantineCorruptedProfile(profileDir)
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
 	if err != nil {
 		t.Fatalf("quarantine should proceed (with a warning) after the wait times out: %v", err)
 	}
 	if quarantinePath == "" {
 		t.Fatal("expected a quarantine path despite the timed-out wait")
+	}
+}
+
+// A quarantined directory that keeps profile.json still claims to be the
+// profile it was moved away from; the listing then shows two directories under
+// one name and one ID.
+func TestQuarantineDropsTheStaleProfileMetadata(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	profileDir := filepath.Join(tmp, "default")
+	if err := os.MkdirAll(filepath.Join(profileDir, "Default"), 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	meta := []byte(`{"id":"prof_37a8eec1","name":"default"}`)
+	if err := os.WriteFile(filepath.Join(profileDir, "profile.json"), meta, 0644); err != nil {
+		t.Fatalf("setup metadata: %v", err)
+	}
+
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
+	if err != nil {
+		t.Fatalf("quarantineCorruptedProfile: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(quarantinePath, "profile.json")); !os.IsNotExist(err) {
+		data, _ := os.ReadFile(filepath.Join(quarantinePath, "profile.json"))
+		t.Fatalf("quarantined directory still claims a profile identity: %s", data)
+	}
+	if _, err := os.Stat(filepath.Join(quarantinePath, "Default")); err != nil {
+		t.Fatalf("quarantine must preserve the rest of the profile: %v", err)
+	}
+	if _, err := os.Stat(profileDir); err != nil {
+		t.Fatalf("live profile directory not recreated: %v", err)
+	}
+}
+
+func TestQuarantineWithoutMetadataStillSucceeds(t *testing.T) {
+	t.Parallel()
+
+	tmp := t.TempDir()
+	profileDir := filepath.Join(tmp, "default")
+	if err := os.MkdirAll(filepath.Join(profileDir, "Default"), 0755); err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
+	if err != nil {
+		t.Fatalf("quarantineCorruptedProfile: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(quarantinePath, "Default")); err != nil {
+		t.Fatalf("quarantined directory incomplete: %v", err)
+	}
+}
+
+func TestIsQuarantinedProfileDirMatchesOnlyTheSuffix(t *testing.T) {
+	tests := map[string]bool{
+		"default.quarantine-1785343990": true,
+		"work.quarantine-0":             true,
+		"quarantine-notes":              false,
+		"my-quarantine":                 false,
+		"default.quarantine-":           false,
+		"default.quarantine-abc":        false,
+		"default.quarantine-123.backup": false,
+		"default":                       false,
+	}
+	for name, want := range tests {
+		if got := IsQuarantinedProfileDir(name); got != want {
+			t.Errorf("IsQuarantinedProfileDir(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestQuarantineCorruptedProfileProducesAFlaggedName(t *testing.T) {
+	profileDir := filepath.Join(t.TempDir(), "default")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	quarantinePath, err := quarantineCorruptedProfile(profileDir, KeepAllQuarantinedProfiles)
+	if err != nil {
+		t.Fatalf("quarantineCorruptedProfile: %v", err)
+	}
+	if !IsQuarantinedProfileDir(filepath.Base(quarantinePath)) {
+		t.Fatalf("quarantine produced %q, which the listing would not flag", quarantinePath)
+	}
+	if IsQuarantinedProfileDir(filepath.Base(profileDir)) {
+		t.Fatalf("the recreated profile dir %q must not be flagged", profileDir)
 	}
 }

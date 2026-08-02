@@ -33,7 +33,7 @@ func TestStartBrowserWithRecovery_ProfileLockClearedOnce(t *testing.T) {
 			clearCalls.Add(1)
 			return true, nil
 		},
-		QuarantineCorruptedProfile: func(profileDir string) (string, error) {
+		QuarantineCorruptedProfile: func(profileDir string, _ int) (string, error) {
 			quarantineCalls.Add(1)
 			return profileDir + ".quarantine", nil
 		},

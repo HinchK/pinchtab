@@ -500,3 +500,227 @@ func TestNewCleansStaleUploadStagingDirs(t *testing.T) {
 		t.Fatalf("non-staged upload sandbox dir should be kept: %v", err)
 	}
 }
+
+// stagedNames runs one upload and returns the basenames CDP was handed, which is
+// exactly what the page reads file.name from.
+func stagedNames(t *testing.T, body string) []string {
+	t.Helper()
+
+	rec := &recordingUploadBridge{}
+	h := New(rec, &config.RuntimeConfig{AllowUpload: true, StateDir: t.TempDir(), ActionTimeout: time.Second}, nil, nil, nil)
+
+	req := httptest.NewRequest("POST", "/upload", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.HandleUpload(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	names := make([]string, 0, len(rec.attachedPaths))
+	for _, p := range rec.attachedPaths {
+		names = append(names, filepath.Base(p))
+	}
+	return names
+}
+
+// The defect: every file reached the page as upload-<i>.bin, so a form gating on
+// `accept=".csv"` rejected it. The staged basename IS the page-visible
+// file.name (asserted against a real browser in
+// internal/bridge/upload_filename_test.go), so this is that name.
+func TestHandleUpload_KeepsTheSuppliedFileName(t *testing.T) {
+	names := stagedNames(t, `{"files":["aGVsbG8="],"fileNames":["data.csv"]}`)
+
+	if len(names) != 1 || names[0] != "data.csv" {
+		t.Fatalf("page would see %v, want [data.csv]", names)
+	}
+}
+
+// Text formats are the ones upload forms validate by extension and the ones
+// content sniffing can never identify — no magic bytes exist for .csv, .json or
+// .txt. A supplied name is the only way they can arrive correctly named.
+func TestHandleUpload_NamesSniffingCannotProduce(t *testing.T) {
+	for _, name := range []string{"notes.txt", "export.json", "sheet.csv", "page.html", "readme.md"} {
+		got := stagedNames(t, fmt.Sprintf(`{"files":["aGVsbG8="],"fileNames":[%q]}`, name))
+		if len(got) != 1 || got[0] != name {
+			t.Errorf("page would see %v, want [%s]", got, name)
+		}
+	}
+}
+
+// Unchanged behaviour for a caller posting a bare blob: no name, so the
+// extension is sniffed from content and the generated basename stands.
+func TestHandleUpload_FallsBackToSniffedNameWithoutASuppliedName(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+
+	for _, tc := range []struct{ name, body, want string }{
+		{"no fileNames at all", `{"files":["` + png + `"]}`, "upload-0.png"},
+		{"empty name", `{"files":["` + png + `"],"fileNames":[""]}`, "upload-0.png"},
+		{"unrecognised content", `{"files":["aGVsbG8="]}`, "upload-0.bin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := stagedNames(t, tc.body)
+			if len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("staged %v, want [%s]", got, tc.want)
+			}
+		})
+	}
+}
+
+// A shorter fileNames list must not shift names onto the wrong files or drop the
+// remaining uploads: the unnamed tail falls back to sniffing, index by index.
+func TestHandleUpload_ShortFileNamesListNamesOnlyItsOwnFiles(t *testing.T) {
+	names := stagedNames(t, `{"files":["aGVsbG8=","aGVsbG8=","aGVsbG8="],"fileNames":["first.csv"]}`)
+
+	want := []string{"first.csv", "upload-1.bin", "upload-2.bin"}
+	if len(names) != len(want) {
+		t.Fatalf("staged %v, want %v", names, want)
+	}
+	for i := range want {
+		if names[i] != want[i] {
+			t.Errorf("file %d staged as %q, want %q", i, names[i], want[i])
+		}
+	}
+}
+
+// The case that could not break before the index moved out of the filename: two
+// files sent under ONE name in one request. Both must reach the page under that
+// name — a de-duplicating rename would corrupt the very thing this fixes, and a
+// shared path would let os.WriteFile truncate the first file away.
+func TestHandleUpload_DuplicateNamesInOneRequestStayDistinctFiles(t *testing.T) {
+	rec := &recordingUploadBridge{}
+	h := New(rec, &config.RuntimeConfig{AllowUpload: true, StateDir: t.TempDir(), ActionTimeout: time.Second}, nil, nil, nil)
+
+	first := base64.StdEncoding.EncodeToString([]byte("first file"))
+	second := base64.StdEncoding.EncodeToString([]byte("second file, longer"))
+	body := fmt.Sprintf(`{"files":[%q,%q],"fileNames":["data.csv","data.csv"]}`, first, second)
+
+	req := httptest.NewRequest("POST", "/upload", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.HandleUpload(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body.String())
+	}
+
+	if len(rec.attachedPaths) != 2 {
+		t.Fatalf("attached %d paths, want 2 — a shared path silently loses a file", len(rec.attachedPaths))
+	}
+	if rec.attachedPaths[0] == rec.attachedPaths[1] {
+		t.Fatalf("both files staged at %q; the second truncated the first", rec.attachedPaths[0])
+	}
+	for i, p := range rec.attachedPaths {
+		if got := filepath.Base(p); got != "data.csv" {
+			t.Errorf("file %d staged as %q, want data.csv — a de-duplicating rename defeats the fix", i, got)
+		}
+	}
+	// Distinct paths are only worth anything if the CONTENT survived separately.
+	firstBytes, err := os.ReadFile(rec.attachedPaths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondBytes, err := os.ReadFile(rec.attachedPaths[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(firstBytes) != "first file" || string(secondBytes) != "second file, longer" {
+		t.Errorf("staged contents = %q / %q, want the two distinct payloads", firstBytes, secondBytes)
+	}
+}
+
+// Containment as a property of the staged NAME, asserted precisely rather than
+// tolerantly: each traversal attempt must land on a named result inside the
+// per-file directory. An earlier version of this test accepted "or the request
+// is refused", which made it blind to whether the reduction happened at all.
+// This surface did not exist before a caller-supplied string became part of a
+// filesystem path.
+func TestHandleUpload_SuppliedNameCannotEscapeTheStagingDirectory(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"../escape.txt", "escape.txt"},
+		{"../../../../etc/passwd", "passwd"},
+		{"sub/dir/nested.txt", "nested.txt"},
+		{"/etc/passwd", "passwd"},
+		{"..", "upload-0.bin"},
+		{".", "upload-0.bin"},
+		{"/", "upload-0.bin"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := &recordingUploadBridge{}
+			stateDir := t.TempDir()
+			h := New(rec, &config.RuntimeConfig{AllowUpload: true, StateDir: stateDir, ActionTimeout: time.Second}, nil, nil, nil)
+
+			body := fmt.Sprintf(`{"files":["aGVsbG8="],"fileNames":[%q]}`, tc.name)
+			req := httptest.NewRequest("POST", "/upload", strings.NewReader(body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			h.HandleUpload(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 — a browser reduces such a name rather than refusing: %s", w.Code, w.Body.String())
+			}
+			if len(rec.attachedPaths) != 1 {
+				t.Fatalf("attached %v, want exactly one staged file", rec.attachedPaths)
+			}
+			if got := filepath.Base(rec.attachedPaths[0]); got != tc.want {
+				t.Errorf("staged as %q, want %q", got, tc.want)
+			}
+
+			staged, err := filepath.EvalSymlinks(rec.attachedPaths[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			root, err := filepath.EvalSymlinks(filepath.Join(stateDir, uploadSandboxDirName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.HasPrefix(staged, root+string(filepath.Separator)) {
+				t.Fatalf("staged %q escaped the upload root %q", staged, root)
+			}
+		})
+	}
+}
+
+// The reduction rule, driven directly, so every branch has a named case — the
+// handler test above can only reach the ones an upload can carry.
+func TestStagedUploadNameIsAlwaysOneSafeElement(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"data.csv", "data.csv"},
+		{"  spaced.csv  ", "spaced.csv"},
+		{"../escape.txt", "escape.txt"},
+		{"a/b/c.json", "c.json"},
+		// A Windows caller reaches a POSIX server with no '/' in its name at all, so
+		// reduction cannot be delegated to the host's separator.
+		{`C:\Users\me\data.csv`, "data.csv"},
+		{`..\..\etc\passwd`, "passwd"},
+		{`sub\dir\nested.txt`, "nested.txt"},
+		{`trailing\`, "upload-3.bin"},
+		{"trailing/", "upload-3.bin"},
+		{"", "upload-3.bin"},
+		{"   ", "upload-3.bin"},
+		{".", "upload-3.bin"},
+		{"..", "upload-3.bin"},
+		{"/", "upload-3.bin"},
+		{"with\x00null", "upload-3.bin"},
+	} {
+		got := stagedUploadName(tc.name, 3, ".bin")
+		if got != tc.want {
+			t.Errorf("stagedUploadName(%q) = %q, want %q", tc.name, got, tc.want)
+		}
+		if got == "" || got == "." || got == ".." || strings.ContainsAny(got, `/\`) || strings.ContainsRune(got, filepath.Separator) {
+			t.Errorf("stagedUploadName(%q) = %q, which is not a single safe path element", tc.name, got)
+		}
+	}
+}
+
+// Precedence: a name wins over the sniffed content type even when the two
+// disagree. A browser sends the user's filename regardless of content and lets
+// the receiving page decide whether to trust it; a consistency check here would
+// diverge from that and break legitimate mislabelled-but-intended uploads.
+func TestHandleUpload_SuppliedNameWinsOverSniffedContent(t *testing.T) {
+	png := base64.StdEncoding.EncodeToString([]byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a})
+
+	names := stagedNames(t, fmt.Sprintf(`{"files":[%q],"fileNames":["actually-a-png.csv"]}`, png))
+	if len(names) != 1 || names[0] != "actually-a-png.csv" {
+		t.Fatalf("staged %v, want [actually-a-png.csv]", names)
+	}
+}

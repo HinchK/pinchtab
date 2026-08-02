@@ -44,7 +44,7 @@ func NewProvider(cfg ProviderConfig) *Provider {
 //
 // The prompt is designed to be token-efficient:
 //   - Page title + URL (always included)
-//   - Trimmed HTML (scripts/styles removed, max ~4000 chars)
+//   - Trimmed HTML (scripts/styles removed, capped in bytes by htmltrim)
 //   - Previous attempt summary (what failed and why)
 //   - Structured output format (action type + parameters)
 func (p *Provider) SuggestNextAction(ctx context.Context, req autosolver.LLMRequest) (*autosolver.LLMResponse, error) {

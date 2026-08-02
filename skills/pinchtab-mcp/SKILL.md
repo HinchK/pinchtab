@@ -21,7 +21,7 @@ Use MCP tools to control a browser through the PinchTab HTTP API. The MCP server
 3. **Interact**: `pinchtab_click(selector="e5")` — use refs from the snapshot.
 4. **Verify**: `pinchtab_get_text()` or re-snapshot to confirm the action succeeded.
 
-**Critical rule**: Element refs (`e5`, `e12`) are ephemeral. They expire after navigation or DOM updates. Always re-call `pinchtab_snapshot` after a page load before using refs.
+**Critical rule**: An element ref (`e5`, `e12`) denotes a DOM node, so the same node keeps its ref across `interactive` vs full, a `selector` scope and a `depth` limit — a filtered view is therefore sparse (`e0, e1, e6`), never assume refs are contiguous. What a ref does NOT survive is navigation to a new document: refs expire on page load, so always re-call `pinchtab_snapshot` afterwards. A ref that can no longer resolve to its node is refused with `vocab_superseded` (or `ref not found`), never acted on positionally — the tools carry each snapshot's vocabulary token forward so a filter-only re-read keeps a ref valid while a new document supersedes it.
 
 ---
 
@@ -344,7 +344,7 @@ For these, use the pinchtab CLI or HTTP API directly.
 
 ## Element Ref Best Practices
 
-1. **Never cache refs across navigations.** Always re-snapshot after `pinchtab_navigate` or `pinchtab_click(waitNav=true)`.
+1. **Re-snapshot after navigation; a ref survives a change of filter, selector or depth.** Always re-snapshot after `pinchtab_navigate` or `pinchtab_click(waitNav=true)` — a new document expires every ref. But within one page a ref denotes a node, so carrying `e5` from a full snapshot into an `interactive`/`selector`/`depth` read is safe and returns the same node (filtered views are sparse — `e0, e1, e6`). The tools track each snapshot's vocabulary token, so a truly stale ref surfaces as a `vocab_superseded` refusal instead of a wrong-element click.
 2. **Use `diff=true` after interactions.** Shows only changed elements, saving tokens.
 3. **Prefer refs over CSS selectors.** Refs resolve by backend node IDs, more reliable than CSS.
 4. **Refs work across iframes.** Same-origin iframe content is flattened into the main tree — refs are clickable without frame hops.

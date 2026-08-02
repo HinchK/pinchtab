@@ -246,11 +246,25 @@ curl -X POST http://localhost:9867/tabs/<tabId>/cookies \
   -d '{"cookies":[{"name":"session","value":"abc"}]}'
 ```
 
-A `pinchtab cookies` CLI command is available; today it exposes a single subcommand:
+`POST` defaults `url` to the tab's current page, so injecting a session cookie
+needs no URL lookup. A cookie with an empty `value` is set (blanking it without
+deleting it); a cookie with no `name` is rejected with 400 rather than skipped.
+`DELETE /tabs/<tabId>/cookies` is tab-scoped in addressing only — it clears every
+cookie for every origin, exactly like `DELETE /cookies`.
+
+The same operations from the CLI:
 
 ```bash
-pinchtab cookies clear     # clear all cookies via CDP (affects all origins)
+pinchtab cookies get --tab <tabId>                  # read cookies, with values
+pinchtab cookies get --tab <tabId> --name session   # one cookie
+pinchtab cookies set session abc123 --tab <tabId>   # set on the tab's current URL
+pinchtab cookies clear                              # every cookie, every origin
 ```
+
+`cookies set` takes `--url`, `--domain`, `--path`, `--same-site`, `--secure` and
+`--http-only`; it exits non-zero if the server reports the cookie was not set.
+There is no per-cookie removal verb — `clear` is browser-wide, and nothing in the
+CLI restores what it wipes, so re-set what you need or use `state load`.
 
 Reading, writing, and clearing cookies requires `security.allowCookies=true`.
 

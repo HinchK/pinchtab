@@ -62,12 +62,12 @@ All tool names are prefixed with `pinchtab_`.
 |------|-------------|
 | `pinchtab_click` | Click element by selector. Required: `selector` or legacy `ref`. Optional: `waitNav`, `mode` (`dom` or `dispatch` as a broad low-level escape hatch), `tabId`. `mode` and `humanize` are mutually exclusive. |
 | `pinchtab_type` | Type text keystroke-by-keystroke. Required: `selector` or legacy `ref`, plus `text`. Optional: `tabId`. |
-| `pinchtab_fill` | Fill input via JS dispatch. Required: `selector` or legacy `ref`, plus `value`. Optional: `tabId`. |
+| `pinchtab_fill` | Fill input via JS dispatch. Required: `selector` or legacy `ref`, plus `value` — send `value=""` to clear the field (omitting it is refused). Optional: `tabId`. |
 | `pinchtab_press` | Press a named key (`Enter`, `Tab`, `Escape`, etc.). Required: `key`. Optional: `tabId`. |
 | `pinchtab_hover` | Hover over element. Required: `selector` or legacy `ref`. Optional: `tabId`. |
 | `pinchtab_focus` | Focus an element. Required: `selector` or legacy `ref`. Optional: `tabId`. |
 | `pinchtab_select` | Select dropdown option. Required: `selector` or legacy `ref`, plus `value`. Optional: `tabId`. |
-| `pinchtab_scroll` | Scroll page or element. Optional: `selector` or legacy `ref`, `pixels`, `tabId`. |
+| `pinchtab_scroll` | Scroll page or element. Optional: `selector` or legacy `ref`, `pixels`, `tabId`, `direction` (`down`/`left`/`right`/`up`, 800px per step — same as the CLI), `steps`. |
 
 ### Keyboard
 | Tool | Description |
@@ -91,6 +91,7 @@ All tool names are prefixed with `pinchtab_`.
 | `pinchtab_close_tab` | Close a tab. Optional: `tabId` (uses current/default tab when omitted). |
 | `pinchtab_health` | Check server health. No params. |
 | `pinchtab_cookies` | Get cookies for current page. Optional: `tabId`. Requires `security.allowCookies: true`; values are session credentials and must not be logged or shared. |
+| `pinchtab_cookies_set` | Set one cookie on the current page (session reuse). Required: `name`, `value`. Optional: `url` (defaults to the tab's current page), `domain`, `path`, `sameSite`, `secure`, `httpOnly`, `expires`, `tabId`. An empty `value` blanks the cookie. Requires `security.allowCookies: true`. |
 | `pinchtab_connect_profile` | Return connect status for a profile. Required: `profile`. |
 
 ### Utility
@@ -122,7 +123,11 @@ All tool names are prefixed with `pinchtab_`.
 
 `pinchtab_snapshot` returns an accessibility tree with element refs like `e5`, `e12`. These refs can be passed as the `selector` value on interaction tools, and legacy `ref` is still accepted on the element-action tools.
 
-**Important:** Refs are ephemeral. They expire after navigation or significant DOM updates. Always re-call `pinchtab_snapshot` after a page load before using refs in interactions.
+**A ref denotes a DOM node, not a row.** Within one page the same node keeps the same ref across every read of it — a full snapshot, an `interactive` filter, a `selector` scope, a `depth` limit, a different token budget, an annotated screenshot, or an internal stale-ref recovery all return the same `e5` for the same element. This means a **filtered view is sparse**: dropping the non-interactive nodes returns `e0, e1, e6`, not a fresh `e0, e1, e2` run. Do not assume refs are contiguous or that the highest ref equals the node count.
+
+**What still invalidates a ref:** navigation to a new document. When the page navigates, the old refs are gone and the tab starts a fresh ref vocabulary — always re-call `pinchtab_snapshot` after a page load before using refs. A ref that can no longer be resolved to the node it named still fails loudly (`vocab_superseded` or `ref not found`) and is never resolved positionally against whatever snapshot ran last.
+
+The MCP tools carry a per-tab vocabulary token so the guard fires only on a real supersession: a snapshot that merely changes filter, selector or depth keeps the token, so a ref you already hold stays valid; a snapshot of a new document mints a new token, so a stale ref+token is refused with `409` `vocab_superseded` and re-snapshot advice rather than clicking the wrong node. (The token travels as the `X-PinchTab-Vocab` response header, also `vocabularyToken` in the JSON snapshot body, and a `vocab` request field. It is optional on the wire — a raw HTTP caller that does not echo it keeps the previous behaviour until it opts in.)
 
 ---
 

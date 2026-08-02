@@ -11,9 +11,11 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
 
 type exitingMockCmd struct {
@@ -640,5 +642,168 @@ func TestMonitor_ChildExitAfterRunningTransitionsToStopped(t *testing.T) {
 	o.mu.RUnlock()
 	if status != "stopped" {
 		t.Fatalf("status after child exit = %q, want stopped", status)
+	}
+}
+
+// compactBody cuts arbitrary remote bytes into an operator-facing error message. It used
+// to slice at a raw byte offset, so any non-ASCII body landed mid-rune and the message
+// carried U+FFFD where the server's own words should be. The fixture puts a multi-byte
+// rune ACROSS the old cut offset on purpose: an ASCII body cannot tell the two
+// implementations apart, which is how this survived a census.
+func TestCompactBodyCutsOnARuneBoundary(t *testing.T) {
+	// An all-euro body puts a rune boundary only every three bytes, so a naive cut lands
+	// mid-rune unless the budget happens to be a multiple of three. Both cut points are
+	// checked, because the marked form cuts at budget-minus-marker, not at the budget.
+	const runeWidth = len("€")
+	for _, cut := range []int{maxCompactBodyBytes, maxCompactBodyBytes - len(sanitize.TruncationSuffix)} {
+		if cut%runeWidth == 0 {
+			t.Fatalf("budget %d puts cut %d on a rune boundary, so this fixture cannot tell a naive cut from a rune-safe one; widen the fixture rune",
+				maxCompactBodyBytes, cut)
+		}
+	}
+	body := strings.Repeat("€", maxCompactBodyBytes)
+
+	got := compactBody([]byte(body))
+
+	if !utf8.ValidString(got) {
+		t.Errorf("compactBody returned invalid UTF-8: %q", got)
+	}
+	if strings.ContainsRune(got, utf8.RuneError) {
+		t.Errorf("compactBody returned U+FFFD, so the cut split a rune: %q", got)
+	}
+	if !strings.HasSuffix(got, sanitize.TruncationSuffix) {
+		t.Errorf("compactBody returned %q without the truncation marker; an operator cannot tell a cut body from a short one", got)
+	}
+	// A rune-safe cut honours the budget as a CEILING, so bound both sides: over means
+	// the marker is not counted inside the budget, far under means the cut fires early.
+	if len(got) > maxCompactBodyBytes {
+		t.Errorf("compactBody returned %d bytes, over the %d budget", len(got), maxCompactBodyBytes)
+	}
+	if len(got) < maxCompactBodyBytes-utf8.UTFMax {
+		t.Errorf("compactBody returned only %d bytes for a %d budget; the cut fires too early", len(got), maxCompactBodyBytes)
+	}
+}
+
+func TestCompactBodyLeavesShortAndEmptyBodiesAlone(t *testing.T) {
+	short := "instance refused: profile is locked"
+	if got := compactBody([]byte(short)); got != short {
+		t.Errorf("compactBody(%q) = %q, want it unchanged", short, got)
+	}
+	if got := compactBody([]byte("  " + short + "\n")); got != short {
+		t.Errorf("compactBody did not trim surrounding space: %q", got)
+	}
+	// Exactly at the budget is not truncation, so no marker.
+	atCap := strings.Repeat("c", maxCompactBodyBytes)
+	if got := compactBody([]byte(atCap)); got != atCap {
+		t.Errorf("a body exactly at the budget was altered: %d bytes in, %d out", len(atCap), len(got))
+	}
+	for _, empty := range []string{"", "   ", "\n\t "} {
+		if got := compactBody([]byte(empty)); got != "<empty>" {
+			t.Errorf("compactBody(%q) = %q, want <empty>", empty, got)
+		}
+	}
+}
+
+// The three callers embed compactBody in an operator-facing error, and until now only
+// the helper was driven — a correct helper says nothing about the sentence an operator
+// reads, which is the artefact this card is about. Each caller is driven against an
+// instance that answers its own route with a long non-ASCII body, and the assertion is
+// on the ERROR STRING: valid UTF-8, no U+FFFD, and the marker present so a cut body is
+// distinguishable from a short one.
+func TestOperatorFacingErrorsCarryAValidUTF8BodyFragment(t *testing.T) {
+	const runeWidth = len("€")
+	// The fixture must straddle a rune at the cut or a byte slice and a rune-safe cut
+	// agree and this test cannot tell them apart — the same trap the helper test guards.
+	for _, cut := range []int{maxCompactBodyBytes, maxCompactBodyBytes - len(sanitize.TruncationSuffix)} {
+		if cut%runeWidth == 0 {
+			t.Fatalf("budget %d puts cut %d on a rune boundary; widen the fixture rune", maxCompactBodyBytes, cut)
+		}
+	}
+	remoteMessage := strings.Repeat("€", maxCompactBodyBytes)
+
+	failOn := func(path string) *http.Client {
+		return &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			if r.URL.Path != path {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"tabId":"tab_warm"}`)),
+					Header:     http.Header{},
+				}, nil
+			}
+			return &http.Response{
+				StatusCode: http.StatusInternalServerError,
+				Body:       io.NopCloser(strings.NewReader(remoteMessage)),
+				Header:     http.Header{},
+			}, nil
+		})}
+	}
+
+	base, err := url.Parse("http://127.0.0.1:9999")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		path   string
+		prefix string
+		drive  func(*Orchestrator, *InstanceInternal) error
+	}{
+		{
+			name:   "create tab",
+			path:   "/tab",
+			prefix: "create tab HTTP 500: ",
+			drive: func(o *Orchestrator, inst *InstanceInternal) error {
+				_, err := o.warmInstanceTabLifecycle(inst, base)
+				return err
+			},
+		},
+		{
+			name:   "close warmup tab",
+			path:   "/close",
+			prefix: "close warmup tab HTTP 500: ",
+			drive: func(o *Orchestrator, inst *InstanceInternal) error {
+				_, err := o.warmInstanceTabLifecycle(inst, base)
+				return err
+			},
+		},
+		{
+			name:   "ensure browser",
+			path:   "/browser/ensure",
+			prefix: "ensure-browser HTTP 500: ",
+			drive: func(o *Orchestrator, inst *InstanceInternal) error {
+				target := *base
+				target.Path = "/browser/ensure"
+				return o.ensureInstanceChrome(inst, &target)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := NewOrchestratorWithRunner(t.TempDir(), &mockRunner{portAvail: true})
+			o.client = failOn(tc.path)
+			inst := &InstanceInternal{
+				Instance: bridge.Instance{ID: "inst_utf80001", Port: "9999", Status: "running"},
+				URL:      base.String(),
+				logBuf:   newRingBuffer(1024),
+			}
+
+			err := tc.drive(o, inst)
+			if err == nil {
+				t.Fatalf("%s returned no error, so the refusal path was never reached", tc.name)
+			}
+			message := err.Error()
+			if !strings.HasPrefix(message, tc.prefix) {
+				t.Fatalf("message %q is not the %s refusal; the fixture drove the wrong path", message, tc.name)
+			}
+			if !utf8.ValidString(message) {
+				t.Errorf("operator message is not valid UTF-8: %q", message)
+			}
+			if strings.ContainsRune(message, utf8.RuneError) {
+				t.Errorf("operator message carries U+FFFD where the instance's own words should be: %q", message)
+			}
+			if !strings.HasSuffix(message, sanitize.TruncationSuffix) {
+				t.Errorf("operator message %q does not end in the truncation marker, so a cut body reads as a complete one", message)
+			}
+		})
 	}
 }

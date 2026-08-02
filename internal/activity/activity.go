@@ -56,6 +56,8 @@ type Event struct {
 	Action      string                    `json:"action,omitempty"`
 	Route       *browserops.RouteMetadata `json:"route,omitempty"`
 	Ref         string                    `json:"ref,omitempty"`
+	Code        string                    `json:"code,omitempty"`
+	Error       string                    `json:"error,omitempty"`
 }
 
 type Filter struct {
@@ -254,15 +256,15 @@ func (tr *TailReader) nextSourceFilePath(cursorPath, todayPath, source string) s
 
 type noopRecorder struct{}
 
-func NewRecorder(cfg Config, stateDir string) (Recorder, error) {
+func NewRecorder(cfg Config, logDir string) (Recorder, error) {
 	if !cfg.Enabled {
 		return noopRecorder{}, nil
 	}
-	return NewStoreWithEvents(stateDir, cfg.RetentionDays, cfg.Events)
+	return NewStoreWithEvents(logDir, cfg.RetentionDays, cfg.Events)
 }
 
-func NewStore(stateDir string, retentionDays int) (*Store, error) {
-	return NewStoreWithEvents(stateDir, retentionDays, EventSourceConfig{
+func NewStore(logDir string, retentionDays int) (*Store, error) {
+	return NewStoreWithEvents(logDir, retentionDays, EventSourceConfig{
 		Dashboard:    true,
 		Server:       true,
 		Bridge:       true,
@@ -273,9 +275,11 @@ func NewStore(stateDir string, retentionDays int) (*Store, error) {
 	})
 }
 
-func NewStoreWithEvents(stateDir string, retentionDays int, events EventSourceConfig) (*Store, error) {
-	activityDir := filepath.Join(stateDir, "activity")
-	if err := os.MkdirAll(activityDir, 0750); err != nil {
+// NewStoreWithEvents takes the directory it writes into. The state-directory layout
+// belongs to internal/config, which derives this path once, so appending a name here
+// as well would put the same rule in two places.
+func NewStoreWithEvents(logDir string, retentionDays int, events EventSourceConfig) (*Store, error) {
+	if err := os.MkdirAll(logDir, 0750); err != nil {
 		return nil, fmt.Errorf("create activity dir: %w", err)
 	}
 	if retentionDays <= 0 {
@@ -283,7 +287,7 @@ func NewStoreWithEvents(stateDir string, retentionDays int, events EventSourceCo
 	}
 
 	store := &Store{
-		dir:           activityDir,
+		dir:           logDir,
 		retentionDays: retentionDays,
 		events:        events,
 		lastPruneTime: time.Now().UTC(),
@@ -459,7 +463,11 @@ func (noopRecorder) Query(Filter) ([]Event, error) {
 }
 
 func (f Filter) matches(evt Event) bool {
-	if f.Source != "" && evt.Source != f.Source {
+	// Compare normalized names: the source is stored verbatim from the client
+	// header but the per-source file is named with the normalized form, so
+	// matching raw here would discard events from the very file queryFiles
+	// selected for this source.
+	if f.Source != "" && normalizeSourceName(evt.Source) != normalizeSourceName(f.Source) {
 		return false
 	}
 	if f.RequestID != "" && evt.RequestID != f.RequestID {
@@ -674,9 +682,14 @@ func isActivityLogFile(name string) bool {
 	return name != "events.jsonl" && strings.HasPrefix(name, "events-") && strings.HasSuffix(name, ".jsonl")
 }
 
+// isSourceLogFile anchors on the trailing day so a query for "mcp" does not
+// also scan every "mcp-<something>" source log.
 func isSourceLogFile(name, source string) bool {
-	prefix := "events-" + source + "-"
-	return strings.HasPrefix(name, prefix)
+	day, ok := activityLogDay(name)
+	if !ok {
+		return false
+	}
+	return name == "events-"+source+"-"+day+".jsonl"
 }
 
 func activityLogDay(name string) (string, bool) {
@@ -692,6 +705,14 @@ func activityLogDay(name string) (string, bool) {
 		return "", false
 	}
 	return day, true
+}
+
+// EventIdentity exposes the composite identity for consumers that need to
+// recognise the same event across ingests. Callers must not key on RequestID
+// alone: it is absent unless the client sent X-Request-Id, and a single request
+// can emit more than one event.
+func EventIdentity(evt Event) string {
+	return eventDedupKey(evt)
 }
 
 // eventDedupKey builds a cheap composite key that collapses the byte-identical

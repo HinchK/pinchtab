@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -349,8 +350,10 @@ func TestDashboardLoadPersistedAgentActivityRestoresAgentsAndEvents(t *testing.T
 	if len(events) != 3 {
 		t.Fatalf("RecentEvents() len = %d, want 3", len(events))
 	}
-	if events[0].ID != "req-1" || events[1].ID != "req-2" || events[2].ID != "req-3" {
-		t.Fatalf("RecentEvents() IDs = [%s, %s, %s], want [req-1, req-2, req-3]", events[0].ID, events[1].ID, events[2].ID)
+	// Identity is the activity store's composite key, so assert on the request
+	// id carried in Details rather than on the opaque event ID.
+	if got := eventRequestIDs(events); got != "req-1,req-2,req-3" {
+		t.Fatalf("RecentEvents() request ids = %s, want req-1,req-2,req-3", got)
 	}
 }
 
@@ -409,8 +412,8 @@ func TestDashboardIngestPersistedAgentActivityAddsNewEventsWithoutDuplicatingLiv
 	if len(events) != 2 {
 		t.Fatalf("RecentEvents() len = %d, want 2", len(events))
 	}
-	if events[0].ID != "req-live" || events[1].ID != "req-new" {
-		t.Fatalf("RecentEvents() IDs = [%s, %s], want [req-live, req-new]", events[0].ID, events[1].ID)
+	if got := eventRequestIDs(events); got != "req-live,req-new" {
+		t.Fatalf("RecentEvents() request ids = %s, want req-live,req-new", got)
 	}
 
 	agents := d.Agents()
@@ -480,4 +483,15 @@ func TestMatchesMode(t *testing.T) {
 			t.Fatalf("matchesMode(%q, %q) = %v, want %v", tc.mode, tc.channel, got, tc.want)
 		}
 	}
+}
+
+// eventRequestIDs joins the requestId detail of each event for order-sensitive
+// assertions that do not depend on the internal event identity format.
+func eventRequestIDs(events []apiTypes.ActivityEvent) string {
+	ids := make([]string, 0, len(events))
+	for _, evt := range events {
+		id, _ := evt.Details["requestId"].(string)
+		ids = append(ids, id)
+	}
+	return strings.Join(ids, ",")
 }

@@ -81,38 +81,6 @@ func TestSafeRecordPath_RejectsNonDirectoryParent(t *testing.T) {
 	}
 }
 
-func TestStreamToFile_WritesAndCaps(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.gif")
-
-	data := strings.NewReader("hello recording data")
-	n, err := streamToFile(path, data)
-	if err != nil {
-		t.Fatalf("streamToFile() error = %v", err)
-	}
-	if n != 20 {
-		t.Fatalf("wrote %d bytes, want 20", n)
-	}
-
-	got, _ := os.ReadFile(path)
-	if string(got) != "hello recording data" {
-		t.Fatalf("file content = %q", got)
-	}
-}
-
-func TestStreamToFile_RefusesOverwrite(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "out.gif")
-	if err := os.WriteFile(path, []byte("existing"), 0600); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := streamToFile(path, strings.NewReader("new data"))
-	if err == nil {
-		t.Fatal("expected error for existing file")
-	}
-}
-
 func TestRecordStartRejectsRelativePath(t *testing.T) {
 	srv := mockPinchTab()
 	defer srv.Close()

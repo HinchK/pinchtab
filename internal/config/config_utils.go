@@ -3,6 +3,7 @@ package config
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -61,6 +62,29 @@ func GenerateAuthToken() (string, error) {
 		return "", fmt.Errorf("generate auth token: %w", err)
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+// ErrOperatorConfigToken marks the refusal to write a generated credential into
+// a config file the operator supplied via PINCHTAB_CONFIG.
+var ErrOperatorConfigToken = errors.New("server token is required")
+
+// ProvisionFileToken is the one decision point for adding a token to an
+// EXISTING config: it refuses when the operator supplied the file explicitly
+// (PINCHTAB_CONFIG set and the file present), and otherwise generates one via
+// EnsureFileToken. Only config init may call EnsureFileToken directly — a fresh
+// default file has no operator-authored content to protect.
+func ProvisionFileToken(fc *FileConfig, configPath string) (bool, error) {
+	if fc != nil && strings.TrimSpace(fc.Server.Token) != "" {
+		return false, nil
+	}
+	if strings.TrimSpace(os.Getenv("PINCHTAB_CONFIG")) != "" {
+		if _, statErr := os.Stat(configPath); statErr == nil {
+			return false, fmt.Errorf("%w in %s when PINCHTAB_CONFIG is set; add server.token or set PINCHTAB_TOKEN", ErrOperatorConfigToken, configPath)
+		} else if !os.IsNotExist(statErr) {
+			return false, fmt.Errorf("stat config file: %w", statErr)
+		}
+	}
+	return EnsureFileToken(fc)
 }
 
 // EnsureFileToken guarantees that a persisted config carries a non-empty

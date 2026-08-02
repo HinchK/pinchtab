@@ -21,10 +21,26 @@ start_test "scrape crawls the site with HTTP-first extraction and browser routin
 
 pt_ok scrape "$SITE_URL" --timeout 30 --json
 
-if echo "$PT_OUT" | jq -e '.schemaVersion == "1.0"' >/dev/null 2>&1; then
-  pass_assert "report carries schema version"
+# Pinned deliberately: the scrape schema version is a contract with report
+# consumers, so a bump must fail here and be acknowledged. internal/audit carries
+# its own SchemaVersion, still at 1.0 — the audit scenarios are a different
+# payload and are not stale.
+#
+# The type is part of the contract, so a bare string compare is not enough: it
+# would accept the JSON number 2.0 as well as the string, and each of absent, a
+# wrong type and unparseable output has to be distinguishable in the message
+# rather than all arriving as an empty value.
+EXPECTED_SCRAPE_SCHEMA="2.0"
+GOT_SCRAPE_SCHEMA=$(echo "$PT_OUT" | jq -r '
+  .schemaVersion as $v
+  | if $v == null then "<absent>"
+    elif ($v | type) != "string" then "<not-a-string: \($v | type)>"
+    else $v end' 2>/dev/null)
+GOT_SCRAPE_SCHEMA="${GOT_SCRAPE_SCHEMA:-<unparseable-output>}"
+if [ "$GOT_SCRAPE_SCHEMA" = "$EXPECTED_SCRAPE_SCHEMA" ]; then
+  pass_assert "report pins scrape schema version $EXPECTED_SCRAPE_SCHEMA"
 else
-  fail_assert "report carries schema version"
+  fail_assert "report pins scrape schema version $EXPECTED_SCRAPE_SCHEMA (got: $GOT_SCRAPE_SCHEMA — if internal/scrape bumped SchemaVersion, update EXPECTED_SCRAPE_SCHEMA here)"
 fi
 
 PAGE_COUNT=$(echo "$PT_OUT" | jq '.pages | length' 2>/dev/null)

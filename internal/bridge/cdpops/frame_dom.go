@@ -7,38 +7,38 @@ import (
 
 	"github.com/chromedp/chromedp"
 
+	"github.com/pinchtab/pinchtab/internal/cdptk"
 	"github.com/pinchtab/pinchtab/internal/runtimetypes"
 )
 
+// IsolatedNodeObjectID converts a backend node id to a JS object handle in the
+// top frame's isolated world. The rule and the world both have one owner in
+// internal/cdptk, the lowest CDP layer: DOM.resolveNode without an
+// executionContextId hands back a main-world object, so every
+// Runtime.callFunctionOn against it runs where page script can redefine the DOM
+// methods it calls.
+//
+// JS invoked on the returned handle must not read ambient globals. The handle
+// lives in the world it was resolved into, not necessarily the node's frame, so
+// `window` and `document` there are the top frame's. Derive them from the node
+// via ownerDocument/defaultView instead.
+func IsolatedNodeObjectID(ctx context.Context, backendNodeID int64) (string, error) {
+	return cdptk.IsolatedNodeObjectID(ctx, backendNodeID)
+}
+
 // FrameExecutionContextID returns a Runtime.executionContextId that evaluates
-// in the given frame's document. Returns (0, nil) when frameID is empty so
-// callers can fall back to the default top-level context without branching.
+// in the given frame's document, minted by the one owner in internal/cdptk.
+//
+// Returns (0, nil) when frameID is empty, and that check stays HERE rather than
+// being handed to the owner: callers branch on the zero to fall back to the
+// context they already have, whereas an empty frame means the top frame's
+// isolated world one layer down. Collapsing the two spellings of "empty" would
+// silently move every unscoped caller into a freshly minted world.
 func FrameExecutionContextID(ctx context.Context, frameID string) (int64, error) {
 	if frameID == "" {
 		return 0, nil
 	}
-
-	var worldResult json.RawMessage
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Page.createIsolatedWorld", map[string]any{
-			"frameId":   frameID,
-			"worldName": "pinchtab-frame-scope",
-		}, &worldResult)
-	}))
-	if err != nil {
-		return 0, fmt.Errorf("create isolated world for frame %q: %w", frameID, err)
-	}
-
-	var resp struct {
-		ExecutionContextID int64 `json:"executionContextId"`
-	}
-	if err := json.Unmarshal(worldResult, &resp); err != nil {
-		return 0, err
-	}
-	if resp.ExecutionContextID == 0 {
-		return 0, fmt.Errorf("frame %q has no execution context", frameID)
-	}
-	return resp.ExecutionContextID, nil
+	return cdptk.IsolatedContextID(ctx, frameID)
 }
 
 // CallFunctionOnNode resolves a backend node to a JS object and invokes the

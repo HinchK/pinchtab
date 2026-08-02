@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -311,5 +312,26 @@ func TestPortBusyErrorFreePort(t *testing.T) {
 
 	if err := portBusyError(url, "/tmp/config.json"); err != nil {
 		t.Errorf("free port should yield nil, got %v", err)
+	}
+}
+
+// The mode built to be diagnosed from a file must not need -v to record anything:
+// the child inherits the default level, and only an explicit level travels.
+func TestBackgroundServerArgsLogLevelForwarding(t *testing.T) {
+	plain := backgroundServerArgs("marker-123", serverBackgroundOptions{})
+	if slices.Contains(plain, "-v") {
+		t.Errorf("a default background run should not force verbose: %#v", plain)
+	}
+	if slices.Contains(plain, "--log-level") {
+		t.Errorf("a default background run should not pin a level: %#v", plain)
+	}
+	if !reflect.DeepEqual(plain, []string{"server", "--background-child", "marker-123"}) {
+		t.Errorf("backgroundServerArgs() = %#v, want just the child marker", plain)
+	}
+
+	explicit := backgroundServerArgs("marker-123", serverBackgroundOptions{LogLevel: "warn"})
+	want := []string{"server", "--background-child", "marker-123", "--log-level", "warn"}
+	if !reflect.DeepEqual(explicit, want) {
+		t.Errorf("backgroundServerArgs() = %#v, want %#v", explicit, want)
 	}
 }

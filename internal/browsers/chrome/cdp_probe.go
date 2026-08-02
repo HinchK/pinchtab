@@ -3,6 +3,7 @@ package chrome
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,11 +12,14 @@ import (
 	"os/exec"
 	"regexp"
 	"time"
+
+	"github.com/chromedp/chromedp"
 )
 
 type CDPProbeResult struct {
-	Port       int
-	VersionURL string
+	Port         int
+	VersionURL   string
+	WebSocketURL string
 }
 
 var devtoolsRe = regexp.MustCompile(`DevTools listening on ws://[^:]+:(\d+)/`)
@@ -23,6 +27,26 @@ var devtoolsRe = regexp.MustCompile(`DevTools listening on ws://[^:]+:(\d+)/`)
 // LaunchAndProbe starts binary headless, waits for the DevTools banner,
 // confirms /json/version responds, and tears the browser down before return.
 func LaunchAndProbe(ctx context.Context, binary string, extraArgs []string, timeout time.Duration) (CDPProbeResult, error) {
+	return launchAndProbe(ctx, binary, extraArgs, timeout, nil)
+}
+
+// LaunchAndEvaluate performs the launch probe and evaluates one expression
+// before tearing the browser down. It lets provider diagnostics verify behavior
+// that a version string or a successfully opened CDP port cannot prove.
+func LaunchAndEvaluate(ctx context.Context, binary string, extraArgs []string, timeout time.Duration, expression string, value any) (CDPProbeResult, error) {
+	return launchAndProbe(ctx, binary, extraArgs, timeout, func(ctx context.Context, result CDPProbeResult) error {
+		allocCtx, allocCancel := chromedp.NewRemoteAllocator(ctx, result.WebSocketURL, chromedp.NoModifyURL)
+		defer allocCancel()
+		browserCtx, browserCancel := chromedp.NewContext(allocCtx)
+		defer browserCancel()
+		if err := chromedp.Run(browserCtx, chromedp.Evaluate(expression, value)); err != nil {
+			return fmt.Errorf("evaluate %q: %w", expression, err)
+		}
+		return nil
+	})
+}
+
+func launchAndProbe(ctx context.Context, binary string, extraArgs []string, timeout time.Duration, inspect func(context.Context, CDPProbeResult) error) (CDPProbeResult, error) {
 	cctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -90,10 +114,17 @@ func LaunchAndProbe(ctx context.Context, binary string, extraArgs []string, time
 	}
 
 	versionURL := fmt.Sprintf("http://127.0.0.1:%d/json/version", port)
-	if err := probeCDPVersionWithRetry(cctx, versionURL); err != nil {
-		return CDPProbeResult{Port: port, VersionURL: versionURL}, err
+	webSocketURL, err := probeCDPVersionWithRetry(cctx, versionURL)
+	result := CDPProbeResult{Port: port, VersionURL: versionURL, WebSocketURL: webSocketURL}
+	if err != nil {
+		return result, err
 	}
-	return CDPProbeResult{Port: port, VersionURL: versionURL}, nil
+	if inspect != nil {
+		if err := inspect(cctx, result); err != nil {
+			return result, fmt.Errorf("inspect launched browser: %w", err)
+		}
+	}
+	return result, nil
 }
 
 func scrapeDevtoolsPort(r io.ReadCloser, portCh chan<- int, errCh chan<- error) {
@@ -124,7 +155,7 @@ func scrapeDevtoolsPort(r io.ReadCloser, portCh chan<- int, errCh chan<- error) 
 	errCh <- errors.New("stderr closed before DevTools banner appeared")
 }
 
-func probeCDPVersionWithRetry(ctx context.Context, url string) error {
+func probeCDPVersionWithRetry(ctx context.Context, url string) (string, error) {
 	deadline, ok := ctx.Deadline()
 	if !ok {
 		deadline = time.Now().Add(5 * time.Second)
@@ -136,11 +167,11 @@ func probeCDPVersionWithRetry(ctx context.Context, url string) error {
 			if lastErr == nil {
 				lastErr = errors.New("deadline exceeded")
 			}
-			return fmt.Errorf("probe %s: %w", url, lastErr)
+			return "", fmt.Errorf("probe %s: %w", url, lastErr)
 		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
-			return fmt.Errorf("probe %s: %w", url, err)
+			return "", fmt.Errorf("probe %s: %w", url, err)
 		}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -148,11 +179,25 @@ func probeCDPVersionWithRetry(ctx context.Context, url string) error {
 			time.Sleep(100 * time.Millisecond)
 			continue
 		}
-		_ = resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			return nil
+		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+			time.Sleep(100 * time.Millisecond)
+			continue
 		}
-		lastErr = fmt.Errorf("HTTP %d", resp.StatusCode)
+		var version struct {
+			WebSocketURL string `json:"webSocketDebuggerUrl"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&version)
+		_ = resp.Body.Close()
+		if err == nil && version.WebSocketURL != "" {
+			return version.WebSocketURL, nil
+		}
+		if err != nil {
+			lastErr = fmt.Errorf("decode response: %w", err)
+		} else {
+			lastErr = errors.New("response missing webSocketDebuggerUrl")
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }

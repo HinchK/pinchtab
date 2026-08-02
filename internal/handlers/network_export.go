@@ -13,6 +13,7 @@ import (
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
 	"github.com/pinchtab/pinchtab/internal/bridge/observe"
+	"github.com/pinchtab/pinchtab/internal/fileout"
 	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
@@ -174,9 +175,10 @@ func (h *Handlers) resolveExportContext(w http.ResponseWriter, r *http.Request, 
 	}
 	factory := observe.GetFormat(formatName)
 	if factory == nil {
-		httpx.JSON(w, 400, map[string]any{
+		message := fmt.Sprintf("unknown export format %q", formatName)
+		httpx.JSONError(w, 400, "unknown_format", message, map[string]any{
 			"code":      "unknown_format",
-			"error":     fmt.Sprintf("unknown export format %q", formatName),
+			"error":     message,
 			"available": observe.ListFormats(),
 		})
 		return exportContext{}, false
@@ -193,7 +195,7 @@ func resolveExportBody(ctx context.Context, nm *bridge.NetworkMonitor, entry bri
 	if entry.BodyRetained {
 		return clampExportBody(entry.ResponseBody, entry.Base64Encoded)
 	}
-	body, b64, _ := nm.GetResponseBody(ctx, entry.RequestID)
+	body, b64, _ := bridge.GetResponseBody(ctx, entry.RequestID)
 	return clampExportBody(body, b64)
 }
 
@@ -310,9 +312,34 @@ func (h *Handlers) writeExportFile(
 	encodeAll func(emit func(observe.ExportEntry) error) error,
 ) error {
 	userPath := r.URL.Query().Get("path")
-	if userPath == "" {
-		ts := time.Now().Format("20060102-150405")
-		userPath = fmt.Sprintf("network-%s%s", ts, enc.FileExtension())
+	autoNamed := userPath == ""
+	// A reservation is a real 0-byte file, so every exit that is not the completed
+	// rename has to remove it. Left behind it poisons the name twice over: the obvious
+	// name holds an empty export, and the next export in the same second is pushed onto
+	// a -1 suffix. Releasing it from a deferred check rather than at each return is what
+	// makes that exhaustive — a branch added later inherits it instead of forgetting it.
+	reservedPath, committed := "", false
+	defer func() {
+		if !committed && reservedPath != "" {
+			_ = os.Remove(reservedPath)
+		}
+	}()
+	if autoNamed {
+		// Reserve the generated name before resolveExportFile derives the tmp path from
+		// it. Two auto-named exports in the same second used to rename onto one file —
+		// and share one <path>.tmp while writing, so the loser was corrupt as well as
+		// lost. The reservation is a 0-byte file the final rename replaces. A caller
+		// ?path= is untouched and keeps overwriting.
+		exportDir := filepath.Join(h.Config.StateDir, "exports")
+		if err := os.MkdirAll(exportDir, 0750); err != nil {
+			return fmt.Errorf("create dir: %w", err)
+		}
+		path, err := fileout.ReserveUnique(exportDir, "network-"+exportTimestamp(), enc.FileExtension())
+		if err != nil {
+			return fmt.Errorf("reserve export name: %w", err)
+		}
+		reservedPath = path
+		userPath = filepath.Base(reservedPath)
 	}
 
 	absPath, tmpPath, f, _, err := h.resolveExportFile(userPath)
@@ -353,6 +380,7 @@ func (h *Handlers) writeExportFile(
 		_ = os.Remove(tmpPath)
 		return err
 	}
+	committed = true
 
 	httpx.JSON(w, 200, map[string]any{
 		"path":    absPath,

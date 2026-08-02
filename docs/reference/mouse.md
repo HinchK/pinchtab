@@ -46,8 +46,21 @@ Notes:
 - `mouse move` accepts either coordinates or a unified selector.
 - `mouse down` and `mouse up` accept an optional selector. Without one, they use the current pointer position.
 - `mouse wheel` accepts either a delta form (`<dy> [--dx <n>]`) or an optional selector. Without a selector, it uses the current pointer position.
-- `drag <from> <to>` accepts selector/ref targets or `x,y` coordinate pairs.
-- `button` supports `left`, `right`, and `middle`.
+- `drag <from> <to>` accepts selector/ref targets or `x,y` coordinate pairs on either side.
+- `drag` has two forms and they differ only in how the end of the drag is expressed: a
+  target (`drag <from> <to>`, `toSelector`/`toX`/`toY`) or an offset (`--drag-x/--drag-y`,
+  `dragX`/`dragY`). Both are one action that moves the pointer with the button still held,
+  which is what makes HTML5 drag-and-drop work — Chrome enters the drag pipeline only on
+  movement that reports the pressed button. Each `mouse move` is its own request and knows
+  of no press, so a drag assembled out of `mouse move`/`mouse down`/`mouse up` fires no
+  `dragstart` however many small steps it takes; the step count is not the problem. Use
+  `drag` for anything with a `draggable` source.
+- `button` supports `left`, `right`, and `middle`. Any other name is refused — the CLI
+  refuses it before sending, and the HTTP action body answers 400 naming the three. Omitting
+  `button` still means `left`; that is a default, whereas a name the server does not know
+  used to be reinterpreted as `left` and reported as success. The DOM's `primary` and
+  `secondary` are refused rather than mapped, since `primary` happens to mean left while
+  `secondary` would not.
 - Pointer move uses a bounded CDP `mouseMoved` dispatch first. If headless Chromium stalls that dispatch, PinchTab falls back to DOM mouse events so hover and mouse-move flows remain responsive.
 
 ## HTTP API

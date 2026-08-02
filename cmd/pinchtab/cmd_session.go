@@ -5,10 +5,30 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/pinchtab/pinchtab/internal/cli/apiclient"
 	"github.com/pinchtab/pinchtab/internal/cli/output"
+	"github.com/pinchtab/pinchtab/internal/server"
 	"github.com/spf13/cobra"
 )
+
+type sessionCreateResult struct {
+	ID     string `json:"id"`
+	Token  string `json:"sessionToken"`
+	Status string `json:"status"`
+}
+
+// printSessionCreated splits the two values by stream on purpose. The token is the only
+// thing on stdout, because the documented usage captures it with $(...). The id goes to
+// stderr as a hint: it is the handle `session revoke` takes, and withholding it is why
+// revoking your own session used to need a list-and-correlate detour through
+// `session list`.
+func printSessionCreated(result sessionCreateResult) {
+	fmt.Println(result.Token)
+	if result.ID != "" {
+		output.Hint("session id " + result.ID + " — revoke takes the id: pinchtab session revoke " + result.ID)
+	}
+}
 
 func init() {
 	sessionCmd := &cobra.Command{
@@ -24,7 +44,7 @@ func init() {
 			sessionToken := os.Getenv("PINCHTAB_SESSION")
 			if sessionToken == "" {
 				fmt.Fprintln(os.Stderr, "Error: no session set")
-				output.Hint("create one: export PINCHTAB_SESSION=$(pinchtab session create --agent-id <id>)")
+				output.Hint(cli.NoSessionHint)
 				os.Exit(1)
 			}
 			runCLI(func(rt cliRuntime) {
@@ -67,18 +87,11 @@ func init() {
 					return
 				}
 				statusCode, rawBody, _ := apiclient.DoPostQuietWithStatus(rt.client, rt.base, rt.token, "/sessions", body)
-				if statusCode == 404 {
-					fmt.Fprintln(os.Stderr, "Error: agent sessions are not enabled on this server")
-					output.Hint("enable with: sessions.agent.enabled = true in config.json, then restart the server")
-					os.Exit(1)
-				}
 				if statusCode >= 400 {
+					exitSessionUnavailable(rawBody)
 					apiclient.ExitWithAPIError(statusCode, rawBody)
 				}
-				var result struct {
-					Token  string `json:"sessionToken"`
-					Status string `json:"status"`
-				}
+				var result sessionCreateResult
 				if err := json.Unmarshal(rawBody, &result); err != nil {
 					fmt.Fprintf(os.Stderr, "Error: failed to parse session response\n")
 					os.Exit(1)
@@ -88,7 +101,7 @@ func init() {
 					output.Hint("create a new session: pinchtab session create --agent-id <id>")
 					os.Exit(1)
 				}
-				fmt.Println(result.Token)
+				printSessionCreated(result)
 			})
 		},
 	}
@@ -109,4 +122,50 @@ func init() {
 
 	sessionCmd.AddCommand(infoCmd, listCmd, createCmd, revokeCmd)
 	rootCmd.AddCommand(sessionCmd)
+}
+
+// exitSessionUnavailable renders the two states in which the session family exists but is
+// not mounted, each with the remedy that can actually succeed there. It decides on the
+// CODE: the three states used to share a bare 404, so keying off the status printed a
+// config edit at bridge users, for whom no config value mounts the route.
+//
+// Anything else — including an unrecognised code and a genuinely unknown path, which
+// carries no code at all — falls through to the generic API error. A permissive default
+// here would silently reuse the config remedy for the next mode, which is the conflation
+// this replaced.
+// Both halves are read because only one state has a remedy: enabling agent sessions on a
+// full server is a file edit plus a restart, which is not one command, so that state carries
+// its guidance as a hint. A reader of the remedy alone would print nothing there.
+func sessionUnavailableAdvice(rawBody []byte) (message, hint, remedy string, ok bool) {
+	var resp struct {
+		Code    string `json:"code"`
+		Error   string `json:"error"`
+		Details struct {
+			Hint   string `json:"hint"`
+			Remedy string `json:"remedy"`
+		} `json:"details"`
+	}
+	if json.Unmarshal(rawBody, &resp) != nil {
+		return "", "", "", false
+	}
+	switch resp.Code {
+	case server.CodeSessionsUnavailableInBridgeMode, server.CodeSessionsDisabled:
+		return resp.Error, resp.Details.Hint, resp.Details.Remedy, true
+	}
+	return "", "", "", false
+}
+
+func exitSessionUnavailable(rawBody []byte) {
+	message, hint, remedy, ok := sessionUnavailableAdvice(rawBody)
+	if !ok {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Error: %s\n", message)
+	if hint != "" {
+		output.Hint(hint)
+	}
+	if remedy != "" {
+		output.Hint(remedy)
+	}
+	os.Exit(1)
 }

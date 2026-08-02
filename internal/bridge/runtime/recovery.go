@@ -77,7 +77,7 @@ func startBrowserWithRecovery(parentCtx context.Context, cfg *config.RuntimeConf
 		}
 
 		if silentDrop && !retriedProfileCorruption && hooks.QuarantineCorruptedProfile != nil && strings.TrimSpace(cfg.ProfileDir) != "" {
-			if quarantinePath, qerr := hooks.QuarantineCorruptedProfile(cfg.ProfileDir); qerr == nil {
+			if quarantinePath, qerr := hooks.QuarantineCorruptedProfile(cfg.ProfileDir, cfg.ProfileQuarantineKeep); qerr == nil {
 				slog.Warn("browser silently dropped CDP attach; quarantined profile and retrying with fresh profile",
 					"provider", browserID,
 					"originalProfile", cfg.ProfileDir,
@@ -149,7 +149,7 @@ func startBrowserWithRemoteAllocator(parentCtx context.Context, cfg *config.Runt
 		return nil, nil, stealth.LaunchModeUninitialized, missingBrowserBinaryError(cfg)
 	}
 
-	args, providerEnv, err := buildBrowserArgsWithBundle(cfg, bundle, debugPort, geoAlignment)
+	args, providerEnv, err := buildBrowserArgsWithBundle(cfg, plan.binary, bundle, debugPort, geoAlignment)
 	if err != nil {
 		return nil, nil, stealth.LaunchModeUninitialized, err
 	}

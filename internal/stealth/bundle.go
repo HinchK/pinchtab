@@ -69,6 +69,11 @@ type Status struct {
 	Tradeoffs              []string        `json:"tradeoffs,omitempty"`
 	TabOverrides           map[string]bool `json:"tabOverrides"`
 	AttachMutationsSkipped bool            `json:"attachMutationsSkipped,omitempty"`
+	// AdvertisedBrowserVersion is the version the persona presents to pages.
+	// BrowserBinaryVersion is what the launched binary reports for itself; the
+	// two disagreeing is the defect a caller can now observe rather than infer.
+	AdvertisedBrowserVersion string `json:"advertisedBrowserVersion,omitempty"`
+	BrowserBinaryVersion     string `json:"browserBinaryVersion,omitempty"`
 }
 
 func NewBundle(cfg *config.RuntimeConfig, seed int64) *Bundle {
@@ -85,7 +90,7 @@ func NewBundle(cfg *config.RuntimeConfig, seed int64) *Bundle {
 	disablePinchTabStealth := config.PinchTabStealthDefaultsDisabled(cfg)
 	personaJSON := "{}"
 	if cfg != nil {
-		if encoded, err := json.Marshal(BuildPersona(cfg.UserAgent, cfg.BrowserVersion)); err == nil {
+		if encoded, err := json.Marshal(BuildPersona(cfg.UserAgent, ResolveBrowserVersion(cfg))); err == nil {
 			personaJSON = string(encoded)
 		}
 	}

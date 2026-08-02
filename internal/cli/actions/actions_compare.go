@@ -114,6 +114,10 @@ func Compare(client *http.Client, base, token string, cmd *cobra.Command, liveBa
 	}
 
 	if mustBool(cmd, "fail-on-diff") && outcome.Report.HasDiffs {
+		// The gate did exactly what it promises, so this is not a misuse:
+		// suppress usage here rather than at declaration, which would also
+		// swallow it for the argument-count error.
+		cmd.SilenceUsage = true
 		return fmt.Errorf("differences found (--fail-on-diff)")
 	}
 	return nil
@@ -190,9 +194,22 @@ func printCompareSummary(report audit.ComparisonReport) {
 		case p.Status != audit.CompareStatusCompared:
 			fmt.Printf("  %s · %s\n", label, p.Status)
 		case p.DiffPercentage != nil:
-			fmt.Printf("  %s · visual %.2f%% · drift %d\n", label, *p.DiffPercentage, len(p.Drift))
+			fmt.Printf("  %s · visual %.2f%% · %s\n", label, *p.DiffPercentage, driftLabel(p.Drift))
 		default:
-			fmt.Printf("  %s · drift %d\n", label, len(p.Drift))
+			fmt.Printf("  %s · %s\n", label, driftLabel(p.Drift))
 		}
 	}
+}
+
+// driftLabel names the drifted fields beside the count, so a new uncaught
+// exception is not read as a stray console line.
+func driftLabel(drift []audit.DataDrift) string {
+	if len(drift) == 0 {
+		return "drift 0"
+	}
+	fields := make([]string, 0, len(drift))
+	for _, d := range drift {
+		fields = append(fields, d.Field)
+	}
+	return fmt.Sprintf("drift %d (%s)", len(drift), strings.Join(fields, ", "))
 }

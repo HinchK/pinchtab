@@ -21,6 +21,7 @@ export interface Profile {
   sizeMB?: number /* float64 */;
   running: boolean;
   temporary?: boolean;
+  quarantined?: boolean;
   source?: string;
   chromeProfileName?: string;
   accountEmail?: string;
@@ -115,6 +116,8 @@ export interface ActivityLogEvent {
   action?: string;
   route?: RouteMetadata;
   ref?: string;
+  code?: string;
+  error?: string;
 }
 export interface ActivityLogResponse {
   events: ActivityLogEvent[];

@@ -330,10 +330,12 @@ curl -X POST "/upload?tabId=TAB_ID" -H "Content-Type: application/json" \
 
 # Upload base64-encoded data
 curl -X POST /upload -H "Content-Type: application/json" \
-  -d '{"selector": "#avatar-input", "files": ["data:image/png;base64,iVBOR..."]}'
+  -d '{"selector": "#avatar-input", "files": ["data:image/png;base64,iVBOR..."], "fileNames": ["avatar.png"]}'
 ```
 
 Sets files on `<input type=file>` elements via CDP. Fires `change` events. Selector defaults to `input[type=file]` if omitted.
+
+`fileNames` is index-aligned with `files` and is the name the page reads from `file.name`. Send it whenever you know the filename: without it a file arrives as `upload-<i>.bin`, and forms that gate on the extension (`accept=".csv"`, `file.name.endsWith(".pdf")`) reject it. Content sniffing fills the gap only for formats with magic bytes — png, jpeg, gif, webp, pdf — never for csv, json, txt, md or html. The CLI sends it automatically.
 
 ## Screenshot
 

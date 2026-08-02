@@ -53,6 +53,43 @@ pinchtab snap --max-tokens 2000         # Limit output size
 | `maxTokens` | Token budget limit |
 | `depth` | Tree depth limit |
 
+## Control state on a node
+
+A snapshot reports the state of a control, not just its identity, so an agent can
+verify its own action and read a page it did not set up:
+
+- `value` — the current text of an input or the selection of a `select`
+- `focused`, `disabled`, `hidden` — booleans, present only when true
+- `checked` — `"true"`, `"false"` or `"mixed"` for a checkbox, radio,
+  `menuitemcheckbox`, `menuitemradio`, or any element carrying `aria-checked`
+
+`checked` is a three-value string rather than a boolean because `"mixed"` is a real
+state: both a native indeterminate checkbox and `aria-checked="mixed"` report it.
+
+**An absent `checked` means the node has no checkedness — never that it is off.**
+Ordinary nodes do not carry the key at all, so a missing value must not be read as
+unchecked. A control that is off says so explicitly with `"false"`.
+
+The rendered formats carry all three states, so an unchecked option never looks
+like a node the field does not apply to:
+
+| State | `format=text` | `format=compact` |
+|-------|---------------|------------------|
+| checked | `[checked]` | `[x]` |
+| unchecked | `[unchecked]` | `[ ]` |
+| mixed | `[mixed]` | `[/]` |
+
+A radio group is therefore readable from a single snapshot:
+
+```
+e4 radio "Standard shipping" [checked]
+e5 radio "Express shipping" [unchecked]
+e6 radio "Pickup" [unchecked]
+```
+
+Diff mode treats a change of `checked` as a change, so `pinchtab snap -d` after a
+`check` shows the node as `[~]`.
+
 ## Related Pages
 
 - [Click](./click.md)

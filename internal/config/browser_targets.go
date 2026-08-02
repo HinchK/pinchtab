@@ -71,14 +71,7 @@ func ValidateBrowserTargets(bc BrowserConfig) []error {
 
 	var errs []error
 
-	// Stable iteration order so error output is deterministic.
-	names := make([]string, 0, len(bc.Targets))
-	for name := range bc.Targets {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	for _, name := range names {
+	for _, name := range SortedBrowserTargetNames(bc.Targets) {
 		t := bc.Targets[name]
 		if !IsValidBrowserTargetName(name) {
 			errs = append(errs, ValidationError{
@@ -193,6 +186,17 @@ func validateTargetExtraFlags(targetName, raw string) []error {
 
 // migrateLegacyBrowserConfig synthesizes targets["default"] from legacy fields when targets is empty.
 // When both blocks are present, explicit targets win and conflict=true so the caller can warn.
+// SortedBrowserTargetNames walks the targets in a stable order, so diagnostics naming
+// several of them read the same way on every run.
+func SortedBrowserTargetNames(targets BrowserTargetsConfig) []string {
+	names := make([]string, 0, len(targets))
+	for name := range targets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func migrateLegacyBrowserConfig(bc *BrowserConfig, browsersDefault string) (synthesized bool, conflict bool) {
 	if bc == nil {
 		return false, false
@@ -417,7 +421,10 @@ func applyTargetToRuntime(out *RuntimeConfig, t BrowserTargetConfig) {
 		out.BrowserExtraFlags = t.ExtraFlags
 	}
 	out.Cloak = mergeCloakConfig(out.Cloak, t.Cloak)
-	if !t.Proxy.IsZero() {
+	// HasNoServer, not IsZero: this replaces the inherited proxy wholesale, so a target
+	// block carrying only credentials must not clear a working parent proxy and send
+	// traffic out directly. Such a block is reported by ProxyServerRequiredAdvisory.
+	if !t.Proxy.HasNoServer() {
 		out.Proxy = cloneBrowserProxyConfig(t.Proxy)
 	}
 }

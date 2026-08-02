@@ -14,6 +14,19 @@ type ConsoleLogEntry struct {
 	Source    string    `json:"source,omitempty"`
 }
 
+// JSError is an uncaught JavaScript exception raised while the page loaded.
+// It is a separate channel from ConsoleLogEntry: a console.error call lands
+// there, a thrown exception lands here.
+type JSError struct {
+	Timestamp time.Time `json:"timestamp"`
+	Message   string    `json:"message"`
+	Type      string    `json:"type,omitempty"`
+	URL       string    `json:"url,omitempty"`
+	Line      int64     `json:"line,omitempty"`
+	Column    int64     `json:"column,omitempty"`
+	Stack     string    `json:"stack,omitempty"`
+}
+
 // NetworkRequest is a resource request observed while loading a page.
 type NetworkRequest struct {
 	URL          string    `json:"url"`
@@ -45,7 +58,6 @@ type InteractiveElement struct {
 	Tag      string `json:"tag,omitempty"`
 	Label    string `json:"label,omitempty"`
 	Disabled bool   `json:"disabled,omitempty"`
-	Visible  bool   `json:"visible,omitempty"`
 }
 
 // TimingMetrics holds browser-level performance timings in milliseconds.
@@ -89,6 +101,7 @@ type BrowserPageData struct {
 	ScreenshotPath      string               `json:"screenshotPath,omitempty"`
 	FullPageScreenshot  bool                 `json:"fullPageScreenshot,omitempty"`
 	ConsoleLogs         []ConsoleLogEntry    `json:"consoleLogs,omitempty"`
+	JSErrors            []JSError            `json:"jsErrors,omitempty"`
 	NetworkRequests     []NetworkRequest     `json:"networkRequests,omitempty"`
 	BrokenAssets        []BrokenAsset        `json:"brokenAssets,omitempty"`
 	InteractiveElements []InteractiveElement `json:"interactiveElements,omitempty"`
@@ -121,8 +134,11 @@ type PageResult struct {
 	Browser          BrowserPageData   `json:"browser"`
 }
 
-// AuditInput describes where a run's pages come from. Exactly one source
-// should be set.
+// AuditInput describes where a run's pages come from, on the way IN. Exactly one
+// source should be set. EnrichWithBrowser builds the request body from it field by
+// field, so this type is never marshalled whole and is not a mirror of the server's
+// report input — that is AuditReportInput, which carries the fields the server
+// echoes back instead of the raw results this one sends.
 type AuditInput struct {
 	// URLs is a direct list of page URLs to audit.
 	URLs []string `json:"urls,omitempty"`
@@ -131,6 +147,23 @@ type AuditInput struct {
 	// SeaportalResults is a raw seaportal results array (the interim
 	// seaportal-results/v0 format); pages route through browserRecommended.
 	SeaportalResults []byte `json:"seaportalResults,omitempty"`
+}
+
+// AuditReportInput is the input block a report carries back, mirroring
+// internal/audit.AuditInput field for field. It is a separate type from AuditInput
+// because the two describe opposite directions: a caller SENDS seaportal results as
+// raw bytes, while the server REPORTS the file it read them from and the format it
+// parsed. Decoding a report into AuditInput would silently drop both of those.
+type AuditReportInput struct {
+	// URLs is a direct list of page URLs that were audited.
+	URLs []string `json:"urls,omitempty"`
+	// SitemapURL is the sitemap pages were discovered from.
+	SitemapURL string `json:"sitemapUrl,omitempty"`
+	// SeaportalFile is the path to the SeaPortal results JSON file read.
+	SeaportalFile string `json:"seaportalFile,omitempty"`
+	// SeaportalFormat versions the ingested seaportal payload; empty for
+	// non-seaportal inputs.
+	SeaportalFormat string `json:"seaportalFormat,omitempty"`
 }
 
 // AuditOptions echoes the options a run was executed with.
@@ -144,12 +177,18 @@ type AuditOptions struct {
 }
 
 // AuditReport is the POST /audit response: the versioned site-level report.
+// Input carries no omitempty: the server emits the key unconditionally, and
+// omitempty is a no-op on a non-pointer struct field anyway, so keeping it would
+// only make the two sides of the mirror read as if they disagreed.
 type AuditReport struct {
-	SchemaVersion    string            `json:"schemaVersion"`
-	GeneratedAt      time.Time         `json:"generatedAt"`
-	Input            map[string]any    `json:"input,omitempty"`
-	Options          AuditOptions      `json:"options"`
-	Pages            []PageResult      `json:"pages"`
+	SchemaVersion string           `json:"schemaVersion"`
+	GeneratedAt   time.Time        `json:"generatedAt"`
+	Input         AuditReportInput `json:"input"`
+	Options       AuditOptions     `json:"options"`
+	Pages         []PageResult     `json:"pages"`
+	// SummaryScore is the mean accessibility score of enriched pages, in
+	// [0,100]; broken assets, failed requests and uncaught JS errors do not
+	// move it.
 	SummaryScore     int               `json:"summaryScore"`
 	SecurityFindings []SecurityFinding `json:"securityFindings,omitempty"`
 	Recommendations  []string          `json:"recommendations,omitempty"`

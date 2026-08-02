@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
+	"github.com/pinchtab/pinchtab/internal/sanitize"
 )
 
 const orchestratorActivitySource = "orchestrator"
@@ -101,14 +102,19 @@ func isInstanceHealthyStatus(code int) bool {
 	return code > 0 && code < http.StatusInternalServerError
 }
 
+// maxCompactBodyBytes bounds the slice of a remote response body that reaches an
+// operator-facing error message.
+const maxCompactBodyBytes = 220
+
+// compactBody is the marked form on purpose: every caller embeds the result in an
+// fmt.Errorf, and an operator reading one needs to tell a short body from a cut one.
+// The body is arbitrary remote bytes, so the cut goes through sanitize rather than a
+// byte slice — a raw trimmed[:220] lands mid-rune on any non-ASCII body and puts U+FFFD
+// in the message where the server's own words should be.
 func compactBody(body []byte) string {
 	trimmed := strings.TrimSpace(string(body))
 	if trimmed == "" {
 		return "<empty>"
 	}
-	const max = 220
-	if len(trimmed) > max {
-		return trimmed[:max]
-	}
-	return trimmed
+	return sanitize.TruncateUTF8BytesWithEllipsis(trimmed, maxCompactBodyBytes)
 }

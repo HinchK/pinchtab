@@ -2,6 +2,8 @@ package bridge
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"time"
 
 	bridgecdpops "github.com/pinchtab/pinchtab/internal/bridge/cdpops"
@@ -43,12 +45,25 @@ func SetResourceBlocking(ctx context.Context, patterns []string) error {
 	return bridgecdpops.SetResourceBlocking(ctx, patterns)
 }
 
-func getElementCenterJS(ctx context.Context, backendNodeID int64) (float64, float64, error) {
-	return bridgecdpops.GetElementCenterJS(ctx, backendNodeID)
-}
-
+// ScrollIntoViewAndGetBox scrolls the element into view and reports the box it
+// ended up at, in the same top-level viewport space /box and /capture report.
 func ScrollIntoViewAndGetBox(ctx context.Context, nodeID int64) (map[string]any, error) {
-	return bridgecdpops.ScrollIntoViewAndGetBox(ctx, nodeID)
+	if err := bridgecdpops.ScrollIntoViewIfNeeded(ctx, nodeID); err != nil {
+		return nil, err
+	}
+	box, ok := ElementBorderBox(ctx, nodeID)
+	if !ok {
+		return nil, fmt.Errorf("element has no box model (backendNodeId=%d)", nodeID)
+	}
+	return map[string]any{
+		"scrolled": true,
+		"box": map[string]any{
+			"x":      math.Round(box.X),
+			"y":      math.Round(box.Y),
+			"width":  math.Round(box.W),
+			"height": math.Round(box.H),
+		},
+	}, nil
 }
 
 func PointerPointForNode(ctx context.Context, nodeID int64, requireTopMost bool) (float64, float64, error) {
@@ -83,8 +98,12 @@ func JSDoubleClickByBackendNode(ctx context.Context, nodeID int64) error {
 	return bridgecdpops.JSDoubleClickByBackendNode(ctx, nodeID)
 }
 
-func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int) error {
-	return bridgecdpops.DragByNodeID(ctx, nodeID, dx, dy)
+func DragByNodeID(ctx context.Context, nodeID int64, dx, dy int, button string) error {
+	return bridgecdpops.DragByNodeID(ctx, nodeID, dx, dy, button)
+}
+
+func DragBetweenPoints(ctx context.Context, x, y, endX, endY float64, button string) error {
+	return bridgecdpops.DragBetweenPoints(ctx, x, y, endX, endY, button)
 }
 
 func HoverByCoordinate(ctx context.Context, x, y float64) error {

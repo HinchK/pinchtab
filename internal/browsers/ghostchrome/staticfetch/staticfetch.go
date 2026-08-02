@@ -24,7 +24,26 @@ var ErrStaticNotSupported = errors.New("operation not supported by static browse
 type liteTab struct {
 	window html.Window
 	url    string
-	refMap map[string]dom.Element
+	// refMap resolves a ref back to its element and refByEl gives an element its
+	// stable ref. Both persist for the tab's life and grow across snapshots so a
+	// ref denotes an element rather than a row index: the same element keeps its
+	// ref across a change of filter, and refs are sparse in a filtered view. The
+	// static DOM never mutates, so entries never go stale; a new page is a new
+	// tab with fresh maps.
+	refMap  map[string]dom.Element
+	refByEl map[dom.Element]string
+	refNext int
+}
+
+func (t *liteTab) assignRef(el dom.Element) string {
+	if ref, ok := t.refByEl[el]; ok {
+		return ref
+	}
+	ref := fmt.Sprintf("e%d", t.refNext)
+	t.refNext++
+	t.refByEl[el] = ref
+	t.refMap[ref] = el
+	return ref
 }
 
 type Browser struct {
@@ -96,9 +115,10 @@ func (l *Browser) Navigate(ctx context.Context, url string) (*browserops.Navigat
 	l.seq++
 	tabID := fmt.Sprintf("lite-%d", l.seq)
 	l.tabs[tabID] = &liteTab{
-		window: win,
-		url:    url,
-		refMap: make(map[string]dom.Element),
+		window:  win,
+		url:     url,
+		refMap:  make(map[string]dom.Element),
+		refByEl: make(map[dom.Element]string),
 	}
 	l.current = tabID
 
@@ -130,7 +150,6 @@ func (l *Browser) Snapshot(_ context.Context, tabID, filter string) (*browserops
 		return nil, errors.New("no body element")
 	}
 
-	tab.refMap = make(map[string]dom.Element)
 	nodes := l.walkDOM(tab, body, filter, 0)
 
 	title := l.getTitle(tab.window)

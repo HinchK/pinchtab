@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+
+	bridgecdpops "github.com/pinchtab/pinchtab/internal/bridge/cdpops"
 )
 
 type ActionFunc func(ctx context.Context, req ActionRequest) (map[string]any, error)
@@ -34,10 +36,22 @@ type ActionRequest struct {
 	Kind     string `json:"kind"`
 	Ref      string `json:"ref,omitempty"`
 	Selector string `json:"selector,omitempty"`
-	Text     string `json:"text"`
-	Key      string `json:"key"`
-	Value    string `json:"value"`
-	NodeID   int64  `json:"nodeId"`
+
+	// Text/Value use omitempty, and HasText records that one of them was
+	// SUPPLIED, for the same reason X/Y do below: an empty fill is a
+	// legitimate request to clear the field, so absent and empty must not
+	// share a representation. While they did, `fill` could not refuse a
+	// request whose text never arrived — it wrote "" and answered
+	// filled:true, len:0 — and its read-back verification, gated on a
+	// non-empty Text, switched itself off in exactly that case. Re-marshaling
+	// without omitempty would re-introduce "text":"" and make every forwarded
+	// request look supplied.
+	Text    string `json:"text,omitempty"`
+	Value   string `json:"value,omitempty"`
+	HasText bool   `json:"hasText,omitempty"`
+
+	Key    string `json:"key"`
+	NodeID int64  `json:"nodeId"`
 
 	// X/Y use omitempty so that re-marshaling an ActionRequest without
 	// explicit coordinates (e.g. when the tab-scoped handler forwards to
@@ -66,14 +80,31 @@ type ActionRequest struct {
 	// held during a press, enabling keyboard chords such as Ctrl+C or Shift+Arrow.
 	Modifiers int `json:"modifiers,omitempty"`
 
-	ScrollX int `json:"scrollX"`
-	ScrollY int `json:"scrollY"`
-	// DeltaX/DeltaY are explicit mouse-wheel deltas for low-level
-	// mouse-wheel actions. ScrollX/ScrollY remain for backward compatibility.
-	DeltaX int `json:"deltaX,omitempty"`
-	DeltaY int `json:"deltaY,omitempty"`
-	DragX  int `json:"dragX"`
-	DragY  int `json:"dragY"`
+	// ScrollX/ScrollY use omitempty for the same reason X/Y do: UnmarshalJSON
+	// infers HasScroll from the presence of these keys, so a re-marshal that
+	// re-introduced "scrollX":0 would turn every bare scroll into an explicit
+	// zero and refuse it. The explicit zero survives the omission because
+	// HasScroll is itself marshaled and the decoder ORs it back in — that is
+	// what keeps an explicit zero from decaying into the default 120px step.
+	ScrollX int `json:"scrollX,omitempty"`
+	ScrollY int `json:"scrollY,omitempty"`
+
+	HasScroll bool `json:"hasScroll,omitempty"`
+	// DeltaX/DeltaY are the wheel spelling; ScrollX/ScrollY remain for compatibility.
+	DeltaX   int  `json:"deltaX,omitempty"`
+	DeltaY   int  `json:"deltaY,omitempty"`
+	HasDelta bool `json:"hasDelta,omitempty"`
+	DragX    int  `json:"dragX"`
+	DragY    int  `json:"dragY"`
+
+	// A drag's destination. ToSelector takes the same unified selector vocabulary as
+	// Selector and the handler resolves it to ToNodeID; HasToXY separates an absent
+	// destination from the legitimate one at (0,0).
+	ToSelector string  `json:"toSelector,omitempty"`
+	ToNodeID   int64   `json:"toNodeId,omitempty"`
+	ToX        float64 `json:"toX,omitempty"`
+	ToY        float64 `json:"toY,omitempty"`
+	HasToXY    bool    `json:"hasToXY,omitempty"`
 
 	WaitNav bool   `json:"waitNav"`
 	Fast    bool   `json:"fast"`
@@ -120,6 +151,8 @@ type ActionRequest struct {
 	// browsers. Recorded on route metadata but does not change actual
 	// routing yet.
 	Browser string `json:"browser,omitempty"`
+
+	Vocab string `json:"vocab,omitempty"`
 }
 
 type actionRequestAlias ActionRequest
@@ -137,12 +170,17 @@ func (r *ActionRequest) UnmarshalJSON(data []byte) error {
 	*r = ActionRequest(alias)
 	r.Kind = CanonicalActionKind(r.Kind)
 	r.HasXY = r.HasXY || hasJSONKey(raw, "x") || hasJSONKey(raw, "y")
+	r.HasToXY = r.HasToXY || hasJSONKey(raw, "toX") || hasJSONKey(raw, "toY")
+	r.HasScroll = r.HasScroll || hasJSONKey(raw, "scrollX") || hasJSONKey(raw, "scrollY")
+	r.HasText = r.HasText || hasJSONKey(raw, "text") || hasJSONKey(raw, "value")
 	if hasJSONKey(raw, "deltaX") {
+		r.HasDelta = true
 		if err := json.Unmarshal(raw["deltaX"], &r.DeltaX); err != nil {
 			return err
 		}
 	}
 	if hasJSONKey(raw, "deltaY") {
+		r.HasDelta = true
 		if err := json.Unmarshal(raw["deltaY"], &r.DeltaY); err != nil {
 			return err
 		}
@@ -200,6 +238,64 @@ func ValidateSubmitAction(kind string, req ActionRequest) error {
 	}
 }
 
+// FillText is the one owner of what a fill writes: text, falling back to value,
+// the same tolerance actionSelect has had in the other direction. Both are
+// published request fields and no surface declared which one fill reads, so a
+// caller sending the other spelling wrote nothing and was told it succeeded.
+//
+// The second return says whether anything was asked for at all, which is not the
+// same as a non-empty answer: a supplied empty string clears the field.
+func FillText(req ActionRequest) (string, bool) {
+	if req.Text != "" {
+		return req.Text, true
+	}
+	if req.Value != "" {
+		return req.Value, true
+	}
+	return "", req.HasText
+}
+
+// SelectValue is FillText with the precedence reversed, and they stay two named functions
+// because the precedence IS the difference — a shared helper taking a preference argument
+// would hide it at both call sites.
+//
+// Supplied-ness reads HasText, which is inferred from key presence of text OR value, and
+// those are exactly the two fields select reads. So an explicitly supplied empty string is
+// a request to select the `<option value="">` placeholder, not an absent argument.
+func SelectValue(req ActionRequest) (string, bool) {
+	if req.Value != "" {
+		return req.Value, true
+	}
+	if req.Text != "" {
+		return req.Text, true
+	}
+	return "", req.HasText
+}
+
+// ValidateFillAction refuses a fill that carries no text under any spelling. That
+// request used to write "" and answer filled:true with len:0 — indistinguishable
+// from clearing a field on purpose, which is why it stayed invisible. Clearing
+// stays available by sending the key explicitly.
+func ValidateFillAction(kind string, req ActionRequest) error {
+	if CanonicalActionKind(kind) != ActionFill {
+		return nil
+	}
+	if _, supplied := FillText(req); !supplied {
+		return fmt.Errorf(`fill requires "text" (or "value"); send "text": "" to clear the field`)
+	}
+	return nil
+}
+
+// ValidateButtonAction refuses a button name no pointer action can honour. It is not gated
+// on the action kind, deliberately: the button is normalized inside cdpops for every action
+// that dispatches a press, so a kind list here would have to be kept in step with that set
+// and would leave any kind nobody thought of accepting a misspelling silently. An
+// unrecognised name reached CDP as "left", so a mistyped right-click performed a left-click
+// and reported success.
+func ValidateButtonAction(kind string, req ActionRequest) error {
+	return bridgecdpops.ValidateMouseButton(req.Button)
+}
+
 func hasJSONKey(raw map[string]json.RawMessage, key string) bool {
 	_, ok := raw[key]
 	return ok
@@ -212,6 +308,12 @@ func (b *Bridge) ExecuteAction(ctx context.Context, kind string, req ActionReque
 		req.Kind = kind
 	}
 	if err := ValidateSubmitAction(kind, req); err != nil {
+		return nil, err
+	}
+	if err := ValidateFillAction(kind, req); err != nil {
+		return nil, err
+	}
+	if err := ValidateButtonAction(kind, req); err != nil {
 		return nil, err
 	}
 	if kind == ActionClick && b.effectiveHumanize(req) && strings.TrimSpace(req.Mode) != "" {

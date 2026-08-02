@@ -20,7 +20,11 @@ Notes:
 
 - in bridge mode, `/health` reports bridge health and tab count
 - in full server mode, `/health` reports dashboard health, auth state, and instance count
-- `/metrics` proxies to the bridge instance (per-instance runtime metrics)
+- `/metrics` reports the counters of the process answering it: in full server mode the front
+  door's own request counters (auth rejections and unrouted paths included), in bridge mode
+  the bridge's. Every response names its `layer`, and the layers are never summed — read one
+  instance's counters at `/instances/{id}/metrics`. See
+  [reference/metrics.md](reference/metrics.md) for the layer table.
 - `/api/metrics` in full server mode is a server-level metrics snapshot (aggregated)
 
 ## Dashboard Auth And Config
@@ -110,7 +114,14 @@ Notes:
 - `POST /tabs/{id}/handoff` marks the tab as `paused_handoff` and records a reason
 - `GET /tabs/{id}/handoff` returns the current handoff state, or `active` when no handoff is set
 - `POST /tabs/{id}/resume` clears the handoff state and can carry resume metadata for the caller
-- a paused-handoff tab is a hard block on the action-execution routes (`/action`, `/actions`, `/macro`): they return `409 tab_paused_handoff` until `/resume` clears the state
+- a paused-handoff tab blocks the action-execution routes, but the two envelopes differ.
+  `POST /action` returns `409` with code `tab_paused_handoff` and a `details.hint` naming
+  `/resume`. `POST /actions` and `POST /macro` return **200** — they answer with a result
+  list — and carry the same refusal per item: the entry for each step against the paused tab
+  has `success: false`, `code: "tab_paused_handoff"` and the same `details`. Match on the
+  code, not on the message. With `stopOnError` false (the default) the remaining steps still
+  run, so each step aimed at the paused tab is refused the same way while steps naming another
+  tab execute normally. `/resume` clears the state for all of them.
 - treat the handoff record as coordination state, not as a security boundary — non-action endpoints (snapshots, screenshots, network logs, evals subject to their own gates) remain reachable
 - CLI wrappers exist: `pinchtab handoff`, `pinchtab resume`, `pinchtab handoff-status`, plus the `pinchtab tab handoff|resume|handoff-status` aliases
 
@@ -142,6 +153,8 @@ GET  /snapshot
 GET  /tabs/{id}/snapshot
 GET  /text
 GET  /tabs/{id}/text
+GET  /visible
+GET  /tabs/{id}/visible
 POST /find
 POST /tabs/{id}/find
 POST /evaluate
@@ -149,6 +162,10 @@ POST /tabs/{id}/evaluate
 ```
 
 `/evaluate` is intentionally separate from selector frame scope. `GET/POST /frame` only affects selector-based `/snapshot` and `/action` calls, not arbitrary JavaScript evaluation.
+
+`GET /action` decodes a subset of the action fields and refuses, with `400` naming the field, any parameter it cannot express rather than silently dropping it — so a modifier chord, a drag, `waitNav` or `humanize` must be sent as `POST /action` with a JSON body. A parameter the action request does not declare at all is refused the same way, with a `did you mean` hint for a near miss, so `?modifers=8` or `?Modifiers=8` no longer dispatches a plain click and answers `200`. The accepted set is the action request's own fields plus the parameters only the GET form carries, which today is `timeout` — a per-request action timeout in seconds, clamped to 0–60, that the POST form sends in its body instead. Cache-busters and stray parameters must be dropped from the URL.
+
+`GET /visible` (and `pinchtab visible <ref>`) answers CSS rendered-ness — `display`, `visibility`, `opacity`, and a laid-out box with non-zero size. Scroll position is not an input: an element far below the fold, or scrolled past, still reports `visible: true`. On-screen-ness is the response's `onScreen` field, which shares the capture snapshot's viewport-intersection predicate (see [reference/capture.md](reference/capture.md)); `onScreen` is omitted when the element could not be measured — absent means unknown, never "no".
 
 Action kinds currently include:
 
@@ -186,6 +203,24 @@ Action targeting fields:
 - `dialogAction` and `dialogText`
 - `humanize`
 
+`fill` and `type` write the string in `text`; `fill` also accepts it as `value`, which is the
+field `select` reads. A `fill` carrying neither is rejected — send `"text": ""` to clear a
+field, so clearing stays distinct from a request whose text never arrived.
+
+`select` matches the `<option value="...">` attribute first and the option's visible text
+second, so either spelling works. It draws the same absent-versus-supplied distinction as
+`fill`: send `"value": ""` to select an `<option value="">` placeholder and reset the
+dropdown, and a `select` carrying neither key is rejected. Every surface expresses it —
+`POST /action` with `"value": ""`, `pinchtab select <ref> ""`, and the `pinchtab_select` MCP
+tool with `value: ""`.
+
+`button` accepts `left`, `right`, and `middle` — the same vocabulary the CLI's `--button`
+help lists, tolerating case and surrounding whitespace, so `RIGHT` and ` middle ` are the
+buttons they name. Any other value is refused with `400` `invalid_mouse_button` naming the
+three, on any action body carrying the field: `primary`, `secondary` and `0` used to be
+reinterpreted as `left` and reported as success. Omitting `button` means `left`, which is a
+default rather than forgiveness for a name the server does not know.
+
 `humanize` is a per-action override for input style. When omitted, actions use `instanceDefaults.humanize`, which defaults to `false`. Use `kind:"click"` or `kind:"type"` with `humanize:true` when a page needs the slower human-like pointer or typing path.
 
 Pointer fallback behavior:
@@ -213,7 +248,7 @@ Snapshot query parameters:
 
 Text query parameters:
 
-- `mode=raw`
+- `mode=raw` (`mode=full` is an alias; any other value is a 400 naming the accepted ones)
 - `format`
 - `maxChars`
 - `frameId`
@@ -223,8 +258,62 @@ Text query parameters:
 full `innerText`, or `/snapshot` for structured UI text like prices and button
 labels.
 
+`mode=raw` and `mode=full` are the same extraction — the whole unfiltered page —
+and are what the CLI's `--raw` and `--full` send. The default extraction keeps
+block and table-cell boundaries: adjacent cells are separated by a tab and
+adjacent blocks by a newline, so a status code and a timestamp in neighbouring
+cells stay two fields rather than one number.
+
 `/text` is also frame-aware. `frameId` targets a specific iframe for a one-shot
 read; otherwise the endpoint inherits the tab's current `/frame` scope.
+
+### The `frame` Disclosure On Scoped Reads
+
+A `/frame` scope is per-tab server state, not a per-request argument: it survives every
+later command until something clears it, so the caller who reads a scoped tab is often not
+the one who scoped it. `/snapshot` and `/text` therefore publish the frame they were served
+from:
+
+```json
+"frame": {
+  "frameId": "886601397BFA0B332880152438BD0153",
+  "frameUrl": "http://127.0.0.1:18798/inner.html",
+  "frameName": "payment-frame",
+  "frameTitle": "Inner",
+  "ownerRef": "e3"
+}
+```
+
+- The key is **absent** on a whole-document read, so nothing changes for an unscoped caller.
+- It is published for a **one-shot `?frameId=` read too**, on a tab with no stored scope: the
+  disclosure names the frame the read was actually served from, not whatever the tab happens
+  to be scoped to. A one-shot read returns a fragment for the same reason a scoped one does,
+  so it says so the same way.
+- `frameUrl` and `frameTitle` are read from the frame at request time and are what the
+  returned content belongs to; a frame that navigated since the scope was set reports where
+  it is now.
+- Top-level `url` and `title` keep their meaning in every response, scoped or not: they are
+  the TAB's document. They are never re-pointed at the frame — a field that meant one thing
+  usually and another under invisible state is the defect this disclosure exists to remove.
+- `format=compact` and `format=text` carry the same fact in the header, as
+  `# Outer | http://127.0.0.1:18798/ | frame e3 | 3 nodes`. The marker names the owner ref
+  when one is known, because that is the handle `POST /frame` takes as a `target`; a raw
+  frame id is not. Without a known ref it names a shortened frame id.
+- The object is the one `GET /frame` returns under `frame`, plus `frameTitle`.
+
+`/capture` publishes the same `frame` object on a scoped read, for the same reason: its
+snapshot half is filtered to the scoped frame while top-level `url` and `title` name the tab
+document.
+
+`epoch.frameId` is **not** the scope and never was. It is the frame tree's ROOT id, taken
+before the capture to pair the image with the DOM epoch it was shot against, and it holds
+the same value whether or not a scope is set — so a scoped caller reading it is told the
+content came from the main document. Read `frame.frameId` for the scope and `epoch.frameId`
+for the epoch; they answer different questions and only agree when the tab is unscoped.
+
+`/html` and `/styles` already disclose their frame as a top-level `frameId`, and their `url`
+and `title` come from the frame's own document rather than the tab's, so a scoped read there
+was never attributed to the parent.
 
 Find body fields:
 
@@ -312,9 +401,14 @@ Capture query parameters:
   `none`; reserved for a future `document.readyState` gate.
 - `withBounds=true|false` — default `true`. When on, every snapshot node
   with a non-zero backend node id gets a `boundingBox` field and a
-  `visible` flag. Each bounded node costs one `DOM.getBoxModel` round trip
-  (~5ms); for the typical interactive-filter snapshot the budget is under
-  250ms. Pass `withBounds=false` to skip the per-node work.
+  `visible` flag. `boundingBox` is the element's **border box** — the
+  painted edge, the same rectangle `GET /box`, `screenshot?annotate=true`
+  and `getBoundingClientRect` report, so a box can be cross-checked against
+  any of them. It is not the content box: an element with a border or
+  padding would otherwise report a rectangle inset from the edge a viewer
+  identifies the control by. Each bounded node costs one `DOM.getBoxModel`
+  round trip (~5ms); for the typical interactive-filter snapshot the budget
+  is under 250ms. Pass `withBounds=false` to skip the per-node work.
 - `beyondViewport=true|false` — default `false`. When on, the image spans
   the full document instead of just the visible viewport. The response
   sets `image.coordinateSpace` to `"document"` and bounding boxes are
@@ -328,7 +422,10 @@ Capture query parameters:
 The response carries `image.coordinateSpace`, `image.devicePixelRatio`,
 and `image.viewport` ( `w`, `h`, `scrollX`, `scrollY` in CSS pixels at
 capture time) so clients can translate between image pixels and
-`boundingBox` values without guessing.
+`boundingBox` values without guessing. Two axes have to be pinned for that
+to hold: the coordinate ORIGIN, which `image.coordinateSpace` names
+(`viewport` or `document`), and the box-model EDGE, which is always the
+border box.
 
 The response carries an `epoch.domEpoch` token cached on the tab's ref-cache.
 Future client work can pass `expectedEpoch` to action endpoints to detect
@@ -418,7 +515,8 @@ Notes:
 - download automatically decompresses `.gz` files and returns the decompressed content
 - `security.downloadAllowedDomains` can whitelist specific domains (bypasses SSRF checks for those domains). Setting `["*"]` matches every host and disables all private-IP protection on the download endpoint.
 - clipboard endpoints are gated by `security.allowClipboard`
-- upload uses a JSON body with `selector` and `files`
+- upload uses a JSON body with `selector`, `files`, and optional `fileNames`
+- `fileNames` is index-aligned with `files` and sets the name the page sees in `file.name` — send it, or every upload arrives as `upload-<i>.bin` and forms gating on `accept=".csv"` or `file.name.endsWith(...)` reject it. Without a name the extension is sniffed from content, which cannot identify text formats (`.csv`, `.json`, `.txt`, `.md`, `.html`) because they have no magic bytes. A supplied name wins over the sniffed type even when the two disagree, matching what a browser sends. Only the basename is used: any directory part is dropped.
 
 ## Storage
 
@@ -575,9 +673,18 @@ Response body behavior for network detail/export:
 - `bodyMode=retained-preferred` waits briefly for pending retained-body capture before falling back to live CDP
 - `bodyMode=retained-only` never falls back to live CDP and returns explicit pending/skipped/error state instead
 - detail responses may expose `bodySource=retained|live` to distinguish which path produced the returned body
-- retained-body detail responses may expose `bodyPending=true` while capture is still in flight, or `bodySkipped=true` with `bodySkipReason` when retention was intentionally not completed
-- retained bodies are capped by `server.retainNetworkBodyMaxBytes`; oversized retained bodies are truncated and marked with `bodyTruncated=true`
+- retained-body detail responses may expose `bodyPending=true` while capture is still in flight, or `bodySkipped=true` with `bodySkipReason` when retention was not completed — either skipped up front (retention disabled, the tab's retention budget exhausted, concurrency limit reached) or because an over-budget base64 body was dropped rather than cut
+- retained bodies are capped twice: per body by `server.retainNetworkBodyMaxBytes` (`bodySkipReason` says "retention limit") and by the tab's remaining retention buffer ("retention budget"). An oversized text body is truncated to a byte-exact prefix and marked `bodyTruncated=true`; an oversized base64 body is dropped entirely with `bodySkipped=true` and the reason, because a base64 fragment is undecodable
+- `base64Encoded=true` marks the returned body (retained or live) as base64 — decode it before use. The field is omitted, never `false`, for a text body, so its presence is what to branch on. Both caps measure the encoded length, so a binary response has an effective raw budget of roughly three quarters of the configured bytes
 - retained responses may include `bodyRetained=true`
+
+Request body (`postData`) behavior:
+
+- `postData` holds the request body as the page sent it, decoded. Chrome delivers it base64-encoded and split into chunks; PinchTab decodes and joins it, so no base64 decoding is needed by the caller
+- it is capped at 64 KiB of decoded body, cut on a character boundary, and a cut body is marked `postDataTruncated=true` — without it a clipped request body reads as the body the client sent
+- it is omitted when the body is not text — a binary part in a multipart upload, for example — because the field carries no encoding marker. An omitted body says why: `postDataSkipped=true` with `postDataSkipReason` ("request body entry is not base64", "request body is not valid UTF-8"), so an absent `postData` is never mistaken for a request sent without one
+- `postDataTruncated` and `postDataSkipped` are different answers and never both set: truncated means cut but usable, skipped means there is no body to read. A request that simply had no body carries neither flag
+- HAR export puts the same decoded value in `request.postData.text`, and omits the block entirely when there is no publishable body
 
 Network export query parameters:
 
@@ -620,6 +727,21 @@ Solve body fields:
 - `tabId` optional
 - `maxAttempts` optional (defaults to `autoSolver.maxAttempts`, default `8`)
 - `timeout` optional in ms (auto-estimated when omitted, minimum `30000`)
+
+A named `solver` that cannot run is rejected with `400` before anything is
+solved, and the two reasons carry different codes:
+
+| Code | Meaning | Example message |
+| --- | --- | --- |
+| `unknown_solver` | No solver answers to that name — normally a misspelling. Lists what is available. | `unknown solver "cloudlfare" (available: [cloudflare semantic jschallenge])` |
+| `solver_key_missing` | A known key-gated solver whose API key is unset. Names the config key to set. | `solver "capsolver" is configured but its API key is not set; set autoSolver.external.capsolverKey to use it` |
+
+The API is deliberately stricter here than config validation, which accepts
+`capsolver` or `twocaptcha` in `autoSolver.solvers` with no key set — configuring
+a paid solver before its key is legitimate ordering, and the run falls back to
+the solvers that can run. A request naming one solver has no such fallback: it
+must not silently run a different solver, so it is rejected and told which key
+would enable it.
 
 `GET /config/autosolver` returns effective autosolver runtime settings and the
 currently available solver list.
@@ -667,6 +789,7 @@ GET  /instances
 GET  /instances/{id}
 GET  /instances/tabs
 GET  /instances/metrics
+GET  /instances/{id}/metrics
 POST /instances/start
 POST /instances/launch
 POST /instances/attach
@@ -743,6 +866,8 @@ Scheduler routes are only present when `scheduler.enabled` is true.
 
 Create returns `sessionToken` — the plaintext token shown only once.
 
+Agent session routes are only present in full server mode with `sessions.agent.enabled` true. The family always answers, so the state is readable from the error code rather than from a bare 404: a bridge returns `sessions_unavailable_bridge_mode`, whose remedy is to run `pinchtab server`, and a full server with the setting off returns `sessions_disabled`, whose remedy is the config change. No config value mounts the family in bridge mode.
+
 Session-authenticated callers cannot reach dashboard/admin endpoint families such as config, dashboard agent listings, dashboard event streams, session management, profile management, instance management, or cache controls. They are intended for trusted automation in controlled environments, not for untrusted multi-tenant isolation.
 
 ## Feature Gates
@@ -776,3 +901,50 @@ Problem Details is currently used for selected precondition and capability failu
 - screencast tab-not-found precondition failure
 
 Additional endpoints may be migrated over time. Clients should tolerate both error content types and branch on `Content-Type` when parsing failures.
+
+### Refusal guidance: `details.hint` and `details.remedy`
+
+A refusal that a caller can act on carries a `details` object with two fields. They are
+different kinds of answer and neither substitutes for the other:
+
+- `hint` — prose for a human or a model to read. Explanations, alternatives, preconditions
+  and anything that is not a single command live here.
+- `remedy` — **one line a shell accepts**, so an agent can run it verbatim without parsing
+  English.
+
+`remedy` guarantees all of the following:
+
+- one line, one or more `pinchtab` invocations, joined with `&&` when more than one is needed.
+  `$(...)` command substitution is allowed and is used where a value has to be read back
+  first — widening the domain allowlist appends to the current one rather than replacing it
+- no prose connectives (`then:`, `or`, a parenthetical tail), no pipes, semicolons,
+  redirections, backquotes, comments or brace expansion. `pinchtab dialog accept|dismiss`
+  is not two suggestions to a shell — it is a pipeline into a command named `dismiss` — so a
+  line like that is not a remedy and never appears in the field
+- every command and flag in it exists in the CLI
+- a free slot is a `<name>` placeholder, the same angle-bracket convention the CLI's own
+  `--help` uses, and nothing else. Values known when the refusal is produced are already
+  interpolated, so a placeholder means the value genuinely is the caller's to supply
+- **the field is absent when no single command fixes the refusal.** Absence is the answer,
+  not an omission: it says truthfully that there is nothing to run, and the guidance for that
+  case is in `hint`. Do not treat a missing `remedy` as an error in the response
+
+```json
+{
+  "error": "this endpoint requires the evaluate capability; enable security.allowEvaluate in config to use it",
+  "code": "evaluate_disabled",
+  "details": {
+    "setting": "security.allowEvaluate",
+    "hint": "Enable security.allowEvaluate to use this feature.",
+    "remedy": "pinchtab config set security.allowEvaluate true && pinchtab server restart"
+  }
+}
+```
+
+`details` may carry further machine-readable fields beside these two — the capability refusal
+above names the `setting`, an allowlist block names the blocked `url` and `domain` — so read
+the object by key rather than assuming it holds only guidance.
+
+`pinchtab` renders both fields when a request fails, printing `remedy` into a `Remedy:` line.
+Every value in that slot meets the contract above, whether it came from the server or from
+the CLI's own client-side refusals.

@@ -2,6 +2,13 @@
 
 Check server status and availability.
 
+`/health` is deliberately **not** the endpoint to compare across modes: in server
+mode it is the orchestrator's own envelope, and an orchestrator has facts
+(`instances`, `profiles`, `defaultInstance`) a bridge does not. Failure and crash
+telemetry is served in the same shape by both modes on
+[`/metrics`](./metrics.md) — use that when comparing a bridge repro against a
+server-mode problem.
+
 ## Bridge Mode
 
 ```bash
@@ -15,7 +22,7 @@ pinchtab health
 pinchtab health --json              # Full JSON response
 ```
 
-Bridge-mode health may also include:
+Bridge-mode health also reports `version`, and may include:
 
 - `crashLogs`
 - `failures`

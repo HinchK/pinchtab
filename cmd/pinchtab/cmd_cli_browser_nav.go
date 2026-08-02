@@ -1,6 +1,9 @@
 package main
 
 import (
+	"errors"
+	"strings"
+
 	browseractions "github.com/pinchtab/pinchtab/internal/cli/actions"
 	"github.com/pinchtab/pinchtab/internal/urls"
 	"github.com/spf13/cobra"
@@ -103,50 +106,80 @@ func newTabCloseCmd() *cobra.Command {
 	}
 }
 
+// errNoCurrentTab refuses locally instead of issuing /tabs//<verb>: an empty path
+// segment 404s at the mux, which the CLI then misdiagnoses as an outdated server.
+var errNoCurrentTab = errors.New("no current tab: pass a tab id, or run `pinchtab nav <url>` to open one")
+
+func mustResolveTabArg(args []string) (string, error) {
+	tabID := resolveTabArg(args)
+	if strings.TrimSpace(tabID) == "" {
+		return "", errNoCurrentTab
+	}
+	return tabID, nil
+}
+
 func newTabHandoffCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "handoff [id]",
-		Short: "Pause tab automation for human handoff",
-		Long:  "Mark a tab as paused_handoff so action routes block until resumed or timeout expires. Defaults to the current tab from the state file.",
-		Args:  cobra.MaximumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		Use:           "handoff [id]",
+		Short:         "Pause tab automation for human handoff",
+		Long:          "Mark a tab as paused_handoff so action routes block until resumed or timeout expires. Defaults to the current tab from the state file.",
+		Args:          cobra.MaximumNArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			reason, _ := cmd.Flags().GetString("reason")
 			timeoutMS, _ := cmd.Flags().GetInt("timeout-ms")
-			tabID := resolveTabArg(args)
+			tabID, err := mustResolveTabArg(args)
+			if err != nil {
+				return err
+			}
 			runCLI(func(rt cliRuntime) {
 				browseractions.TabHandoff(rt.client, rt.base, rt.token, tabID, reason, timeoutMS, cmd)
 			})
+			return nil
 		},
 	}
 }
 
 func newTabResumeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "resume [id]",
-		Short: "Resume a paused_handoff tab",
-		Long:  "Resume automation on a paused tab. Defaults to the current tab from the state file.",
-		Args:  cobra.MaximumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
+		Use:           "resume [id]",
+		Short:         "Resume a paused_handoff tab",
+		Long:          "Resume automation on a paused tab. Defaults to the current tab from the state file.",
+		Args:          cobra.MaximumNArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			status, _ := cmd.Flags().GetString("status")
-			tabID := resolveTabArg(args)
+			tabID, err := mustResolveTabArg(args)
+			if err != nil {
+				return err
+			}
 			runCLI(func(rt cliRuntime) {
 				browseractions.TabResume(rt.client, rt.base, rt.token, tabID, status, cmd)
 			})
+			return nil
 		},
 	}
 }
 
 func newTabHandoffStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "handoff-status [id]",
-		Short: "Show handoff status for a tab",
-		Long:  "Show handoff status. Defaults to the current tab from the state file.",
-		Args:  cobra.MaximumNArgs(1),
-		Run: func(cmd *cobra.Command, args []string) {
-			tabID := resolveTabArg(args)
+		Use:           "handoff-status [id]",
+		Short:         "Show handoff status for a tab",
+		Long:          "Show handoff status. Defaults to the current tab from the state file.",
+		Args:          cobra.MaximumNArgs(1),
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			tabID, err := mustResolveTabArg(args)
+			if err != nil {
+				return err
+			}
 			runCLI(func(rt cliRuntime) {
 				browseractions.TabHandoffStatus(rt.client, rt.base, rt.token, tabID, cmd)
 			})
+			return nil
 		},
 	}
 }

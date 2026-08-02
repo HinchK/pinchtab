@@ -131,8 +131,8 @@ func writeScrapeArtifacts(dir string, raw []byte, report scrape.Report, format s
 // routing verdict, and a snippet, so the caller can pick pages to expand with
 // `scrape <url> --only <picked-urls>`.
 func printPreviewSummary(report scrape.Report) {
-	fmt.Printf("Preview: %d page(s) discovered of %d · pick pages to expand with --only\n",
-		len(report.Pages), report.Site.TotalDiscovered)
+	fmt.Printf("Preview: %s · pick pages to expand with --only\n",
+		scrape.SampledPagesSummary(len(report.Pages), report.Site.TotalURLsInSitemap))
 	for _, p := range report.Pages {
 		verdict := ""
 		if p.BrowserRecommended {

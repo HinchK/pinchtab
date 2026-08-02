@@ -49,6 +49,9 @@ func (h *Handlers) HandleEvaluate(w http.ResponseWriter, r *http.Request) {
 	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
 		return
 	}
+	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedTabID) {
+		return
+	}
 
 	tCtx, tCancel := context.WithTimeout(ctx, h.Config.ActionTimeout)
 	defer tCancel()

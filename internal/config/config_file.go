@@ -1,7 +1,6 @@
 package config
 
 import (
-	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -112,6 +111,7 @@ func compareSemver(a, b [3]int) int {
 func DefaultFileConfig() FileConfig {
 	start := 9868
 	end := 9968
+	quarantineKeep := DefaultProfileQuarantineKeep
 	restartMaxRestarts := 20
 	restartInitBackoffSec := 2
 	restartMaxBackoffSec := 60
@@ -153,15 +153,9 @@ func DefaultFileConfig() FileConfig {
 	dashboardSessionElevationWindowSec := 15 * 60
 	dashboardSessionPersistElevationAcrossRestart := false
 	dashboardSessionRequireElevation := false
-	autoSolverEnabled := false
-	autoSolverAutoTrigger := true
-	autoSolverTriggerOnNavigate := true
-	autoSolverTriggerOnAction := true
-	autoSolverMaxAttempts := 8
-	autoSolverSolverTimeoutSec := 30
-	autoSolverRetryBaseDelayMs := 500
-	autoSolverRetryMaxDelayMs := 10000
-	autoSolverLLMFallback := false
+	// Locals only so the shared defaults can be pointer-wrapped; the values come
+	// from defaultAutoSolverConfig, not from a second transcription of them.
+	autoSolver := defaultAutoSolverConfig()
 	return FileConfig{
 		Schema:        CurrentConfigSchemaURL(),
 		ConfigVersion: CurrentConfigVersion,
@@ -171,7 +165,9 @@ func DefaultFileConfig() FileConfig {
 			StateDir: userConfigDir(),
 		},
 		Browser: BrowserConfig{
-			BrowserVersion: "144.0.7559.133",
+			// BrowserVersion is left unset so the persona probes the launched binary
+			// for its real version; a default here would pin it and the probe would
+			// never fire. TestTheConfigDefaultsLeaveBrowserVersionUnset guards this.
 			ExtensionPaths: []string{defaultExtensionsDir(userConfigDir())},
 		},
 		Browsers: BrowsersConfig{
@@ -218,9 +214,16 @@ func DefaultFileConfig() FileConfig {
 				ScanTimeoutSec: 5,
 			},
 		},
+		// BaseDir is deliberately empty. Pre-filling it with an absolute
+		// userConfigDir() path did two things: it baked a host home directory into any
+		// config that got written, and it made finalizeProfileConfig's
+		// filepath.Join(StateDir, "profiles") fallback unreachable, so server.stateDir
+		// could never relocate profiles. Left empty, the fallback is the live path and
+		// resolves to the same place for a default install, because StateDir itself
+		// defaults to userConfigDir().
 		Profiles: ProfilesConfig{
-			BaseDir:        filepath.Join(userConfigDir(), "profiles"),
 			DefaultProfile: "default",
+			QuarantineKeep: &quarantineKeep,
 		},
 		MultiInstance: MultiInstanceConfig{
 			Strategy:          "always-on",
@@ -268,16 +271,16 @@ func DefaultFileConfig() FileConfig {
 			},
 		},
 		AutoSolver: AutoSolverFileConfig{
-			Enabled:           &autoSolverEnabled,
-			AutoTrigger:       &autoSolverAutoTrigger,
-			TriggerOnNavigate: &autoSolverTriggerOnNavigate,
-			TriggerOnAction:   &autoSolverTriggerOnAction,
-			MaxAttempts:       &autoSolverMaxAttempts,
-			SolverTimeoutSec:  &autoSolverSolverTimeoutSec,
-			RetryBaseDelayMs:  &autoSolverRetryBaseDelayMs,
-			RetryMaxDelayMs:   &autoSolverRetryMaxDelayMs,
-			Solvers:           []string{"cloudflare", "semantic"},
-			LLMFallback:       &autoSolverLLMFallback,
+			Enabled:           &autoSolver.Enabled,
+			AutoTrigger:       &autoSolver.AutoTrigger,
+			TriggerOnNavigate: &autoSolver.TriggerOnNavigate,
+			TriggerOnAction:   &autoSolver.TriggerOnAction,
+			MaxAttempts:       &autoSolver.MaxAttempts,
+			SolverTimeoutSec:  &autoSolver.SolverTimeoutSec,
+			RetryBaseDelayMs:  &autoSolver.RetryBaseDelayMs,
+			RetryMaxDelayMs:   &autoSolver.RetryMaxDelayMs,
+			Solvers:           autoSolver.Solvers,
+			LLMFallback:       &autoSolver.LLMFallback,
 		},
 	}
 }

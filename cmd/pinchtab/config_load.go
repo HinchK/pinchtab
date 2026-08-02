@@ -17,6 +17,18 @@ func loadConfig() *config.RuntimeConfig {
 	return cfg
 }
 
+// loadConfigDeferringDiagnostics is loadConfig for the commands that resolve a log
+// level: the returned diagnostics stay unemitted until resolveLogLevel has run,
+// so a debug level asked for in the config file can show the load of that file.
+// The caller must pass them to config.EmitLoadDiagnostics.
+func loadConfigDeferringDiagnostics() (*config.RuntimeConfig, []config.LoadDiagnostic) {
+	if err := ensureMandatoryToken(); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to load config: %v\n", err)
+		os.Exit(1)
+	}
+	return config.LoadDeferringDiagnostics()
+}
+
 func loadLocalConfig() *config.RuntimeConfig {
 	return config.Load()
 }
@@ -44,17 +56,9 @@ func ensureMandatoryToken() error {
 		return nil
 	}
 
-	if strings.TrimSpace(os.Getenv("PINCHTAB_CONFIG")) != "" {
-		if _, statErr := os.Stat(configPath); statErr == nil {
-			return fmt.Errorf("server token is required in %s when PINCHTAB_CONFIG is set; add server.token or set PINCHTAB_TOKEN", configPath)
-		} else if !os.IsNotExist(statErr) {
-			return fmt.Errorf("stat config file: %w", statErr)
-		}
-	}
-
-	changed, err := config.EnsureFileToken(fc)
+	changed, err := config.ProvisionFileToken(fc, configPath)
 	if err != nil {
-		return fmt.Errorf("ensure server token: %w", err)
+		return err
 	}
 	if !changed {
 		return nil
@@ -63,5 +67,6 @@ func ensureMandatoryToken() error {
 	if err := config.SaveFileConfig(fc, configPath); err != nil {
 		return fmt.Errorf("save config file: %w", err)
 	}
+	fmt.Fprintf(os.Stderr, "pinchtab: generated server.token in %s\n", configPath)
 	return nil
 }

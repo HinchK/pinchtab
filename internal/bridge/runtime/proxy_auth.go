@@ -14,7 +14,9 @@ import (
 // ProxyAuthEnabled is the single gate for the CDP credential path
 // (testable without a running Chrome).
 func ProxyAuthEnabled(p config.BrowserProxyConfig) bool {
-	if p.IsZero() {
+	// HasNoServer, not IsZero: credentials with no server describe no proxy to
+	// authenticate to, so there is nothing for the CDP path to answer.
+	if p.HasNoServer() {
 		return false
 	}
 	return p.Username != ""

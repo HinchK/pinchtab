@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -524,5 +526,267 @@ func TestParseProxyServer_PathWithAtSignAccepted(t *testing.T) {
 	}
 	if _, _, _, err := ParseProxyServer("http://user:pass@proxy.example:8080"); err == nil {
 		t.Fatal("embedded credentials must still be rejected")
+	}
+}
+
+// A proxy block holding anything at all must survive a save. It did not: the whole
+// block was dropped whenever server was unset, so `config set browser.proxy.username`
+// reported success and wrote nothing — the command's own output cannot be the oracle
+// for this, which is why these read the marshalled file back.
+func TestProxyFieldsSurviveASaveWithoutAServer(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		proxy BrowserProxyConfig
+		want  string
+	}{
+		{name: "username", proxy: BrowserProxyConfig{Username: "bob"}, want: "bob"},
+		{name: "password", proxy: BrowserProxyConfig{Password: "hunter2"}, want: "hunter2"},
+		{name: "bypassList", proxy: BrowserProxyConfig{BypassList: []string{"*.internal"}}, want: "*.internal"},
+		{name: "geo.timezone", proxy: BrowserProxyConfig{Geo: &BrowserProxyGeoConfig{Timezone: "Europe/Rome"}}, want: "Europe/Rome"},
+		{name: "geo.locale", proxy: BrowserProxyConfig{Geo: &BrowserProxyGeoConfig{Locale: "it-IT"}}, want: "it-IT"},
+		{name: "geo.webrtcIP", proxy: BrowserProxyConfig{Geo: &BrowserProxyGeoConfig{WebRTCIP: "1.2.3.4"}}, want: "1.2.3.4"},
+		{name: "geo.countryISO", proxy: BrowserProxyConfig{Geo: &BrowserProxyGeoConfig{CountryISO: "IT"}}, want: "IT"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fc := &FileConfig{}
+			fc.Browser.Proxy = tc.proxy
+
+			raw, err := json.Marshal(fc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), tc.want) {
+				t.Errorf("browser.proxy.%s was accepted and then dropped by the save; the marshalled config is %s", tc.name, raw)
+			}
+		})
+	}
+}
+
+// The fail-OPEN half: clearing the server on a populated proxy must be persisted, or the
+// operator believes traffic no longer egresses through the proxy while it still does.
+//
+// Driven through SaveFileConfig against a file that already exists, because that is the
+// only path where the defect lives: the save patches the file key by key from the
+// marshalled config, so an omitempty-dropped server reads as a key the struct does not
+// model and the OLD value is preserved. A test that only marshals the struct passes
+// while the shipped command still leaves the proxy on.
+func TestClearingTheServerOnAPopulatedProxyIsPersisted(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(path, []byte(`{"browser":{"proxy":{"server":"http://p.example:8080","username":"bob","password":"hunter2","bypassList":["*.internal"]}}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	fc := &FileConfig{}
+	fc.Browser.Proxy = BrowserProxyConfig{
+		Server:     "",
+		Username:   "bob",
+		Password:   "hunter2",
+		BypassList: []string{"*.internal"},
+	}
+	if err := SaveFileConfig(fc, path); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var onDisk struct {
+		Browser struct {
+			Proxy struct {
+				Server   *string `json:"server"`
+				Username string  `json:"username"`
+			} `json:"proxy"`
+		} `json:"browser"`
+	}
+	if err := json.Unmarshal(raw, &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk.Browser.Proxy.Server == nil {
+		t.Fatalf("the cleared server is absent from the file, so the save could not tell it apart from an unmodelled key and left the old one: %s", raw)
+	}
+	if *onDisk.Browser.Proxy.Server != "" {
+		t.Errorf("browser.proxy.server = %q after being cleared, want empty — a proxy that cannot be turned off is fail-open: %s", *onDisk.Browser.Proxy.Server, raw)
+	}
+	if onDisk.Browser.Proxy.Username != "bob" {
+		t.Errorf("clearing the server discarded the credentials (username = %q); they are meant to survive for the next server", onDisk.Browser.Proxy.Username)
+	}
+}
+
+// The render that makes the above possible, and its negative: a block with nothing in
+// it must not grow a server key.
+func TestOnlyANonEmptyProxyRendersAClearedServer(t *testing.T) {
+	withCredentials, err := json.Marshal(BrowserProxyConfig{Username: "bob"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(withCredentials), `"server":""`) {
+		t.Errorf("a serverless block renders as %s, without the server key the save needs to clear it", withCredentials)
+	}
+
+	empty, err := json.Marshal(BrowserProxyConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(empty), "server") {
+		t.Errorf("an empty proxy block renders as %s, growing a key nobody set", empty)
+	}
+}
+
+// The negative control this fix must not break: a genuinely empty proxy block stays
+// absent from the file rather than being written as an empty object.
+func TestAnEmptyProxyBlockIsStillOmitted(t *testing.T) {
+	fc := &FileConfig{}
+	fc.Browser.Proxy = BrowserProxyConfig{}
+
+	raw, err := json.Marshal(fc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"proxy"`) {
+		t.Errorf("an empty proxy block was written to the file: %s", raw)
+	}
+}
+
+// AC2: an incomplete proxy is REPORTED, not dropped and not refused. The report has to
+// arrive as an advisory rather than a validation error: validation errors gate
+// `config set` behind a confirm that answers no off a TTY, so gating this one would
+// refuse the very write that completes the block.
+func TestAServerlessProxyBlockIsReportedAsAnAdvisory(t *testing.T) {
+	fc := &FileConfig{}
+	fc.Browser.Proxy = BrowserProxyConfig{Username: "bob", Password: "hunter2"}
+
+	advisories := FileConfigAdvisories(fc)
+
+	found := ""
+	for _, advisory := range advisories {
+		if strings.Contains(advisory, "browser.proxy") {
+			found = advisory
+		}
+	}
+	if found == "" {
+		t.Fatalf("a proxy with credentials and no server is reported nowhere; advisories = %v", advisories)
+	}
+	if !strings.Contains(found, "browser.proxy.server") {
+		t.Errorf("the advisory %q does not name browser.proxy.server as the prerequisite, so the reader is not told which key to set", found)
+	}
+
+	for _, err := range ValidateFileConfig(fc) {
+		if strings.Contains(err.Error(), "browser.proxy.server") {
+			t.Errorf("the missing server is ALSO a gating validation error (%v); off a TTY that refuses the write that would complete the block", err)
+		}
+	}
+}
+
+// AC3: the end state is what matters — setting the server afterwards clears the report
+// and the proxy works with the credentials that were set first.
+func TestSettingTheServerAfterwardsCompletesThePreviouslySetProxy(t *testing.T) {
+	fc := &FileConfig{}
+	fc.Browser.Proxy = BrowserProxyConfig{Username: "bob", Password: "hunter2"}
+	fc.Browser.Proxy.Server = "http://proxy.example:8080"
+
+	for _, advisory := range FileConfigAdvisories(fc) {
+		if strings.Contains(advisory, "browser.proxy") {
+			t.Errorf("the incomplete-proxy advisory survives a server being set: %q", advisory)
+		}
+	}
+
+	flags, err := BrowserProxyFlags(fc.Browser.Proxy)
+	if err != nil {
+		t.Fatalf("BrowserProxyFlags after completing the block: %v", err)
+	}
+	if len(flags) == 0 || !strings.Contains(flags[0], "http://proxy.example:8080") {
+		t.Errorf("flags = %v, want the configured proxy — preserving the credentials is pointless if the completed block does not launch", flags)
+	}
+}
+
+// An incomplete block must not launch or authenticate: the values are kept, not applied.
+func TestAServerlessProxyNeitherLaunchesNorAuthenticates(t *testing.T) {
+	p := BrowserProxyConfig{Username: "bob", Password: "hunter2", BypassList: []string{"*.internal"}}
+
+	flags, err := BrowserProxyFlags(p)
+	if err != nil {
+		t.Fatalf("a serverless proxy must be a no-op at launch, not an error: %v", err)
+	}
+	if len(flags) != 0 {
+		t.Errorf("flags = %v, want none: there is no server to route through", flags)
+	}
+}
+
+// AC5: the rest of proxy validation now runs for a serverless block. The empty bypass
+// pattern was silently skipped, because one predicate answered both "no proxy is
+// configured" and "this block is empty".
+func TestProxyValidationRunsForAServerlessBlock(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		proxy BrowserProxyConfig
+		want  string
+	}{
+		{name: "empty bypass pattern", proxy: BrowserProxyConfig{BypassList: []string{""}}, want: "bypass pattern must not be empty"},
+		{name: "bypass pattern with a separator", proxy: BrowserProxyConfig{BypassList: []string{"a;b"}}, want: "must not contain whitespace"},
+		{name: "username without password", proxy: BrowserProxyConfig{Username: "bob"}, want: "password is required"},
+		{name: "password without username", proxy: BrowserProxyConfig{Password: "hunter2"}, want: "username is required"},
+		{name: "invalid geo", proxy: BrowserProxyConfig{Geo: &BrowserProxyGeoConfig{CountryISO: "ITALY"}}, want: "geo"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			errs := ValidateBrowserProxy("browser.proxy", tc.proxy)
+
+			joined := ""
+			for _, err := range errs {
+				joined += err.Error() + "\n"
+			}
+			if !strings.Contains(joined, tc.want) {
+				t.Errorf("a serverless block skipped its own validation: errors = %q, want one containing %q", joined, tc.want)
+			}
+			for _, err := range errs {
+				if strings.Contains(err.Error(), "proxy server is empty") {
+					t.Errorf("the absent server is reported as a malformed one (%v); that is the advisory's job, and as an error it would gate the completing write", err)
+				}
+			}
+		})
+	}
+}
+
+// The negative control for the validator's entry gate: nothing set means nothing to
+// validate, which is today's behaviour and must not change.
+func TestAnEmptyProxyBlockIsStillValidatedAsAbsent(t *testing.T) {
+	if errs := ValidateBrowserProxy("browser.proxy", BrowserProxyConfig{}); len(errs) != 0 {
+		t.Errorf("an empty proxy block produced %v, want no diagnostics at all", errs)
+	}
+	fc := &FileConfig{}
+	for _, advisory := range FileConfigAdvisories(fc) {
+		if strings.Contains(advisory, "proxy") {
+			t.Errorf("an empty proxy block was reported as incomplete: %q", advisory)
+		}
+	}
+}
+
+func TestACredentialsOnlyTargetProxyDoesNotReplaceAWorkingParentProxy(t *testing.T) {
+	cfg := &RuntimeConfig{
+		DefaultBrowser: BrowserChrome,
+		Proxy:          BrowserProxyConfig{Server: "http://parent.example:8080"},
+		Targets: BrowserTargetsConfig{
+			"creds": {
+				Provider: BrowserChrome,
+				Proxy:    BrowserProxyConfig{Username: "bob", Password: "secret"},
+			},
+		},
+	}
+
+	resolved, err := ResolveExplicitBrowserTarget(cfg, "creds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved.Config.Proxy.Server; got != "http://parent.example:8080" {
+		t.Fatalf("resolved proxy server = %q; a target proxy carrying only credentials replaced the working parent proxy, so the target's traffic would egress directly", got)
+	}
+
+	flags, err := BrowserProxyFlags(resolved.Config.Proxy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(flags) == 0 {
+		t.Fatal("resolved target produced no proxy launch flags; traffic would egress directly, un-proxied")
 	}
 }

@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"github.com/pinchtab/pinchtab/internal/sanitize"
 	"strings"
 	"testing"
 	"time"
@@ -208,24 +209,24 @@ func TestConsoleLogStore_TruncatesOversizedFields(t *testing.T) {
 	if got := logs[0].Level; len(got) > maxConsoleLevelBytes {
 		t.Fatalf("expected truncated level <= %d bytes, got %d", maxConsoleLevelBytes, len(got))
 	}
-	if got := logs[0].Message; len(got) > maxConsoleMessageBytes || !utf8.ValidString(got) || !strings.HasSuffix(got, truncationSuffix) {
-		t.Fatalf("unexpected truncated console message: len=%d valid=%v suffix=%v", len(got), utf8.ValidString(got), strings.HasSuffix(got, truncationSuffix))
+	if got := logs[0].Message; len(got) > maxConsoleMessageBytes || !utf8.ValidString(got) || !strings.HasSuffix(got, sanitize.TruncationSuffix) {
+		t.Fatalf("unexpected truncated console message: len=%d valid=%v suffix=%v", len(got), utf8.ValidString(got), strings.HasSuffix(got, sanitize.TruncationSuffix))
 	}
-	if got := logs[0].Source; len(got) > maxConsoleSourceBytes || !strings.HasSuffix(got, truncationSuffix) {
-		t.Fatalf("unexpected truncated console source: len=%d suffix=%v", len(got), strings.HasSuffix(got, truncationSuffix))
+	if got := logs[0].Source; len(got) > maxConsoleSourceBytes || !strings.HasSuffix(got, sanitize.TruncationSuffix) {
+		t.Fatalf("unexpected truncated console source: len=%d suffix=%v", len(got), strings.HasSuffix(got, sanitize.TruncationSuffix))
 	}
 
 	errors := store.GetErrorLogs("tab1", 0)
-	if got := errors[0].Message; len(got) > maxErrorMessageBytes || !utf8.ValidString(got) || !strings.HasSuffix(got, truncationSuffix) {
-		t.Fatalf("unexpected truncated error message: len=%d valid=%v suffix=%v", len(got), utf8.ValidString(got), strings.HasSuffix(got, truncationSuffix))
+	if got := errors[0].Message; len(got) > maxErrorMessageBytes || !utf8.ValidString(got) || !strings.HasSuffix(got, sanitize.TruncationSuffix) {
+		t.Fatalf("unexpected truncated error message: len=%d valid=%v suffix=%v", len(got), utf8.ValidString(got), strings.HasSuffix(got, sanitize.TruncationSuffix))
 	}
-	if got := errors[0].Type; len(got) > maxErrorTypeBytes || !strings.HasSuffix(got, truncationSuffix) {
-		t.Fatalf("unexpected truncated error type: len=%d suffix=%v", len(got), strings.HasSuffix(got, truncationSuffix))
+	if got := errors[0].Type; len(got) > maxErrorTypeBytes || !strings.HasSuffix(got, sanitize.TruncationSuffix) {
+		t.Fatalf("unexpected truncated error type: len=%d suffix=%v", len(got), strings.HasSuffix(got, sanitize.TruncationSuffix))
 	}
-	if got := errors[0].URL; len(got) > maxErrorURLBytes || !strings.HasSuffix(got, truncationSuffix) {
-		t.Fatalf("unexpected truncated error url: len=%d suffix=%v", len(got), strings.HasSuffix(got, truncationSuffix))
+	if got := errors[0].URL; len(got) > maxErrorURLBytes || !strings.HasSuffix(got, sanitize.TruncationSuffix) {
+		t.Fatalf("unexpected truncated error url: len=%d suffix=%v", len(got), strings.HasSuffix(got, sanitize.TruncationSuffix))
 	}
-	if got := errors[0].Stack; len(got) > maxErrorStackBytes || !utf8.ValidString(got) || !strings.HasSuffix(got, truncationSuffix) {
-		t.Fatalf("unexpected truncated error stack: len=%d valid=%v suffix=%v", len(got), utf8.ValidString(got), strings.HasSuffix(got, truncationSuffix))
+	if got := errors[0].Stack; len(got) > maxErrorStackBytes || !utf8.ValidString(got) || !strings.HasSuffix(got, sanitize.TruncationSuffix) {
+		t.Fatalf("unexpected truncated error stack: len=%d valid=%v suffix=%v", len(got), utf8.ValidString(got), strings.HasSuffix(got, sanitize.TruncationSuffix))
 	}
 }

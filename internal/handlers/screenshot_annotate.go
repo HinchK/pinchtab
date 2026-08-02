@@ -54,19 +54,14 @@ func (h *Handlers) collectScreenshotAnnotations(
 		target = rect
 	}
 
-	flat, refs := bridge.BuildSnapshot(rawNodes, "interactive", -1)
+	flat, _ := bridge.BuildSnapshot(rawNodes, "interactive", -1)
 	if len(flat) == 0 && selector == "" {
 		// Pages with no AX-interactive content (canvas-heavy fixtures, etc.)
 		// fall back to the unfiltered tree so the agent still gets a layout.
-		flat, refs = bridge.BuildSnapshot(rawNodes, "", -1)
+		flat, _ = bridge.BuildSnapshot(rawNodes, "", -1)
 	}
 
-	// Record refs so a subsequent click/fill on `e5` resolves the same node.
-	h.Bridge.SetRefCache(tabID, &bridge.RefCache{
-		Refs:    refs,
-		Targets: bridge.RefTargetsFromNodes(flat),
-		Nodes:   flat,
-	})
+	h.Bridge.SetRefCache(tabID, bridge.EpochRefs(h.Bridge.GetRefCache(tabID), flat))
 
 	items = make([]cdptk.AnnotationItem, 0, len(flat))
 	for _, n := range flat {

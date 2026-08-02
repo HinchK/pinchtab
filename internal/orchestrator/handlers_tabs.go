@@ -126,11 +126,7 @@ func (o *Orchestrator) doInstanceRequest(ctx context.Context, method string, hea
 }
 
 func copyProxyResponse(w http.ResponseWriter, resp *http.Response, body []byte) {
-	for key, values := range resp.Header {
-		for _, v := range values {
-			w.Header().Add(key, v)
-		}
-	}
+	httpx.CopyProxiedResponseHeaders(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(body)
 }

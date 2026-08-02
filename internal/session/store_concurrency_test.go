@@ -81,8 +81,8 @@ func TestStore_WriteSnapshotSkipsStale(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.json")
 	s := NewStore(Config{Enabled: true, PersistPath: path, IdleTimeout: time.Hour, MaxLifetime: 24 * time.Hour})
 
-	fresh := snapshotJob{snapshot: persistedStore{SavedAt: time.Unix(200, 0).UTC()}, seq: 5}
-	stale := snapshotJob{snapshot: persistedStore{SavedAt: time.Unix(100, 0).UTC()}, seq: 3}
+	fresh := snapshotJob{snapshot: persistedStore{SavedAt: time.Unix(200, 0).UTC()}, seq: 5, path: path}
+	stale := snapshotJob{snapshot: persistedStore{SavedAt: time.Unix(100, 0).UTC()}, seq: 3, path: path}
 
 	s.writeSnapshot(fresh)
 	s.writeSnapshot(stale) // lower seq → must be skipped

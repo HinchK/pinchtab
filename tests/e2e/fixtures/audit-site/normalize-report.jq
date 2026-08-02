@@ -9,6 +9,14 @@
 # Console messages are trimmed of trailing whitespace and interactive-element
 # refs are dropped: both vary by capture path / accessibility tree across
 # browser providers (chrome vs cloak) while the content itself is stable.
+# Uncaught JS errors collapse to their COUNT: their message text is assembled
+# differently by the two capture paths (Runtime.exceptionThrown prefixes the
+# exception description, the Console-domain fallback does not) and carries the
+# script URL, so only the count is comparable — and only among providers that
+# capture uncaught errors at all. Cloak omits CapRuntimeConsoleEvents (its
+# Console-domain fallback never sees uncaught page errors, which ride only
+# Runtime.exceptionThrown), so its count is structurally always 0; the
+# audit-repro-extended golden check excludes jsErrors for the cloak provider.
 #
 # Regenerate the golden report (from a runner shell against the e2e stack):
 #   curl -s -H "Authorization: Bearer $E2E_SERVER_TOKEN" -X POST "$E2E_SERVER/audit" \
@@ -22,6 +30,7 @@
     | .browser.screenshotPath = ""
     | .browser.timingMetrics = {}
     | .browser.consoleLogs = ((.browser.consoleLogs // []) | map({level: .level, message: (.message | sub("\\s+$"; ""))}))
+    | .browser.jsErrors = ((.browser.jsErrors // []) | length)
     | .browser.interactiveElements = ((.browser.interactiveElements // []) | map(del(.ref)))
     | .browser.networkRequests = ((.browser.networkRequests // [])
         | map({url: .url, method: .method, status: .status, resourceType: .resourceType})

@@ -9,10 +9,9 @@ import (
 
 	coreautosolver "github.com/pinchtab/pinchtab/internal/autosolver"
 	"github.com/pinchtab/pinchtab/internal/autosolver/adapters"
-	"github.com/pinchtab/pinchtab/internal/autosolver/external"
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	autosolverllm "github.com/pinchtab/pinchtab/internal/autosolver/llm"
 	autosolversemantic "github.com/pinchtab/pinchtab/internal/autosolver/semantic"
-	autosolvers "github.com/pinchtab/pinchtab/internal/autosolver/solvers"
 )
 
 const (
@@ -208,7 +207,24 @@ func (h *Handlers) normalizedAutoSolverConfig() coreautosolver.Config {
 		},
 	}
 
+	cfg.APIKeys = h.autoSolverAPIKeys()
+
 	return cfg
+}
+
+// autoSolverAPIKeys pairs each key-gated solver's name with the runtime field that
+// carries its key. It is DATA, not the availability rule: which names are gated, and
+// what a blank key means, are answered by internal/autosolver and the catalog. The
+// pairing has to live here because internal/config cannot be imported from either —
+// config imports the catalog, so the arrow only runs this way.
+func (h *Handlers) autoSolverAPIKeys() map[string]string {
+	if h == nil || h.Config == nil {
+		return nil
+	}
+	return map[string]string{
+		coreautosolver.CapsolverSolverName:  h.Config.AutoSolver.CapsolverKey,
+		coreautosolver.TwoCaptchaSolverName: h.Config.AutoSolver.TwoCaptchaKey,
+	}
 }
 
 // llmProviderForAutoSolver returns the configured LLM provider, or nil when no
@@ -233,16 +249,8 @@ func (h *Handlers) buildAutoSolver(cfg coreautosolver.Config, includeSemantic bo
 	}
 
 	as := coreautosolver.New(cfg, semanticEngine, h.llmProviderForAutoSolver())
-	as.Registry().MustRegister(&autosolvers.Cloudflare{})
-	as.Registry().MustRegister(&autosolvers.JSChallenge{})
-
-	if h != nil && h.Config != nil {
-		if key := strings.TrimSpace(h.Config.AutoSolver.CapsolverKey); key != "" {
-			as.Registry().MustRegister(external.NewCapsolver(external.CapsolverConfig{APIKey: key}))
-		}
-		if key := strings.TrimSpace(h.Config.AutoSolver.TwoCaptchaKey); key != "" {
-			as.Registry().MustRegister(external.NewTwoCaptcha(external.TwoCaptchaConfig{APIKey: key}))
-		}
+	for _, solver := range catalog.Registrable(cfg) {
+		as.Registry().MustRegister(solver)
 	}
 
 	return as
@@ -250,18 +258,10 @@ func (h *Handlers) buildAutoSolver(cfg coreautosolver.Config, includeSemantic bo
 
 func (h *Handlers) availableAutoSolverNames() []string {
 	cfg := h.normalizedAutoSolverConfig()
-	available := map[string]bool{
-		"cloudflare":  true,
-		"semantic":    true,
-		"jschallenge": true,
-	}
-	if h != nil && h.Config != nil {
-		if strings.TrimSpace(h.Config.AutoSolver.CapsolverKey) != "" {
-			available["capsolver"] = true
-		}
-		if strings.TrimSpace(h.Config.AutoSolver.TwoCaptchaKey) != "" {
-			available["twocaptcha"] = true
-		}
+	runnable := catalog.Available(cfg)
+	available := make(map[string]bool, len(runnable))
+	for _, name := range runnable {
+		available[name] = true
 	}
 
 	names := make([]string, 0, len(available))
@@ -277,7 +277,7 @@ func (h *Handlers) availableAutoSolverNames() []string {
 		seen[configured] = struct{}{}
 	}
 
-	for _, fallback := range []string{"cloudflare", "semantic", "jschallenge"} {
+	for _, fallback := range runnable {
 		if !available[fallback] {
 			continue
 		}

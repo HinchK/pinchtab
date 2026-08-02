@@ -180,3 +180,37 @@ func TestSessionCLI_Info_SendsSessionAuthHeader(t *testing.T) {
 		t.Fatalf("Authorization = %q, want %q", gotAuth, "Session "+sessionToken)
 	}
 }
+
+// `session create` is documented as `export PINCHTAB_SESSION=$(pinchtab session create
+// ...)`, so stdout must stay the token alone — anything else lands in the variable. The
+// id is the handle `session revoke` takes, so it goes to stderr where the capture cannot
+// swallow it: withholding it is what forced a list-and-correlate detour.
+func TestSessionCreatePrintsTheTokenOnStdoutAndTheIDOnStderr(t *testing.T) {
+	stdout, stderr := captureStdoutStderr(t, func() {
+		printSessionCreated(sessionCreateResult{ID: "ses_0123456789abcdef", Token: "ses_thetoken", Status: "active"})
+	})
+
+	if stdout != "ses_thetoken\n" {
+		t.Errorf("stdout = %q, want the token alone; $(...) captures this", stdout)
+	}
+	if !strings.Contains(stderr, "ses_0123456789abcdef") {
+		t.Errorf("stderr = %q, want the session id", stderr)
+	}
+	if !strings.Contains(stderr, "session revoke") {
+		t.Errorf("stderr = %q, want it to name the verb the id is for", stderr)
+	}
+}
+
+// A response without an id gets no hint rather than a hint naming nothing.
+func TestSessionCreateSaysNothingExtraWithoutAnID(t *testing.T) {
+	stdout, stderr := captureStdoutStderr(t, func() {
+		printSessionCreated(sessionCreateResult{Token: "ses_thetoken", Status: "active"})
+	})
+
+	if stdout != "ses_thetoken\n" {
+		t.Errorf("stdout = %q, want the token alone", stdout)
+	}
+	if stderr != "" {
+		t.Errorf("stderr = %q, want nothing when the response carries no id", stderr)
+	}
+}

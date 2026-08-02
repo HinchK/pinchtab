@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -13,17 +12,12 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/stealth"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
 func TestAttachIndicatorNamesPortPersistsAndClears(t *testing.T) {
-	chromePath, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Skip("chromium not installed")
-	}
-	profile, err := os.MkdirTemp("", "pinchtab-attach-indicator-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	chromePath := testbrowser.Path(t)
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
@@ -113,9 +107,12 @@ func TestAttachIndicatorNamesPortPersistsAndClears(t *testing.T) {
 }
 
 func TestAttachIndicatorRejectsInvalidPort(t *testing.T) {
-	for _, port := range []string{"", "0", "65536", "not-a-port"} {
+	for _, port := range []string{"", "0", "65536", "not-a-port", `9867\"; alert(1)`} {
 		if _, err := attachIndicatorScript(port); err == nil {
 			t.Fatalf("port %q accepted", port)
+		}
+		if _, err := clearAttachIndicatorScript(port); err == nil {
+			t.Fatalf("cleanup port %q accepted", port)
 		}
 	}
 	script, err := attachIndicatorScript(" 9867 ")

@@ -6,9 +6,76 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
+
+const vocabHeader = "X-PinchTab-Vocab"
+
+// DoGetCapturingVocab performs a GET like DoGet and, on success, persists the
+// response's vocabulary token for (base, tabKey) so a later action on that tab
+// echoes it and a ref renumbered by an intervening snapshot is refused rather
+// than mis-resolved. The token is delivered as a response header so it survives
+// every snapshot format, including the compact text the CLI defaults to.
+func DoGetCapturingVocab(client *http.Client, base, token, path string, params url.Values, tabKey string) map[string]any {
+	var headers http.Header
+	r := request{method: "GET", url: buildURL(base, path, params), respHeaders: &headers}
+	status, body := mustRequest(client, token, r)
+	exitOnAPIError(r, status, body)
+	storeVocabToken(base, tabKey, headers.Get(vocabHeader))
+	return printAndDecode(body)
+}
+
+// VocabTokenFor returns the last vocabulary token stored for (base, tabKey), or "".
+func VocabTokenFor(base, tabKey string) string {
+	data, err := os.ReadFile(vocabTokenPath(base, tabKey))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+func storeVocabToken(base, tabKey, token string) {
+	if token == "" {
+		return
+	}
+	path := vocabTokenPath(base, tabKey)
+	_ = os.MkdirAll(filepath.Dir(path), 0755)
+	_ = os.WriteFile(path, []byte(token+"\n"), 0644)
+}
+
+func vocabTokenPath(base, tabKey string) string {
+	dir := os.Getenv("XDG_STATE_HOME")
+	if dir != "" {
+		dir += "/pinchtab"
+	} else if home, err := os.UserHomeDir(); err == nil {
+		dir = home + "/.local/state/pinchtab"
+	} else {
+		dir = "/tmp/pinchtab"
+	}
+	key := tabKey
+	if key == "" {
+		key = "default"
+	}
+	return filepath.Join(dir, "vocab-"+fileSlug(base)+"-"+fileSlug(key))
+}
+
+func fileSlug(s string) string {
+	s = strings.TrimPrefix(strings.TrimPrefix(s, "http://"), "https://")
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
+			return r
+		default:
+			return '-'
+		}
+	}, strings.Trim(s, "/"))
+	if s == "" {
+		return "default"
+	}
+	return s
+}
 
 // doAndRender runs the request with the standard fatal-on-transport-error +
 // exit-on-HTTP-error policy, then pretty-prints and decodes the body.

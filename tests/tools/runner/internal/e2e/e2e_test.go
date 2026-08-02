@@ -2,12 +2,15 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestDryRunBasicSuitePlan(t *testing.T) {
@@ -1033,4 +1036,163 @@ func TestNewBrowserScenariosInCatalog(t *testing.T) {
 			t.Fatalf("scenario %s missing 'pr' tag: %v", key, meta.Tags)
 		}
 	}
+}
+
+// A log artifact the runner advertises but that captured nothing sends whoever
+// is diagnosing a failure to a useless file; the listing has to say so.
+func TestEmptyLogSuffixMarksZeroByteArtifacts(t *testing.T) {
+	dir := t.TempDir()
+
+	empty := filepath.Join(dir, "logs-cli-smoke-pinchtab.log")
+	if err := os.WriteFile(empty, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := emptyLogSuffix(empty); got == "" {
+		t.Error("a zero-byte log artifact is listed with no warning")
+	}
+
+	populated := filepath.Join(dir, "logs-cli-smoke-runner-cli.log")
+	if err := os.WriteFile(populated, []byte("level=INFO msg=request\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := emptyLogSuffix(populated); got != "" {
+		t.Errorf("suffix = %q, want none for a log with content", got)
+	}
+
+	if got := emptyLogSuffix(filepath.Join(dir, "missing.log")); got != "" {
+		t.Errorf("suffix = %q, want none for a file that does not exist", got)
+	}
+}
+
+// Every e2e server service must NAME its log level rather than inherit one. The
+// level used to be borrowed from --verbose, which once meant "log at all" and later
+// came to mean "debug"; the harness's diagnostic level moved when that definition
+// moved, which is the drift this pins. --verbose is still expected alongside for the
+// startup banner and the four category=security WARN lines, both gated on
+// cfg.VerboseBanner and absent from the artifact without it; the netguard allowlist
+// is printed by neither, at any level. Both flags are required together: --verbose
+// contributes only the banner WHILE --log-level is set, and would govern the level again if
+// --log-level were dropped.
+//
+// Bridge services carry --log-level debug and NOT --verbose, and the asymmetry is the
+// rule rather than an omission: the bridge holds the CDP session, so it logs what a
+// failing browser scenario most needs, while --verbose contributes only a startup
+// banner the bridge does not have.
+func TestComposeServerServicesNameTheirLogLevel(t *testing.T) {
+	const (
+		wantFlags = "pinchtab server --log-level debug --verbose"
+		wantLevel = "--log-level debug"
+	)
+
+	for _, tc := range []struct {
+		file    string
+		servers int
+		bridges int
+	}{
+		{file: "docker-compose.yml", servers: 1, bridges: 0},
+		{file: "docker-compose-multi.yml", servers: 6, bridges: 2},
+	} {
+		t.Run(tc.file, func(t *testing.T) {
+			servers, bridges := 0, 0
+
+			for _, svc := range pinchtabComposeServices(t, tc.file) {
+				switch {
+				case strings.Contains(svc.command, "pinchtab server"):
+					servers++
+					if !strings.Contains(svc.command, wantFlags) {
+						t.Errorf("service %s does not run %q, so its level is inherited rather than named: %s", svc.name, wantFlags, svc.command)
+					}
+				case strings.Contains(svc.command, "pinchtab bridge"):
+					bridges++
+					if !strings.Contains(svc.command, wantLevel) {
+						t.Errorf("bridge service %s does not run %q, so the process holding the CDP session is the quiet one — target crashes, instance lifecycle and selector resolution are logged there, and a failing scenario needs them explained: %s", svc.name, wantLevel, svc.command)
+					}
+					if strings.Contains(svc.command, "--verbose") {
+						t.Errorf("bridge service %s carries --verbose, whose only contribution is the startup banner — the bridge has none to print, so it adds nothing and makes the bridge rule look identical to the server rule when it is not: %s", svc.name, svc.command)
+					}
+				default:
+					t.Errorf("service %s uses the pinchtab image but runs neither server nor bridge, so no flag rule covers it: %s", svc.name, svc.command)
+				}
+			}
+
+			if servers != tc.servers {
+				t.Errorf("%d server services, want %d — a new or removed variant changes which services this guard checks", servers, tc.servers)
+			}
+			if bridges != tc.bridges {
+				t.Errorf("%d bridge services, want %d — a new or removed variant changes which services this guard checks", bridges, tc.bridges)
+			}
+		})
+	}
+}
+
+type composeService struct {
+	name    string
+	command string
+}
+
+// A pinchtab service with no `command:` inherits the image's own CMD, which runs
+// `pinchtab server` with no flags — invisible to a census that reads command lines.
+// Every such service is surfaced here with the inherited command so the flag rules
+// above still apply to it.
+func pinchtabComposeServices(t *testing.T, file string) []composeService {
+	t.Helper()
+
+	path := filepath.Join("..", "..", "..", "..", "e2e", file)
+	content, err := os.ReadFile(path) // #nosec G304 -- fixed test fixture path.
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+
+	var doc struct {
+		Services map[string]struct {
+			Image string `yaml:"image"`
+			Build struct {
+				Dockerfile string `yaml:"dockerfile"`
+			} `yaml:"build"`
+			Command []string `yaml:"command"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(content, &doc); err != nil {
+		t.Fatalf("parse %s: %v", file, err)
+	}
+
+	inherited := dockerfileDefaultCommand(t)
+
+	services := make([]composeService, 0, len(doc.Services))
+	for name, svc := range doc.Services {
+		if svc.Image != "e2e-pinchtab:latest" && svc.Build.Dockerfile != "Dockerfile" {
+			continue
+		}
+		command := strings.Join(svc.Command, " ")
+		if len(svc.Command) == 0 {
+			command = inherited
+		}
+		services = append(services, composeService{name: name, command: command})
+	}
+	if len(services) == 0 {
+		t.Fatalf("%s: found no pinchtab services to check", file)
+	}
+	return services
+}
+
+func dockerfileDefaultCommand(t *testing.T) string {
+	t.Helper()
+
+	content, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "..", "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		after, found := strings.CutPrefix(line, "CMD ")
+		if !found {
+			continue
+		}
+		var argv []string
+		if err := json.Unmarshal([]byte(after), &argv); err != nil {
+			return after
+		}
+		return strings.Join(argv, " ")
+	}
+	t.Fatal("Dockerfile declares no CMD, so a service without `command:` cannot be classified")
+	return ""
 }

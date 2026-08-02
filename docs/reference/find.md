@@ -45,6 +45,12 @@ pinchtab find --threshold 0.5 --explain "primary submit button"
 pinchtab find --ref-only "search input"
 ```
 
+When nothing matches, `find` prints `No elements matched "<query>"` and exits 0 — an empty
+result is an answer, the same way `console` and `errors` report having nothing to show.
+`--ref-only` prints that line to stderr and exits non-zero instead, deliberately: it is
+built for `REF=$(pinchtab find … --ref-only)`, where an empty `REF` spent on a click is
+worse than a failed command.
+
 ## Using `POST /find`
 
 ```bash
@@ -158,7 +164,7 @@ curl -X POST http://localhost:9867/tabs/<tabId>/action \
 ## Operational Notes
 
 - `/find` uses the tab's accessibility snapshot, not raw DOM selectors.
-- Structured `/find` queries such as `role:button Save`, `text:Submit`, `label:Email`, `placeholder:Search`, `alt:Logo`, `title:Close`, `testid:submit`, `first:role:button`, `last:text:Submit`, and `nth:2:label:Email` are matched by the semantic engine against enriched descriptors.
+- Structured `/find` queries such as `role:button Save`, `text:Submit`, `label:Email`, `placeholder:Search`, `alt:Logo`, `title:Close`, `testid:submit`, `first:role:button`, `last:text:Submit`, and `nth:2:label:Email` are matched by the semantic engine against enriched descriptors. A wrapper index is zero-based here too, exactly as it is over `css:`/`xpath:`/`text:` — `nth:0:label:Email` is the first match in document order — and an index past the last match refuses by saying so rather than reporting that nothing matched.
 - In action commands, `role:`, `label:`, `placeholder:`, `alt:`, `title:`, `testid:`, and wrappers around those forms use semantic matching. CSS, XPath, refs, the existing `text:` action selector, and bare CSS/text wrappers such as `first:button` remain browser-side selector resolution.
 - If there is no cached snapshot, PinchTab tries to refresh it automatically before matching.
 - Successful matches are useful inputs to `/action`, `/actions`, and higher-level recovery logic.

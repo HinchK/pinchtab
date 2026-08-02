@@ -225,7 +225,7 @@ func (h *Handlers) HandleNetwork(w http.ResponseWriter, r *http.Request) {
 
 	nm := h.Bridge.NetworkMonitor()
 	if nm == nil {
-		httpx.JSON(w, 200, map[string]any{"entries": []any{}, "items": []any{}, "count": 0})
+		httpx.JSON(w, 200, map[string]any{"entries": []any{}, "count": 0})
 		return
 	}
 
@@ -264,7 +264,6 @@ func (h *Handlers) HandleNetwork(w http.ResponseWriter, r *http.Request) {
 
 	httpx.JSON(w, 200, map[string]any{
 		"entries": entries,
-		"items":   entries,
 		"count":   len(entries),
 		"tabId":   resolvedTabID,
 	})
@@ -336,7 +335,7 @@ func (h *Handlers) HandleNetworkByID(w http.ResponseWriter, r *http.Request) {
 		}
 		switch {
 		case bodyMode == networkBodyModeLiveOnly:
-			body, base64Encoded, err := bridge.GetResponseBodyDirect(tabCtx, requestID)
+			body, base64Encoded, err := bridge.GetResponseBody(tabCtx, requestID)
 			if err != nil {
 				result["bodyError"] = err.Error()
 			} else {
@@ -349,7 +348,7 @@ func (h *Handlers) HandleNetworkByID(w http.ResponseWriter, r *http.Request) {
 		case entry.BodyPending || entry.BodyError != "":
 			populateRetainedBodyResult(result, entry)
 		default:
-			body, base64Encoded, err := bridge.GetResponseBodyDirect(tabCtx, requestID)
+			body, base64Encoded, err := bridge.GetResponseBody(tabCtx, requestID)
 			if err != nil {
 				result["bodyError"] = err.Error()
 			} else {

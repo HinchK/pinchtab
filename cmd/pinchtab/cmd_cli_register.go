@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
+	bridgecdpops "github.com/pinchtab/pinchtab/internal/bridge/cdpops"
 	"github.com/spf13/cobra"
 )
 
@@ -55,6 +56,7 @@ func registerManagementCommands() {
 
 	instanceCmd.AddCommand(startInstanceCmd, instanceNavigateCmd, instanceStopCmd, instanceRestartCmd, instanceLogsCmd)
 	activityCmd.AddCommand(activityTabCmd)
+	profilesCmd.AddCommand(profilesPruneCmd)
 
 	configureManagementFlags()
 
@@ -82,10 +84,10 @@ func configureBrowserFlags() {
 	addPointerActionFlags(mouseMoveCmd, bridge.ActionMouseMove)
 
 	addPointerActionFlags(mouseDownCmd, bridge.ActionMouseDown)
-	mouseDownCmd.Flags().String("button", "left", "Mouse button: left, right, middle")
+	addMouseButtonFlag(mouseDownCmd)
 
 	addPointerActionFlags(mouseUpCmd, bridge.ActionMouseUp)
-	mouseUpCmd.Flags().String("button", "left", "Mouse button: left, right, middle")
+	addMouseButtonFlag(mouseUpCmd)
 
 	addPointerActionFlags(mouseWheelCmd, bridge.ActionMouseWheel)
 
@@ -94,7 +96,10 @@ func configureBrowserFlags() {
 	mouseWheelCmd.Flags().Int("dx", 0, "Wheel delta X")
 	mouseWheelCmd.Flags().Int("dy", 0, "Wheel delta Y")
 
-	dragCmd.Flags().String("button", "left", "Mouse button: left, right, middle")
+	scrollCmd.Flags().Int("dy", 0, "Vertical scroll in pixels (negative scrolls up)")
+	scrollCmd.Flags().Int("dx", 0, "Horizontal scroll in pixels (negative scrolls left)")
+
+	addMouseButtonFlag(dragCmd)
 	dragCmd.Flags().Int("drag-x", 0, "Horizontal pixel offset for single-step drag action")
 	dragCmd.Flags().Int("drag-y", 0, "Vertical pixel offset for single-step drag action")
 
@@ -166,7 +171,7 @@ func configureBrowserFlags() {
 	findCmd.Flags().Bool("ref-only", false, "Output just the element ref")
 
 	textCmd.Flags().Bool("raw", false, "Raw extraction mode (alias of --full)")
-	textCmd.Flags().Bool("full", false, "Return the full page text (document.body.innerText) instead of the default Readability-filtered content")
+	textCmd.Flags().Bool("full", false, "Return the full page text (document.body.innerText, the API's mode=full/mode=raw) instead of the default Readability-filtered content")
 	textCmd.Flags().String("frame", "", "Extract text from a specific iframe by frameId. If unset, uses the tab's active frame scope (set via `pinchtab frame`) or the top-level document.")
 	textCmd.Flags().StringP("selector", "s", "", "Element selector to extract text from (ref/CSS/XPath/text)")
 	textCmd.Flags().Bool("json", false, "Output full JSON response instead of just text content")
@@ -193,7 +198,7 @@ func configureBrowserFlags() {
 	navCmd.Flags().Bool("new-tab", false, "Open in new tab")
 	navCmd.Flags().Bool("block-images", false, "Block image loading")
 	navCmd.Flags().Bool("block-ads", false, "Block ads")
-	addPostActionFlags(navCmd, "navigation", false)
+	addPostActionFlags(navCmd, "navigation", true)
 	navCmd.Flags().Bool("dismiss-banners", false, "After landing, click any visible cookie/consent dismissal button or remove obvious overlay containers")
 
 	addPostActionFlags(backCmd, "navigation", true)
@@ -317,6 +322,7 @@ func configureBrowserFlags() {
 		cacheClearCmd,
 		cacheStatusCmd,
 		cookiesClearCmd,
+		cookiesSetCmd,
 		frameCmd,
 		networkCmd,
 		setViewportCmd,
@@ -420,6 +426,10 @@ func configureManagementFlags() {
 
 	instancesCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
 	profilesCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
+
+	profilesPruneCmd.Flags().Bool("confirm", false, "Actually remove the quarantined profiles (without it, nothing is deleted)")
+	profilesPruneCmd.Flags().String("profile", "", "Reclaim only this quarantined profile directory (default: all of them)")
+	profilesPruneCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
 }
 
 func setCommandGroup(groupID string, cmds ...*cobra.Command) {
@@ -494,5 +504,25 @@ func addPostActionFlags(cmd *cobra.Command, verb string, withText bool) {
 	cmd.Flags().Bool("snap-diff", false, "Output snapshot diff after "+verb+" (changes only)")
 	if withText {
 		cmd.Flags().Bool("text", false, "Output page text after "+verb+" (for verification)")
+	}
+}
+
+// addMouseButtonFlag registers --button and the local refusal together, so the help text,
+// the default and the accepted set all come from the one vocabulary owner rather than being
+// spelled out per command. The refusal is a fast path for a typo, NOT the guard: the HTTP
+// body is validated server-side because the CLI is not the only client.
+func addMouseButtonFlag(cmd *cobra.Command) {
+	cmd.Flags().String("button", bridgecdpops.DefaultMouseButton,
+		"Mouse button: "+strings.Join(bridgecdpops.MouseButtons(), ", "))
+	previous := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		button, _ := c.Flags().GetString("button")
+		if err := bridgecdpops.ValidateMouseButton(button); err != nil {
+			return err
+		}
+		if previous != nil {
+			return previous(c, args)
+		}
+		return nil
 	}
 }

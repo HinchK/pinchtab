@@ -3,12 +3,15 @@ package config
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pinchtab/pinchtab/internal/safelog"
 )
 
 func TestEnvOr(t *testing.T) {
@@ -1313,5 +1316,194 @@ func TestLoadConfig_MalformedFileWarnsWithoutError(t *testing.T) {
 	}
 	if !hasDiagnostic(diags, slog.LevelWarn, "failed to parse config") {
 		t.Errorf("expected a warn 'failed to parse config' diagnostic, got %+v", diags)
+	}
+}
+
+// The whole point of the key: a flagless server reads its threshold from the
+// config file. Asserting the resolved slog level, not just the string field,
+// is what makes this a behaviour test — the field could round-trip perfectly
+// and still never reach the logger.
+func TestLoadConfig_ServerLogLevelResolvesToAThreshold(t *testing.T) {
+	clearConfigEnvVars(t)
+	writeTestConfig(t, `{"server": {"logLevel": "warn"}}`)
+
+	cfg := Load()
+
+	if cfg.LogLevel != "warn" {
+		t.Fatalf("LogLevel = %q, want warn from the config file", cfg.LogLevel)
+	}
+	level, err := safelog.ParseLevel(cfg.LogLevel)
+	if err != nil {
+		t.Fatalf("ParseLevel(%q): %v", cfg.LogLevel, err)
+	}
+	if level != slog.LevelWarn {
+		t.Fatalf("resolved level = %v, want warn", level)
+	}
+}
+
+// An absent key must leave the runtime empty rather than writing a value, or the
+// flag can no longer tell "unset" from "configured info".
+func TestLoadConfig_AbsentServerLogLevelStaysUnset(t *testing.T) {
+	clearConfigEnvVars(t)
+	writeTestConfig(t, `{"server": {"bind": "127.0.0.1"}}`)
+
+	if cfg := Load(); cfg.LogLevel != "" {
+		t.Fatalf("LogLevel = %q with no key in the file, want empty", cfg.LogLevel)
+	}
+}
+
+// The config path must not be more forgiving than the flag path, and the message
+// an operator reads has to be the same one either way — hence the exact-equality
+// assertion against safelog.ParseLevel rather than a substring check.
+func TestValidateFileConfig_ServerLogLevelRejectsUnknownValues(t *testing.T) {
+	fc := DefaultFileConfig()
+	fc.Server.LogLevel = "verbose"
+
+	errs := ValidateFileConfig(&fc)
+
+	_, parseErr := safelog.ParseLevel("verbose")
+	if parseErr == nil {
+		t.Fatal("safelog.ParseLevel accepts \"verbose\"; this test no longer covers an unparseable value")
+	}
+	var found error
+	for _, err := range errs {
+		if strings.Contains(err.Error(), "server.logLevel") {
+			found = err
+			break
+		}
+	}
+	if found == nil {
+		t.Fatalf("no server.logLevel error for an unparseable value; errors: %v", errs)
+	}
+	if want := "server.logLevel: " + parseErr.Error(); found.Error() != want {
+		t.Fatalf("error = %q, want %q so the config path reads like the flag path", found.Error(), want)
+	}
+	for _, accepted := range []string{"debug", "info", "warn", "error"} {
+		if !strings.Contains(found.Error(), accepted) {
+			t.Errorf("error %q does not name the accepted value %q", found.Error(), accepted)
+		}
+	}
+}
+
+func TestValidateFileConfig_ServerLogLevelAcceptsEveryParseableValue(t *testing.T) {
+	for _, level := range []string{"", "debug", "info", "warn", "warning", "error", "WARN", " warn "} {
+		fc := DefaultFileConfig()
+		fc.Server.LogLevel = level
+		for _, err := range ValidateFileConfig(&fc) {
+			if strings.Contains(err.Error(), "server.logLevel") {
+				t.Errorf("logLevel %q rejected: %v", level, err)
+			}
+		}
+	}
+}
+
+// config get/set plus a save/load round trip, which is the path the CLI takes.
+func TestServerLogLevelSurvivesSetSaveAndLoad(t *testing.T) {
+	fc := DefaultFileConfig()
+	if err := SetConfigValue(&fc, "server.logLevel", "warn"); err != nil {
+		t.Fatalf("set: %v", err)
+	}
+
+	encoded, err := json.Marshal(fc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"logLevel":"warn"`) {
+		t.Fatalf("marshalled config does not carry the key: %s", encoded)
+	}
+
+	var reloaded FileConfig
+	if err := json.Unmarshal(encoded, &reloaded); err != nil {
+		t.Fatal(err)
+	}
+	got, err := GetConfigValue(&reloaded, "server.logLevel")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got != "warn" {
+		t.Fatalf("get server.logLevel = %q after a round trip, want warn", got)
+	}
+}
+
+// A rejected set must leave the previous value alone, and the message must name
+// the accepted values just like the load path.
+func TestSetServerLogLevelRejectsUnknownValues(t *testing.T) {
+	fc := DefaultFileConfig()
+	fc.Server.LogLevel = "warn"
+
+	err := SetConfigValue(&fc, "server.logLevel", "verbose")
+	if err == nil {
+		t.Fatal("set accepted an unparseable level")
+	}
+	if !strings.Contains(err.Error(), "server.logLevel") || !strings.Contains(err.Error(), "warn") {
+		t.Errorf("error %q does not name the field and the accepted values", err.Error())
+	}
+	if fc.Server.LogLevel != "warn" {
+		t.Errorf("LogLevel = %q after a rejected set, want the previous value", fc.Server.LogLevel)
+	}
+}
+
+// FileConfigFromRuntime is the save side of `config set` on a running config; a
+// missing field there silently drops the operator's setting on the next save.
+func TestFileConfigFromRuntimeCarriesTheLogLevel(t *testing.T) {
+	fc := FileConfigFromRuntime(&RuntimeConfig{LogLevel: "error"})
+	if fc.Server.LogLevel != "error" {
+		t.Fatalf("Server.LogLevel = %q, want error", fc.Server.LogLevel)
+	}
+}
+
+// server.stateDir must actually relocate profiles. finalizeProfileConfig's
+// filepath.Join(StateDir, "profiles") fallback was unreachable because
+// DefaultFileConfig pre-filled Profiles.BaseDir with an absolute userConfigDir() path —
+// the same pre-filling that baked a host home directory into every written config. With
+// it empty, this fallback is the live path, so a throwaway state dir stops writing
+// profiles and quarantine directories into the real profile set.
+func TestStateDirAloneRelocatesTheProfilesBaseDir(t *testing.T) {
+	clearConfigEnvVars(t)
+	stateDir := filepath.Join(t.TempDir(), "state")
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	body := fmt.Sprintf(`{"server":{"port":"9867","token":"tok","stateDir":%q}}`, stateDir)
+	if err := os.WriteFile(cfgPath, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", cfgPath)
+
+	cfg := Load()
+
+	wantBase := filepath.Join(stateDir, "profiles")
+	if cfg.ProfilesBaseDir != wantBase {
+		t.Errorf("ProfilesBaseDir = %q, want %q — the stateDir fallback is unreachable again", cfg.ProfilesBaseDir, wantBase)
+	}
+	if cfg.ProfileDir != filepath.Join(wantBase, "default") {
+		t.Errorf("ProfileDir = %q, want it under the relocated base", cfg.ProfileDir)
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && strings.HasPrefix(cfg.ProfilesBaseDir, filepath.Join(home, ".pinchtab")) {
+		t.Errorf("ProfilesBaseDir still resolves into the real profile set: %q", cfg.ProfilesBaseDir)
+	}
+}
+
+// The fallback is only reachable while nothing pre-fills BaseDir. This pins the shipped
+// FileConfig default as empty, so restoring the pre-fill reds here by name rather than
+// silently making the test above depend on a value nobody sets.
+func TestTheShippedProfilesBaseDirIsEmptySoTheFallbackStaysLive(t *testing.T) {
+	if got := DefaultFileConfig().Profiles.BaseDir; got != "" {
+		t.Errorf("DefaultFileConfig().Profiles.BaseDir = %q, want empty: a pre-filled absolute path makes finalizeProfileConfig's stateDir fallback dead code and bakes a host path into every written config", got)
+	}
+}
+
+// An explicit profiles.baseDir still wins: the fallback must not override what the user
+// set.
+func TestAnExplicitProfilesBaseDirStillWins(t *testing.T) {
+	clearConfigEnvVars(t)
+	explicit := filepath.Join(t.TempDir(), "chosen-profiles")
+	cfgPath := filepath.Join(t.TempDir(), "config.json")
+	body := fmt.Sprintf(`{"server":{"port":"9867","token":"tok","stateDir":%q},"profiles":{"baseDir":%q}}`, filepath.Join(t.TempDir(), "state"), explicit)
+	if err := os.WriteFile(cfgPath, []byte(body), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PINCHTAB_CONFIG", cfgPath)
+
+	if got := Load().ProfilesBaseDir; got != explicit {
+		t.Errorf("ProfilesBaseDir = %q, want the explicitly configured %q", got, explicit)
 	}
 }

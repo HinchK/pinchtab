@@ -71,36 +71,11 @@ func fetchViewportSize(ctx context.Context) (float64, float64) {
 // Used when beyond-viewport capture also needs clip.scale; the synthesized clip
 // must cover the document, not just the current viewport.
 func fetchDocumentSize(ctx context.Context) (float64, float64) {
-	const expression = `JSON.stringify((() => {
-		const d = document;
-		const de = d.documentElement;
-		const b = d.body || de;
-		return {
-			w: Math.max(de.scrollWidth, b.scrollWidth, de.clientWidth, de.offsetWidth),
-			h: Math.max(de.scrollHeight, b.scrollHeight, de.clientHeight, de.offsetHeight)
-		};
-	})())`
-	var result struct {
-		Result struct {
-			Value string `json:"value"`
-		} `json:"result"`
-	}
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.evaluate", map[string]any{
-			"expression":    expression,
-			"returnByValue": true,
-		}, &result)
-	})); err != nil {
+	w, h, err := cdptk.DocumentSize(ctx)
+	if err != nil {
 		return 0, 0
 	}
-	var dims struct {
-		W float64 `json:"w"`
-		H float64 `json:"h"`
-	}
-	if err := json.Unmarshal([]byte(result.Result.Value), &dims); err != nil {
-		return 0, 0
-	}
-	return dims.W, dims.H
+	return w, h
 }
 
 // ScreenshotOpts mirrors the subset of page.CaptureScreenshot parameters the
@@ -135,13 +110,10 @@ type ScreenshotOpts struct {
 
 func scaledScreenshotClip(opts ScreenshotOpts, viewportWidth, viewportHeight, documentWidth, documentHeight float64) *page.Viewport {
 	if opts.Scale <= 0 || opts.Scale == 1 {
-		return opts.Clip
+		return cdptk.NormalizedViewport(opts.Clip)
 	}
 	if opts.Clip != nil {
-		clip := *opts.Clip
-		if clip.Scale == 0 {
-			clip.Scale = 1
-		}
+		clip := *cdptk.NormalizedViewport(opts.Clip)
 		clip.Scale *= opts.Scale
 		return &clip
 	}
@@ -159,24 +131,6 @@ func scaledScreenshotClip(opts ScreenshotOpts, viewportWidth, viewportHeight, do
 		Height: height,
 		Scale:  opts.Scale,
 	}
-}
-
-// captureFromSurface decides the Page.captureScreenshot fromSurface flag.
-//
-// fromSurface=false reads the renderer's current view directly instead of
-// waiting for a fresh compositor surface frame. On idle pages in headed browsers
-// (e.g. Cloak) the surface stops swapping frames, so the default fromSurface=true
-// blocks until the action deadline (~30s); reading from the view avoids that for
-// plain captures. But capture-beyond-viewport and any render-time rescale
-// (clip.Scale != 1) both need the page recomposited at a new size, which only
-// happens with fromSurface=true — forcing it off there silently drops the
-// scale/beyond-viewport effect. So keep it off only for the plain/native-scale
-// path.
-func captureFromSurface(beyondViewport bool, clip *page.Viewport) bool {
-	if beyondViewport {
-		return true
-	}
-	return clip != nil && clip.Scale != 0 && clip.Scale != 1
 }
 
 // captureScreenshotWithoutActivation wakes a background renderer before
@@ -215,42 +169,41 @@ func captureScreenshotWithoutActivation(ctx context.Context, shot *page.CaptureS
 // top-level capture call has no scale parameter outside of clip, so this is
 // the only way to apply a render-time rescale.
 func CaptureScreenshot(ctx context.Context, opts ScreenshotOpts) ([]byte, error) {
-	clip := opts.Clip
-	if opts.Scale > 0 && opts.Scale != 1 {
-		// Known issue: two back-to-back /capture?scale=<n!=1> on the same
-		// tab without nav between can hang on the second call. Workaround:
-		// nav between captures (see e2e cli/capture-basic.sh).
-		viewportWidth, viewportHeight := opts.ViewportWidth, opts.ViewportHeight
-		documentWidth, documentHeight := 0.0, 0.0
-		if clip == nil {
-			if opts.BeyondViewport {
-				documentWidth, documentHeight = fetchDocumentSize(ctx)
-			} else if viewportWidth == 0 || viewportHeight == 0 {
-				viewportWidth, viewportHeight = fetchViewportSize(ctx)
-			}
+	// Known issue: two back-to-back /capture?scale=<n!=1> on the same
+	// tab without nav between can hang on the second call. Workaround:
+	// nav between captures (see e2e cli/capture-basic.sh).
+	viewportWidth, viewportHeight := opts.ViewportWidth, opts.ViewportHeight
+	documentWidth, documentHeight := 0.0, 0.0
+	if opts.Scale > 0 && opts.Scale != 1 && opts.Clip == nil {
+		if opts.BeyondViewport {
+			documentWidth, documentHeight = fetchDocumentSize(ctx)
+		} else if viewportWidth == 0 || viewportHeight == 0 {
+			viewportWidth, viewportHeight = fetchViewportSize(ctx)
 		}
-		clip = scaledScreenshotClip(opts, viewportWidth, viewportHeight, documentWidth, documentHeight)
 	}
+	clip := scaledScreenshotClip(opts, viewportWidth, viewportHeight, documentWidth, documentHeight)
 
-	fromSurface := captureFromSurface(opts.BeyondViewport, clip)
+	fromSurface := cdptk.CaptureFromSurface(opts.BeyondViewport, clip)
 
-	var buf []byte
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		shot := page.CaptureScreenshot().WithFormat(opts.Format).WithFromSurface(fromSurface)
-		if clip != nil {
-			shot = shot.WithClip(clip)
-		}
-		if opts.BeyondViewport && clip == nil {
-			shot = shot.WithCaptureBeyondViewport(true)
-		}
-		if opts.Format == page.CaptureScreenshotFormatJpeg {
-			shot = shot.WithQuality(int64(opts.Quality))
-		}
-		var inner error
-		buf, inner = captureScreenshotWithoutActivation(ctx, shot, opts.DisableActivation)
-		return inner
-	}))
-	return buf, err
+	return cdptk.CaptureWithSurfaceFallback(fromSurface, func(fromSurface bool) ([]byte, error) {
+		var buf []byte
+		err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			shot := page.CaptureScreenshot().WithFormat(opts.Format).WithFromSurface(fromSurface)
+			if clip != nil {
+				shot = shot.WithClip(clip)
+			}
+			if opts.BeyondViewport && clip == nil {
+				shot = shot.WithCaptureBeyondViewport(true)
+			}
+			if opts.Format == page.CaptureScreenshotFormatJpeg {
+				shot = shot.WithQuality(int64(opts.Quality))
+			}
+			var inner error
+			buf, inner = captureScreenshotWithoutActivation(ctx, shot, opts.DisableActivation)
+			return inner
+		}))
+		return buf, err
+	})
 }
 
 // ScreenshotClipForNode returns a page-coordinate clip for a backend node ID.
@@ -266,33 +219,24 @@ func ScreenshotClipForNode(ctx context.Context, nodeID int64) (*ScreenshotClip, 
 		return nil, fmt.Errorf("scroll into view: %w", err)
 	}
 
-	var resolveResult json.RawMessage
-	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId": nodeID,
-		}, &resolveResult)
-	})); err != nil {
+	// Isolated world: boxFn reads getBoundingClientRect, so a main-world handle
+	// would let the page steer the clip origin by redefining it.
+	objectID, err := IsolatedNodeObjectID(ctx, nodeID)
+	if err != nil {
 		return nil, fmt.Errorf("resolve node: %w", err)
 	}
 
-	var resolved struct {
-		Object struct {
-			ObjectID string `json:"objectId"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(resolveResult, &resolved); err != nil {
-		return nil, fmt.Errorf("parse resolved node: %w", err)
-	}
-	if resolved.Object.ObjectID == "" {
-		return nil, fmt.Errorf("element not found in DOM (backendNodeId=%d)", nodeID)
-	}
-
+	// The frame walk starts from the NODE's own view, not the ambient `window`.
+	// An isolated-world handle runs in the world it was resolved into, which is
+	// not necessarily the node's frame, and a bare `window` there is the wrong
+	// frame's — its frameElement chain is empty and every frame offset is lost.
 	const boxFn = `function() {
+		const view = (this.ownerDocument && this.ownerDocument.defaultView) || window;
 		const rect = this.getBoundingClientRect();
-		let x = rect.left + (window.scrollX || window.pageXOffset || 0);
-		let y = rect.top + (window.scrollY || window.pageYOffset || 0);
+		let x = rect.left + (view.scrollX || view.pageXOffset || 0);
+		let y = rect.top + (view.scrollY || view.pageYOffset || 0);
 		try {
-			let current = window;
+			let current = view;
 			while (current && current.parent && current !== current.parent) {
 				const frameEl = current.frameElement;
 				if (!frameEl) {
@@ -315,7 +259,7 @@ func ScreenshotClipForNode(ctx context.Context, nodeID int64) (*ScreenshotClip, 
 	if err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		return chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.callFunctionOn", map[string]any{
 			"functionDeclaration": boxFn,
-			"objectId":            resolved.Object.ObjectID,
+			"objectId":            objectID,
 			"returnByValue":       true,
 		}, &callResult)
 	})); err != nil {
@@ -358,16 +302,7 @@ func (b *Bridge) CaptureScreenshot(ctx context.Context, format string, quality i
 	if format == "png" {
 		cdpFormat = page.CaptureScreenshotFormatPng
 	}
-	var vp *page.Viewport
-	if clip != nil {
-		vp = &page.Viewport{
-			X:      clip.X,
-			Y:      clip.Y,
-			Width:  clip.Width,
-			Height: clip.Height,
-			Scale:  clip.Scale,
-		}
-	}
+	vp := cdptk.ClipViewport(clip)
 	disableActivation := b.Config != nil && !b.Config.CaptureAllowActivation
 	buf, err := CaptureScreenshot(ctx, ScreenshotOpts{
 		Format:            cdpFormat,

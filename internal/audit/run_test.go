@@ -197,3 +197,36 @@ func TestRunAuditErrorsAreData(t *testing.T) {
 		t.Errorf("SummaryScore = %d, want 80 (failed pages excluded)", report.SummaryScore)
 	}
 }
+
+func TestPageStatus(t *testing.T) {
+	cases := []struct {
+		name string
+		page PageResult
+		want string
+	}{
+		{"clean", PageResult{}, "ok"},
+		{"failed", PageResult{Error: "connection refused"}, "error: connection refused"},
+		{
+			"uncaught exception",
+			PageResult{Browser: BrowserPageData{JSErrors: []JSError{{Message: "Uncaught: ReferenceError"}}}},
+			"1 uncaught JS error(s)",
+		},
+		{
+			"console error only",
+			PageResult{Browser: BrowserPageData{ConsoleLogs: []ConsoleLogEntry{{Level: "error", Message: "boom"}}}},
+			"ok",
+		},
+		{
+			"failure outranks the exception",
+			PageResult{Error: "timeout", Browser: BrowserPageData{JSErrors: []JSError{{Message: "Uncaught"}}}},
+			"error: timeout",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PageStatus(tc.page); got != tc.want {
+				t.Errorf("PageStatus = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

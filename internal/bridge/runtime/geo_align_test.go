@@ -80,7 +80,7 @@ func TestBuildChromeArgsWithBundleUsesProvidedGeoAlignment(t *testing.T) {
 
 	args, _, err := buildBrowserArgsWithBundle(&config.RuntimeConfig{
 		DefaultBrowser: config.BrowserCloak,
-	}, nil, 9222, launchGeoAlignment{
+	}, "", nil, 9222, launchGeoAlignment{
 		flags: []string{"--fingerprint-locale=en-GB"},
 	})
 	if err != nil {

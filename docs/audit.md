@@ -82,19 +82,26 @@ sitemap).
 
 ```
 schemaVersion, generatedAt, input, options
-summaryScore                     # mean accessibility score of enriched pages
+summaryScore                     # mean accessibility score of enriched pages;
+                                 # broken assets, failed requests and uncaught
+                                 # JS errors do not move it
 pages[]:
   url, title, error?             # error set when the page failed to load
   seaportal?                     # HTTP-extraction summary when ingested
   securityFindings[]?            # ruleId, severity, detail, url
   browser:
     screenshotPath               # relative path under the output dir
-    consoleLogs[], networkRequests[], brokenAssets[]
+    consoleLogs[], jsErrors[], networkRequests[], brokenAssets[]
     interactiveElements[], accessibilityScore
     timingMetrics: ttfbMs, fcpMs, lcpMs, cls, domContentLoadedMs, loadMs
 securityFindings[]               # page findings aggregated site-level
 recommendations[]
 ```
+
+`jsErrors[]` are uncaught JavaScript exceptions (message, stack, line,
+column) — the `GET /errors` channel, separate from `consoleLogs[]`, so a
+`console.error` call and a thrown exception never merge. A page that raised
+one is never reported `ok`.
 
 `--format md` / `--format html` write `report.md` / `report.html` next to
 `report.json` (or print to stdout without `--output-dir`). The HTML is
@@ -114,9 +121,26 @@ pinchtab compare <live-url> <staging-url> [flags]
 ```
 
 Audits the same pages on both base URLs, pairs them by path, pixel-diffs the
-screenshot pairs, and diffs the data (console error count, broken assets,
-accessibility score, load time with a noise threshold). Pages present on only
-one side are reported as `added`/`removed`.
+screenshot pairs, and diffs the data (uncaught JS errors, console error count,
+broken assets, accessibility score, load time with a noise threshold). Pages
+present on only one side are reported as `added`/`removed`.
+
+Uncaught JS errors (`jsErrors`) and broken assets (`brokenAssets`) are compared
+by identity rather than by count, both with the page's own `scheme://host`
+masked so the same failure on two base URLs matches: an exception's first
+message line, and an asset's `url` plus its HTTP status. A failure on one side
+only — or one swapped for another at the same count — is drift; the same
+failure on both sides is not, since this gate compares two deploys and does not
+judge absolute page health. The other fields, `consoleErrors` included, compare
+counts, so substituting one console message for another stays invisible.
+
+A broken asset with no HTTP status — a transport error such as a connection
+reset, or a request that never completed inside the collection window — is not
+compared. `--fail-on-diff` is a gate on the deployment, and which request a run
+happened to lose is a property of the run: counting those made two identical
+sites fail roughly one run in five. They are still reported in full by the
+audit itself and by `/network`, where a failed load is a real finding; the
+exclusion applies only to this comparison.
 
 | Flag | Default | Meaning |
 |---|---|---|
@@ -159,6 +183,11 @@ page, err := client.EnrichPage(ctx, "https://example.com", nil)
 report, err := client.EnrichWithBrowser(ctx,
     pinchtabaudit.AuditInput{SitemapURL: "https://example.com/sitemap.xml"}, nil)
 ```
+
+The module is pre-1.0. The exported Go types in `pkg/pinchtabaudit` may change name,
+shape or JSON tag in any release without notice, and no deprecation window is offered.
+Pin a module version if that matters to you. The HTTP API below is the stable contract:
+build against it if you need one.
 
 ## HTTP API
 

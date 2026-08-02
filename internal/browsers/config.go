@@ -114,6 +114,7 @@ type DoctorCheck struct {
 
 // DoctorEnv avoids browser sub-packages importing the config package.
 type DoctorEnv struct {
-	Binary string
-	Cloak  CloakFingerprint
+	Binary    string
+	Cloak     CloakFingerprint
+	NoSandbox bool
 }

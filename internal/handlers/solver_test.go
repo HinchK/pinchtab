@@ -5,9 +5,12 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	coreautosolver "github.com/pinchtab/pinchtab/internal/autosolver"
+	"github.com/pinchtab/pinchtab/internal/autosolver/catalog"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -241,5 +244,155 @@ func TestDeriveChallengeType_NilPage(t *testing.T) {
 	result := &coreautosolver.Result{Intent: coreautosolver.IntentCaptcha}
 	if got := deriveChallengeType(result, nil); got != "" {
 		t.Fatalf("deriveChallengeType(nil page) = %q, want empty string", got)
+	}
+}
+
+// Every solver name has an owner — a solver type's Name(), or the exported constant
+// for the semantic stage — and this package must spell all of them through it. The
+// banned set is DERIVED from catalog.Names(), so a solver added later is covered here
+// without anyone remembering to extend a list, and the scan covers every non-test file
+// in the package rather than the one file that happened to be dirty: a guard reading a
+// single file reports the rule as enforced while its siblings go unchecked.
+func TestNoHandlerSpellsASolverNameAsALiteral(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := catalog.Names()
+	if len(names) < 2 {
+		t.Fatalf("catalog.Names() returned %v; the banned set is derived from it, so this guard would check almost nothing", names)
+	}
+
+	scanned, referencing := 0, 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(name) // #nosec G304 -- files listed from this package's own directory.
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanned++
+		src := codeWithoutCommentLines(string(body))
+		if strings.Contains(src, "coreautosolver.SemanticSolverName") ||
+			strings.Contains(src, "coreautosolver.CapsolverSolverName") ||
+			strings.Contains(src, "coreautosolver.TwoCaptchaSolverName") {
+			referencing++
+		}
+		for _, solver := range names {
+			if strings.Contains(src, `"`+solver+`"`) {
+				t.Errorf("%s spells the solver name %q as a literal; use the constant that owns it (internal/autosolver) so the two cannot drift", name, solver)
+			}
+		}
+	}
+
+	if scanned < 2 {
+		t.Fatalf("scanned %d non-test files in this package; the census read nothing", scanned)
+	}
+	if referencing == 0 {
+		t.Error("no file in this package references a solver-name constant; the ban above would pass vacuously on a package that stopped naming solvers at all")
+	}
+}
+
+// codeWithoutCommentLines drops whole-line comments so a doc example or a curl snippet
+// naming a solver is not read as code. A trailing comment is NOT stripped: cutting at
+// the first "//" would also cut inside a string holding a URL, and a solver name spelled
+// after one is still a spelling worth catching.
+func codeWithoutCommentLines(src string) string {
+	var kept []string
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "//") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "\n")
+}
+
+func solveErrorPayload(t *testing.T, w *httptest.ResponseRecorder) (code, message string) {
+	t.Helper()
+	var payload struct {
+		Code  string `json:"code"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode error payload %q: %v", w.Body.String(), err)
+	}
+	return payload.Code, payload.Error
+}
+
+// capsolver with no API key is a known solver whose key is unset, not a typo.
+// Config validation accepts that exact name (TestValidateFileConfig_KnownSolverNamesAccepted,
+// row "key-gated without any key configured"), so the API must not call it unknown.
+func TestHandleSolveKeylessGatedSolverNamesTheMissingKey(t *testing.T) {
+	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
+
+	for _, gated := range coreautosolver.KeyGatedSolvers() {
+		t.Run(gated.Name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/solve", bytes.NewReader([]byte(`{"solver": "`+gated.Name+`"}`)))
+			w := httptest.NewRecorder()
+			h.HandleSolve(w, req)
+
+			if w.Code != 400 {
+				t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+			}
+			code, message := solveErrorPayload(t, w)
+			if code != "solver_key_missing" {
+				t.Errorf("code = %q, want solver_key_missing — a keyless known solver is not an unknown name", code)
+			}
+			if !strings.Contains(message, gated.ConfigKey) {
+				t.Errorf("message %q does not name the missing key %q", message, gated.ConfigKey)
+			}
+		})
+	}
+}
+
+// The misspelling must keep the old code and keep listing what is available.
+func TestHandleSolveMisspelledSolverStaysUnknown(t *testing.T) {
+	h := New(&mockBridge{}, &config.RuntimeConfig{}, nil, nil, nil)
+
+	req := httptest.NewRequest("POST", "/solve", bytes.NewReader([]byte(`{"solver": "cloudlfare"}`)))
+	w := httptest.NewRecorder()
+	h.HandleSolve(w, req)
+
+	if w.Code != 400 {
+		t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+	}
+	code, message := solveErrorPayload(t, w)
+	if code != "unknown_solver" {
+		t.Errorf("code = %q, want unknown_solver", code)
+	}
+	if !strings.Contains(message, "cloudlfare") {
+		t.Errorf("message %q does not name the rejected value", message)
+	}
+	for _, available := range h.availableAutoSolverNames() {
+		if !strings.Contains(message, available) {
+			t.Errorf("message %q omits available solver %q", message, available)
+		}
+	}
+}
+
+// Neither rejection may run a solver. Asserted by ordering rather than status
+// alone: this bridge cannot resolve a tab, so any path that got as far as
+// resolving one — let alone solving — would answer 404 the way
+// TestHandleSolve_TabNotFound does. A 400 proves the reject came first.
+func TestHandleSolveRejectionPrecedesAnySolveWork(t *testing.T) {
+	h := New(&mockBridge{failTab: true}, &config.RuntimeConfig{}, nil, nil, nil)
+
+	for _, name := range []string{coreautosolver.CapsolverSolverName, "cloudlfare"} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest("POST", "/solve", bytes.NewReader([]byte(`{"solver": "`+name+`"}`)))
+			w := httptest.NewRecorder()
+			h.HandleSolve(w, req)
+
+			if w.Code == 404 {
+				t.Fatalf("got 404: the tab was resolved before the solver name was rejected")
+			}
+			if w.Code != 400 {
+				t.Fatalf("status = %d, want 400: %s", w.Code, w.Body.String())
+			}
+		})
 	}
 }

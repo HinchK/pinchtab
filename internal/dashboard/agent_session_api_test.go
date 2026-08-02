@@ -288,6 +288,125 @@ func TestAgentSessionAPI_Revoke_NotFound(t *testing.T) {
 	}
 }
 
+// The defect this covers: `session create` returns a token, every id-taking endpoint
+// here rejects it, and the refusal said only "session not found" — which reads as
+// already-gone, so the caller shrugs and leaves a live session running. Both id-taking
+// endpoints are covered, because the same value reaches both by the same mistake.
+func TestSupplyingATokenWhereAnIDGoesExplainsTheDifference(t *testing.T) {
+	store := newTestSessionStore()
+	mux := newTestSessionMux(store)
+
+	_, token, _ := store.Create("agent-1", "", "")
+
+	for _, tc := range []struct {
+		name string
+		req  *http.Request
+	}{
+		{"revoke", httptest.NewRequest("POST", "/sessions/"+token+"/revoke", nil)},
+		{"get", httptest.NewRequest("GET", "/sessions/"+token, nil)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.req.Header.Set("Authorization", "Bearer dashboard-token")
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, tc.req)
+
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+			}
+			details := errorDetails(t, w)
+			if !strings.Contains(details["hint"], "TOKEN") || !strings.Contains(details["hint"], "not a session id") {
+				t.Errorf("hint does not name the id/token distinction: %q", details["hint"])
+			}
+			// The listing is the remedy because it is the one command that works with
+			// nothing else set up; `session info` needs PINCHTAB_SESSION exported, a
+			// precondition a remedy cannot state, so it is named in the hint instead.
+			if want := "pinchtab session list"; details["remedy"] != want {
+				t.Errorf("remedy = %q, want %q — the id is unreachable without a command that lists it", details["remedy"], want)
+			}
+			if !strings.Contains(details["hint"], "session info") {
+				t.Errorf("hint %q does not mention session info, the other way to reach the id", details["hint"])
+			}
+		})
+	}
+}
+
+// The path a caller following the product's own instructions actually takes: with
+// PINCHTAB_SESSION exported, revoking "$PINCHTAB_SESSION" authenticates AS that session
+// and lands on the 403, whose message — "may only revoke their own session" — is
+// actively misleading, because this IS their own session named by the wrong value. The
+// caller already holds this session's secret, so the remedy can hand them the id itself.
+func TestRevokingYourOwnSessionByTokenNamesYourID(t *testing.T) {
+	store := newTestSessionStore()
+	mux := newTestSessionMux(store)
+
+	id, token, _ := store.Create("agent-1", "", "")
+	sess, ok := store.Get(id)
+	if !ok || sess == nil {
+		t.Fatal("expected session to exist")
+	}
+
+	req := httptest.NewRequest("POST", "/sessions/"+token+"/revoke", nil)
+	req.Header.Set("Authorization", "Session "+token)
+	req = session.WithSession(req, sess)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+	details := errorDetails(t, w)
+	if !strings.Contains(details["hint"], "TOKEN") {
+		t.Errorf("hint does not name the id/token distinction: %q", details["hint"])
+	}
+	if want := "pinchtab session revoke " + id; details["remedy"] != want {
+		t.Errorf("remedy = %q, want %q — the caller holds this session's secret, so the id is the whole remedy", details["remedy"], want)
+	}
+	if strings.Contains(details["remedy"], token) {
+		t.Error("the remedy repeats the token, which is the value that does not work here")
+	}
+}
+
+// An unknown ID keeps the plain refusal. The hint claims the caller supplied a token,
+// so offering it for anything else would be a guess — and a wrong one for the ordinary
+// case of a session that really is gone.
+func TestAnUnknownIDGetsNoTokenHint(t *testing.T) {
+	store := newTestSessionStore()
+	mux := newTestSessionMux(store)
+
+	// Shaped like an id the store could have minted, but never minted — a session that
+	// really is gone, which is the case the bare refusal is right for.
+	const id = "ses_0123456789abcdef"
+	if !session.LooksLikeID(id) || session.LooksLikeToken(id) {
+		t.Fatalf("precondition: %q must read as an id, or this proves nothing", id)
+	}
+
+	req := httptest.NewRequest("POST", "/sessions/"+id+"/revoke", nil)
+	req.Header.Set("Authorization", "Bearer dashboard-token")
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNotFound)
+	}
+	if _, ok := decodeSessionResponse(t, w)["details"]; ok {
+		t.Error("an already-revoked session id was told it had supplied a token")
+	}
+}
+
+func errorDetails(t *testing.T, w *httptest.ResponseRecorder) map[string]string {
+	t.Helper()
+	raw, ok := decodeSessionResponse(t, w)["details"].(map[string]any)
+	if !ok {
+		t.Fatal("the refusal carries no details, so it explains nothing")
+	}
+	out := map[string]string{}
+	for key, value := range raw {
+		text, _ := value.(string)
+		out[key] = text
+	}
+	return out
+}
+
 func TestAgentSessionAPI_Revoke_SessionOwnerAllowed(t *testing.T) {
 	store := newTestSessionStore()
 	mux := newTestSessionMux(store)

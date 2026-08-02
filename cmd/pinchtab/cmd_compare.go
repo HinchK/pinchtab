@@ -10,7 +10,13 @@ var compareCmd = &cobra.Command{
 	Short: "Compare two site versions visually and by audit data",
 	Long: `Audit the same pages on a live and a staging base URL, then compare
 each pair: pixel-level visual diff on the screenshots plus data drift
-(console errors, broken assets, accessibility score, load time).
+(uncaught JS errors, console errors, broken assets, accessibility score,
+load time).
+
+Uncaught JS errors drift on identity, not just count: an exception present
+on one side only, or swapped for a different one, is a difference. The same
+exception on both sides is not — this is a comparison gate, not an absolute
+health check.
 
 Pages default to the two base URLs; pass --pages with comma-separated
 relative paths to compare more. With --output-dir the comparison report is

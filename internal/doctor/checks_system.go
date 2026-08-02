@@ -3,6 +3,7 @@ package doctor
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/config"
 )
@@ -23,6 +24,15 @@ func checkConfigFile(_ context.Context, _ *config.RuntimeConfig) CheckResult {
 			Status: StatusFail,
 			Detail: fmt.Sprintf("%s: parse error: %v", status.Path, status.ParseErr),
 			Err:    status.ParseErr,
+		}
+	}
+	// A typo in a config key loads fine and yields a working server with silently
+	// wrong settings, so "loaded" alone is not a clean bill of health: name the
+	// keys that were ignored.
+	if len(status.UnknownKeys) > 0 {
+		return CheckResult{
+			Status: StatusWarn,
+			Detail: fmt.Sprintf("%s (loaded) — unrecognized keys ignored: %s", status.Path, strings.Join(status.UnknownKeys, ", ")),
 		}
 	}
 	return CheckResult{

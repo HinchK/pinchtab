@@ -317,6 +317,11 @@ func (o *Orchestrator) applyInstanceAuth(req *http.Request, inst *InstanceIntern
 	if req == nil || inst == nil {
 		return
 	}
+	// Clear before setting: the WebSocket header filter promotes
+	// X-Pinchtab-Proxy-Authorization into Authorization on the connection to the
+	// instance, so a client-supplied value must not survive when we have no
+	// token of our own to overwrite it with.
+	iproxy.SetProxyWSBackendAuthorization(req.Header, "")
 	token := inst.authToken
 	if token == "" {
 		token = o.childAuthToken

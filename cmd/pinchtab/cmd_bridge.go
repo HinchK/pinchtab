@@ -14,6 +14,7 @@ var (
 	bridgeCDPAttach         string
 	bridgeBrowser           string
 	bridgeRemoteBrowserName string
+	bridgeLogLevel          string
 	bridgeBind              string
 	bridgePort              string
 )
@@ -27,6 +28,9 @@ By default, the bridge launches Chrome itself. Use --cdp-attach to attach the
 bridge to an already-running browser process (Chrome or CloakBrowser) via
 its remote debugging URL — the external process is never killed by PinchTab.
 
+Agent sessions are unavailable in bridge mode: the /sessions family is not served
+here and no config value mounts it. Run "pinchtab server" if you need them.
+
 Examples:
   pinchtab bridge
   pinchtab bridge --cdp-attach ws://127.0.0.1:9222/devtools/browser/<id>
@@ -34,7 +38,10 @@ Examples:
     --browser cloak --remote-browser-name cloak-manager-profile
 `,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg := loadConfig()
+		cfg, loadDiags := loadConfigDeferringDiagnostics()
+		resolveLogLevel(cfg, bridgeLogLevel, false)
+		config.EmitLoadDiagnostics(loadDiags)
+
 		if v := strings.TrimSpace(bridgeCDPAttach); v != "" {
 			cdpURL, err := validateBridgeCDPURL(v)
 			if err != nil {
@@ -53,7 +60,7 @@ Examples:
 		if browser, err := resolveBridgeBrowser(bridgeBrowser, cfg.BrowsersAvailable); err != nil {
 			return err
 		} else if browser != "" {
-			cfg.DefaultBrowser = browser
+			applyBridgeBrowserTarget(cfg, browser)
 		}
 		if v := strings.TrimSpace(bridgeRemoteBrowserName); v != "" {
 			cfg.RemoteBrowserName = v
@@ -95,6 +102,15 @@ func validateBridgeCDPURL(raw string) (string, error) {
 	return trimmed, nil
 }
 
+// applyBridgeBrowserTarget points the launch at the target that serves the
+// requested provider; leaving a default target of another provider in place
+// would let target resolution overwrite the flag.
+func applyBridgeBrowserTarget(cfg *config.RuntimeConfig, browser string) {
+	cfg.DefaultBrowser = browser
+	target, _ := config.MatchBrowserToTarget(cfg, browser)
+	cfg.DefaultTarget = target
+}
+
 func resolveBridgeBrowser(browserFlag string, configured []string) (string, error) {
 	v := strings.TrimSpace(browserFlag)
 	if v == "" {
@@ -109,6 +125,7 @@ func init() {
 	bridgeCmd.Flags().StringVar(&bridgeBind, "bind", "", "Bind address for the bridge HTTP server (overrides config server.bind)")
 	bridgeCmd.Flags().StringVar(&bridgePort, "port", "", "Port for the bridge HTTP server (overrides config server.port)")
 	bridgeCmd.Flags().StringVar(&bridgeBrowser, "browser", "", "Browser to use: chrome, cloak, or ghost-chrome (overrides config)")
+	bridgeCmd.Flags().StringVar(&bridgeLogLevel, "log-level", "", "Minimum log level: debug, info (default), warn or error (overrides config server.logLevel; the bridge has no -v because it has no startup banner to show)")
 	bridgeCmd.Flags().StringVar(&bridgeRemoteBrowserName, "remote-browser-name", "", "Opaque label for the externally-managed browser; surfaces in /stealth/status")
 	rootCmd.AddCommand(bridgeCmd)
 }

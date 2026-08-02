@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -26,10 +27,7 @@ func handleNavigate(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 		if tabID != "" {
 			payload["tabId"] = tabID
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			payload["browser"] = browser
-		}
-		body, code, err := c.Post(ctx, "/navigate", payload)
+		body, code, err := c.Post(ctx, routedPathWithBody(r, "/navigate", payload), payload)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -37,22 +35,59 @@ func handleNavigate(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 			return resultFromBytes(body, code)
 		}
 
-		if snap, ok := optBool(r, "snap"); ok && snap {
-			q := url.Values{}
-			q.Set("filter", "interactive")
-			q.Set("format", "compact")
-			if tabID != "" {
-				q.Set("tabId", tabID)
-			} else if returnedTabID := responseStringField(body, "tabId"); returnedTabID != "" {
-				q.Set("tabId", returnedTabID)
-			}
-			snapBody, _, snapErr := c.Get(ctx, "/snapshot", q)
-			if snapErr == nil {
-				return mcp.NewToolResultText(string(body) + "\n" + string(snapBody)), nil
-			}
-		}
+		return withOptionalSnapshot(ctx, c, r, tabID, body, code)
+	}
+}
 
+// withOptionalSnapshot appends the post-navigation snapshot when snap is set, so a
+// client can act and see the result in one round-trip. The tab is taken from the
+// request when given and otherwise from the tab the response reports, which is what
+// makes snap work for a call that did not name a tab. A snapshot failure is not
+// fatal: the navigation already happened and its result is the answer.
+func withOptionalSnapshot(ctx context.Context, c *Client, r mcp.CallToolRequest, tabID string, body []byte, code int) (*mcp.CallToolResult, error) {
+	snap, ok := optBool(r, "snap")
+	if !ok || !snap {
 		return resultFromBytes(body, code)
+	}
+	q := url.Values{}
+	q.Set("filter", "interactive")
+	q.Set("format", "compact")
+	if tabID != "" {
+		q.Set("tabId", tabID)
+	} else if returnedTabID := responseStringField(body, "tabId"); returnedTabID != "" {
+		q.Set("tabId", returnedTabID)
+	}
+	snapBody, _, snapErr := c.Get(ctx, "/snapshot", routedQuery(r, q))
+	if snapErr != nil {
+		return resultFromBytes(body, code)
+	}
+	return mcp.NewToolResultText(string(body) + "\n" + string(snapBody)), nil
+}
+
+// handleHistoryNav serves pinchtab_back, pinchtab_forward and pinchtab_reload. The
+// verb is data: the three differ only in the route they post to, so one handler
+// takes it as a parameter rather than three near-identical copies drifting apart.
+//
+// Two things differ from handleNavigate, both forced by the endpoint. /back,
+// /forward and /reload never parse a request body — handleHistoryNav reads tabId
+// from the query and the tab-scoped route from the path — so no body is sent at
+// all, and browser travels in the query via routedPath. Putting browser in a body
+// the endpoint does not read would be silently dropped.
+func handleHistoryNav(c *Client, verb string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		tabID := optString(r, "tabId")
+		path := "/" + verb
+		if tabID != "" {
+			path = "/tabs/" + url.PathEscape(tabID) + "/" + verb
+		}
+		body, code, err := c.Post(ctx, routedPath(r, path), nil)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
+		}
+		if code >= 400 {
+			return resultFromBytes(body, code)
+		}
+		return withOptionalSnapshot(ctx, c, r, tabID, body, code)
 	}
 }
 
@@ -90,19 +125,16 @@ func handleSnapshot(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 		if sel := optString(r, "selector"); sel != "" {
 			q.Set("selector", sel)
 		}
-		if v := optNumber(r, "maxTokens"); v > 0 {
-			q.Set("maxTokens", formatInt(v))
+		if v, ok := optInt(r, "maxTokens"); ok && v > 0 {
+			q.Set("maxTokens", strconv.Itoa(v))
 		}
-		if v := optNumber(r, "depth"); v > 0 {
-			q.Set("depth", formatInt(v))
+		if v, ok := optInt(r, "depth"); ok && v > 0 {
+			q.Set("depth", strconv.Itoa(v))
 		}
 		if v, ok := optBool(r, "noAnimations"); ok && v {
 			q.Set("noAnimations", "true")
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			q.Set("browser", browser)
-		}
-		body, code, err := c.Get(ctx, "/snapshot", q)
+		body, code, err := c.GetCapturingVocab(ctx, "/snapshot", routedQuery(r, q), optString(r, "tabId"))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -114,16 +146,12 @@ func handleFrame(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.Cal
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		tabID := optString(r, "tabId")
 		target := optString(r, "target")
-		browser := optString(r, "browser")
 		if strings.TrimSpace(target) == "" {
 			q := url.Values{}
 			if tabID != "" {
 				q.Set("tabId", tabID)
 			}
-			if browser != "" {
-				q.Set("browser", browser)
-			}
-			body, code, err := c.Get(ctx, "/frame", q)
+			body, code, err := c.Get(ctx, "/frame", routedQuery(r, q))
 			if err != nil {
 				return mcp.NewToolResultError(err.Error()), nil
 			}
@@ -134,10 +162,7 @@ func handleFrame(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.Cal
 		if tabID != "" {
 			payload["tabId"] = tabID
 		}
-		if browser != "" {
-			payload["browser"] = browser
-		}
-		body, code, err := c.Post(ctx, "/frame", payload)
+		body, code, err := c.Post(ctx, routedPath(r, "/frame"), payload)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -181,13 +206,10 @@ func handleScreenshot(c *Client) func(context.Context, mcp.CallToolRequest) (*mc
 		if quality, ok := optFloat(r, "quality"); ok {
 			q.Set("quality", fmt.Sprintf("%d", int(quality)))
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			q.Set("browser", browser)
-		}
 		// Always request the inline base64 envelope screenshotResult parses,
 		// rather than relying on the server's default output mode.
 		q.Set("output", "inline")
-		body, code, err := c.Get(ctx, "/screenshot", q)
+		body, code, err := c.Get(ctx, "/screenshot", routedQuery(r, q))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -269,8 +291,8 @@ func handleCapture(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.C
 		if scale, ok := optFloat(r, "scale"); ok && scale > 0 {
 			q.Set("scale", fmt.Sprintf("%g", scale))
 		}
-		if v := optNumber(r, "depth"); v > 0 {
-			q.Set("depth", formatInt(v))
+		if v, ok := optInt(r, "depth"); ok && v > 0 {
+			q.Set("depth", strconv.Itoa(v))
 		}
 		if v, ok := optBool(r, "beyondViewport"); ok && v {
 			q.Set("beyondViewport", "true")
@@ -284,11 +306,7 @@ func handleCapture(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.C
 		if v, ok := optBool(r, "noAnimations"); ok && v {
 			q.Set("noAnimations", "true")
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			q.Set("browser", browser)
-		}
-
-		body, code, err := c.Get(ctx, "/capture", q)
+		body, code, err := c.Get(ctx, "/capture", routedQuery(r, q))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
@@ -375,13 +393,10 @@ func handleGetText(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.C
 		if format := optString(r, "format"); format != "" {
 			q.Set("format", format)
 		}
-		if v := optNumber(r, "maxChars"); v > 0 {
-			q.Set("maxChars", formatInt(v))
+		if v, ok := optInt(r, "maxChars"); ok && v > 0 {
+			q.Set("maxChars", strconv.Itoa(v))
 		}
-		if browser := optString(r, "browser"); browser != "" {
-			q.Set("browser", browser)
-		}
-		body, code, err := c.Get(ctx, "/text", q)
+		body, code, err := c.Get(ctx, "/text", routedQuery(r, q))
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

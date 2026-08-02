@@ -30,7 +30,8 @@ The scheduler is off by default. Dashboard mode registers the task routes only w
     "maxInflight": 20,
     "maxPerAgentInflight": 10,
     "resultTTLSec": 300,
-    "workerCount": 4
+    "workerCount": 4,
+    "maxBatchSize": 50
   }
 }
 ```
@@ -45,6 +46,7 @@ The scheduler is off by default. Dashboard mode registers the task routes only w
 | `maxPerAgentInflight` | `10` | max concurrently executing tasks per agent |
 | `resultTTLSec` | `300` | retention time for terminal task snapshots |
 | `workerCount` | `4` | number of worker goroutines |
+| `maxBatchSize` | `50` | max tasks one `POST /tasks/batch` may submit; a larger batch is refused with `batch_too_large` |
 
 ## Task Object
 
@@ -425,7 +427,7 @@ Each task definition supports the same fields as a single task submit (`action`,
 | --- | --- |
 | missing `agentId` | `400 Bad Request` |
 | empty `tasks` array | `400 Bad Request` |
-| more than 50 tasks | `400 Bad Request` with `batch_too_large` code |
+| more tasks than `scheduler.maxBatchSize` (default 50) | `400 Bad Request` with `batch_too_large` code |
 | invalid JSON body | `400 Bad Request` |
 
 Partial failure: if some tasks are rejected by admission (queue full), the accepted tasks are still submitted. The response includes each task's status individually.

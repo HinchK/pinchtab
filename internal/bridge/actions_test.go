@@ -2,13 +2,17 @@ package bridge
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
 func TestClickAction_UsesCoordinatePathIncludingZeroZero(t *testing.T) {
@@ -1167,5 +1171,142 @@ func TestScrollIntoViewAction_WithSelector_UsesCSSPath(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "need selector") {
 		t.Fatalf("expected CSS path, got validation error: %v", err)
+	}
+}
+
+func TestHoverAction_HumanizeRoutesEveryTargetForm(t *testing.T) {
+	origElement := hoverElementAction
+	origCoordinate := hoverCoordinateAction
+	t.Cleanup(func() {
+		hoverElementAction = origElement
+		hoverCoordinateAction = origCoordinate
+	})
+
+	var nodes []cdp.BackendNodeID
+	var points [][2]float64
+	hoverElementAction = func(ctx context.Context, backendNodeID cdp.BackendNodeID) error {
+		nodes = append(nodes, backendNodeID)
+		return nil
+	}
+	hoverCoordinateAction = func(ctx context.Context, x, y float64) error {
+		points = append(points, [2]float64{x, y})
+		return nil
+	}
+
+	tests := []struct {
+		name       string
+		config     *config.RuntimeConfig
+		req        ActionRequest
+		wantNodes  []cdp.BackendNodeID
+		wantPoints [][2]float64
+		wantHuman  bool
+	}{
+		{
+			name:      "nodeId with request opt-in",
+			config:    &config.RuntimeConfig{},
+			req:       ActionRequest{NodeID: 77, Humanize: boolPtr(true)},
+			wantNodes: []cdp.BackendNodeID{77},
+			wantHuman: true,
+		},
+		{
+			name:       "coordinates with instance default",
+			config:     &config.RuntimeConfig{Humanize: true},
+			req:        ActionRequest{HasXY: true, X: 12, Y: 34},
+			wantPoints: [][2]float64{{12, 34}},
+			wantHuman:  true,
+		},
+		{
+			name:      "explicit false opts out of the humanized path",
+			config:    &config.RuntimeConfig{Humanize: true},
+			req:       ActionRequest{NodeID: 77, Humanize: boolPtr(false)},
+			wantHuman: false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			nodes, points = nil, nil
+			b := New(context.TODO(), nil, tc.config)
+
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			res, err := b.Actions[ActionHover](ctx, tc.req)
+
+			if tc.wantHuman {
+				if err != nil {
+					t.Fatalf("humanized hover returned error: %v", err)
+				}
+				if hovered, _ := res["hovered"].(bool); !hovered {
+					t.Fatalf("result = %#v, want hovered=true", res)
+				}
+				if human, _ := res["human"].(bool); !human {
+					t.Fatalf("result = %#v, want human=true", res)
+				}
+			} else if _, ok := res["human"]; ok {
+				t.Fatalf("raw hover result = %#v, want no human key", res)
+			}
+
+			if len(nodes) != len(tc.wantNodes) || (len(nodes) == 1 && nodes[0] != tc.wantNodes[0]) {
+				t.Fatalf("element hovers = %v, want %v", nodes, tc.wantNodes)
+			}
+			if len(points) != len(tc.wantPoints) || (len(points) == 1 && points[0] != tc.wantPoints[0]) {
+				t.Fatalf("coordinate hovers = %v, want %v", points, tc.wantPoints)
+			}
+		})
+	}
+}
+
+func TestHoverAction_HumanizedStillRequiresATarget(t *testing.T) {
+	b := New(context.TODO(), nil, &config.RuntimeConfig{Humanize: true})
+
+	_, err := b.Actions[ActionHover](context.Background(), ActionRequest{})
+	if err == nil || !strings.Contains(err.Error(), "need selector") {
+		t.Fatalf("targetless humanized hover error = %v, want the target requirement", err)
+	}
+}
+
+// Browser-backed: the selector form resolves through firstNodeBySelector, which
+// has no browserless seam, so this is where selector routing and the real
+// trail landing on the target are pinned.
+func TestHoverAction_HumanizedSelectorLandsOnTheTarget(t *testing.T) {
+	chromePath := testbrowser.Path(t)
+	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
+		chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(chromePath),
+		chromedp.Flag("headless", true),
+		chromedp.Flag("no-sandbox", true),
+	)...)
+	defer cancelAlloc()
+	ctx, cancel := chromedp.NewContext(alloc)
+	defer cancel()
+	ctx, cancelTimeout := context.WithTimeout(ctx, 30*time.Second)
+	defer cancelTimeout()
+
+	html := `<style>#target { position: absolute; top: 100px; left: 100px; width: 120px; height: 40px; }</style>
+	<div id="target">hover me</div>
+	<script>
+		window.hovered = false;
+		document.getElementById("target").addEventListener("mouseover", () => window.hovered = true);
+	</script>`
+	dataURL := "data:text/html;base64," + base64.StdEncoding.EncodeToString([]byte(html))
+	if err := chromedp.Run(ctx, chromedp.Navigate(dataURL)); err != nil {
+		t.Fatal(err)
+	}
+
+	b := New(context.Background(), nil, &config.RuntimeConfig{Humanize: true})
+	res, err := b.Actions[ActionHover](ctx, ActionRequest{Selector: "#target"})
+	if err != nil {
+		t.Fatalf("humanized selector hover: %v", err)
+	}
+	if human, _ := res["human"].(bool); !human {
+		t.Fatalf("result = %#v, want human=true", res)
+	}
+
+	var hovered bool
+	if err := chromedp.Run(ctx, chromedp.Evaluate(`window.hovered`, &hovered)); err != nil {
+		t.Fatal(err)
+	}
+	if !hovered {
+		t.Fatal("humanized hover did not fire mouseover on the selector target")
 	}
 }

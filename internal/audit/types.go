@@ -24,6 +24,27 @@ type ConsoleLogEntry struct {
 	Source string `json:"source,omitempty"`
 }
 
+// JSError is a single uncaught JavaScript exception raised while the page
+// loaded. It mirrors the bridge error-log shape served by GET /errors, the
+// channel that is separate from console messages: a console.error call lands
+// in ConsoleLogEntry, a thrown exception lands here.
+type JSError struct {
+	// Timestamp is when the exception was raised.
+	Timestamp time.Time `json:"timestamp"`
+	// Message is the exception text, including the exception description.
+	Message string `json:"message"`
+	// Type classifies the exception when the browser reported one.
+	Type string `json:"type,omitempty"`
+	// URL is the script URL the exception was raised from.
+	URL string `json:"url,omitempty"`
+	// Line is the 0-based line number within that script.
+	Line int64 `json:"line,omitempty"`
+	// Column is the 0-based column number within that script.
+	Column int64 `json:"column,omitempty"`
+	// Stack is the exception stack trace, when available.
+	Stack string `json:"stack,omitempty"`
+}
+
 // NetworkRequest is a single resource request observed while loading a page.
 // It mirrors the observe network entry shape, trimmed to audit-relevant fields.
 type NetworkRequest struct {
@@ -79,8 +100,6 @@ type InteractiveElement struct {
 	Label string `json:"label,omitempty"`
 	// Disabled reports whether the element is disabled.
 	Disabled bool `json:"disabled,omitempty"`
-	// Visible reports whether the element is visible in the layout.
-	Visible bool `json:"visible,omitempty"`
 }
 
 // BrowserTimingMetrics holds browser-level performance timings for a page,
@@ -139,6 +158,8 @@ type BrowserPageData struct {
 	FullPageScreenshot bool `json:"fullPageScreenshot,omitempty"`
 	// ConsoleLogs are the console messages captured during load.
 	ConsoleLogs []ConsoleLogEntry `json:"consoleLogs,omitempty"`
+	// JSErrors are the uncaught JavaScript exceptions raised during load.
+	JSErrors []JSError `json:"jsErrors,omitempty"`
 	// NetworkRequests are the resource requests observed during load.
 	NetworkRequests []NetworkRequest `json:"networkRequests,omitempty"`
 	// BrokenAssets are resources that failed to load, especially 404 images.
@@ -219,7 +240,9 @@ type AuditReport struct {
 	Options AuditOptions `json:"options"`
 	// Pages are the per-page audit results.
 	Pages []PageResult `json:"pages"`
-	// SummaryScore is the overall site score, in [0,100].
+	// SummaryScore is the mean accessibility score of enriched pages, in
+	// [0,100]. It is not an overall health score: broken assets, failed
+	// requests and uncaught JS errors do not move it.
 	SummaryScore int `json:"summaryScore"`
 	// SecurityFindings are site-wide security-surface findings.
 	SecurityFindings []SecurityFinding `json:"securityFindings,omitempty"`

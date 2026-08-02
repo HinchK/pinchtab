@@ -5,24 +5,18 @@ import (
 	"encoding/base64"
 	"errors"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/chromedp/chromedp"
 	"github.com/pinchtab/pinchtab/internal/selector"
+	"github.com/pinchtab/pinchtab/internal/testbrowser"
 )
 
 func TestDialogScopeReproducesGlobalEscapeAndContainsActionsAndReads(t *testing.T) {
-	chromePath, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Skip("chromium not installed")
-	}
-	profile, err := os.MkdirTemp("", "pinchtab-modal-scope-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	chromePath := testbrowser.Path(t)
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
@@ -170,14 +164,8 @@ func TestDialogScopeReproducesGlobalEscapeAndContainsActionsAndReads(t *testing.
 }
 
 func TestTopmostModalUsesBrowserPaintOrderAndRejectsFalseOwners(t *testing.T) {
-	chromePath, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Skip("chromium not installed")
-	}
-	profile, err := os.MkdirTemp("", "pinchtab-modal-order-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	chromePath := testbrowser.Path(t)
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),
@@ -260,14 +248,8 @@ func TestTopmostModalUsesBrowserPaintOrderAndRejectsFalseOwners(t *testing.T) {
 }
 
 func TestDialogScopeContainmentIncludesOpenShadowDescendants(t *testing.T) {
-	chromePath, err := exec.LookPath("chromium")
-	if err != nil {
-		t.Skip("chromium not installed")
-	}
-	profile, err := os.MkdirTemp("", "pinchtab-modal-shadow-containment-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	chromePath := testbrowser.Path(t)
+	profile := testbrowser.ProfileDir(t)
 	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
 		chromedp.DefaultExecAllocatorOptions[:],
 		chromedp.ExecPath(chromePath),

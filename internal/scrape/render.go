@@ -5,6 +5,16 @@ import (
 	"strings"
 )
 
+// SampledPagesSummary describes how many pages a run sampled, naming the
+// sitemap total only when a sitemap supplied one. Shared with the CLI preview
+// so both surfaces use the same nouns for the same two numbers.
+func SampledPagesSummary(sampled, totalURLsInSitemap int) string {
+	if totalURLsInSitemap > 0 {
+		return fmt.Sprintf("%d page(s) sampled of %d in sitemap", sampled, totalURLsInSitemap)
+	}
+	return fmt.Sprintf("%d page(s) sampled", sampled)
+}
+
 // RenderMarkdown renders the report as a single Markdown digest: site
 // overview, the page tree by URL pattern, then each page's content.
 func RenderMarkdown(r Report) []byte {
@@ -15,7 +25,7 @@ func RenderMarkdown(r Report) []byte {
 	}
 	fmt.Fprintf(&b, "# Scrape Report — %s\n\n", title)
 	fmt.Fprintf(&b, "- Base URL: %s\n", r.Site.BaseURL)
-	fmt.Fprintf(&b, "- Pages: %d sampled of %d discovered\n", r.Site.SampledPages, r.Site.TotalDiscovered)
+	fmt.Fprintf(&b, "- Pages: %s\n", SampledPagesSummary(r.Site.SampledPages, r.Site.TotalURLsInSitemap))
 	fmt.Fprintf(&b, "- Sources: %d http · %d browser-rendered · %d failed\n",
 		r.Summary.HTTPPages, r.Summary.BrowserPages, r.Summary.FailedPages)
 	fmt.Fprintf(&b, "- Generated: %s\n\n", r.GeneratedAt.Format("2006-01-02 15:04:05 UTC"))

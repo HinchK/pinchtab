@@ -99,12 +99,18 @@ pinchtab config validate
 
 ### `pinchtab config get`
 
-Reads a single dotted-path value from the file config.
+Reads a single dotted-path value and reports the **value in effect**: what the file
+sets, and otherwise the value the runtime resolves — a shipped default, or a value
+derived from another key. `profiles.baseDir` is the clearest case: leave it out of the
+file and `config get` reports `<server.stateDir>/profiles`, the directory profiles are
+actually kept in, rather than nothing. A key that is genuinely unset — a secret nobody
+configured, an optional override such as `browser.binary` — still answers blank.
 
 ```bash
 pinchtab config get server.port
 pinchtab config get instanceDefaults.mode
 pinchtab config get security.attach.allowHosts
+pinchtab config get profiles.baseDir      # derived from server.stateDir when unset
 ```
 
 ### `pinchtab config set`
@@ -177,6 +183,7 @@ Current nested file-config shape:
     "bind": "127.0.0.1",
     "token": "your-secret-token",
     "stateDir": "/path/to/state",
+    "logLevel": "info",
     "networkBufferSize": 100,
     "retainNetworkBodies": false,
     "retainNetworkBodyMaxBytes": 262144,
@@ -259,7 +266,8 @@ Current nested file-config shape:
   },
   "profiles": {
     "baseDir": "/path/to/profiles",
-    "defaultProfile": "default"
+    "defaultProfile": "default",
+    "quarantineKeep": 1
   },
   "multiInstance": {
     "strategy": "always-on",
@@ -304,13 +312,14 @@ Current nested file-config shape:
     "maxInflight": 20,
     "maxPerAgentInflight": 10,
     "resultTTLSec": 300,
-    "workerCount": 4
+    "workerCount": 4,
+    "maxBatchSize": 50
   },
   "observability": {
     "activity": {
       "enabled": true,
       "sessionIdleSec": 1800,
-      "retentionDays": 1,
+      "retentionDays": 30,
       "events": {
         "dashboard": false,
         "server": false,
@@ -425,6 +434,23 @@ on top of CloakBrowser's native patches.
 Advanced CloakBrowser flags can still go through `browser.extraFlags` when they
 are not PinchTab-owned lifecycle flags.
 
+`browser.proxy.server` is the prerequisite for the rest of the block:
+`browser.proxy.username`, `password`, `bypassList` and every `browser.proxy.geo.*`
+key do nothing without it, because there is no proxy to route through,
+authenticate to, or align geo with. The values are still kept — `config set`
+writes them, `config get` returns them, and setting the server afterwards makes
+them take effect — and PinchTab reports the incomplete block on each config read
+or write until a server is set. Clearing `browser.proxy.server` turns the proxy
+off and leaves the other values on disk for the next server.
+
+`browser.proxy.username` and `password` are the exception, and it is not about
+the server: each requires the other, so `config set` aborts on either one alone
+whichever order you try. Send the pair in one write instead:
+
+```bash
+pinchtab config patch '{"browser":{"proxy":{"username":"bob","password":"s3cret"}}}'
+```
+
 `browser.proxy.geo` is a CloakBrowser fingerprint-alignment hint. When a proxy
 server and geo block are configured for a CloakBrowser target, PinchTab maps the
 geo values into native CloakBrowser fingerprint flags unless the target already
@@ -522,9 +548,10 @@ Rationale: humanized input is useful for compatibility with pages that react poo
 - `profiles`
 - `multiInstance`
 - `timeouts`
+- `scheduler`
 - `observability`
 
-They do not expose every field in those sections, and they do not support `scheduler.*`.
+They do not expose every field in those sections.
 
 Use `pinchtab config patch` or edit `config.json` directly for fields such as:
 
@@ -535,7 +562,6 @@ Use `pinchtab config patch` or edit `config.json` directly for fields such as:
 - `security.allowClipboard`
 - `security.idpi.scanTimeoutSec`
 - `security.idpi.shieldThreshold`
-- `scheduler.*`
 - `observability.activity.events.*`
 
 ## Common Examples
@@ -549,6 +575,28 @@ Use `pinchtab config patch` or edit `config.json` directly for fields such as:
   }
 }
 ```
+
+### Log Level For A Daemon Or Auto-Started Server
+
+`pinchtab server --log-level` only reaches a server you start by hand. A
+daemon-installed server (`pinchtab daemon install`) and the server a bare
+`pinchtab nav` auto-starts both launch `pinchtab server` with no flags, so
+`server.logLevel` is the only way to set their threshold — and it needs no change
+to the unit file.
+
+```bash
+pinchtab config set server.logLevel warn    # Warnings and errors only
+pinchtab config set server.logLevel debug   # Full debug detail while diagnosing
+pinchtab config get server.logLevel
+```
+
+Accepted values are `debug`, `info` (the default), `warn` and `error`; an
+unparseable value fails when the config loads, naming the accepted values.
+`--log-level` still wins over the configured value. `-v` keeps its startup banner
+either way, but it only raises the level when neither `--log-level` nor
+`server.logLevel` is set — so a persisted `warn` survives `pinchtab server -v`, and
+`--log-level debug` is how you override it for one run. `pinchtab bridge` reads the
+same key and accepts the same flag.
 
 ### Network Bind With Token
 
@@ -620,6 +668,29 @@ headers correctly.
 
 `security.attach.forwardProxyAuth` controls whether PinchTab may send configured proxy authentication credentials over remote CDP attach. It defaults to `false`; enable it only when the attached browser process and CDP transport are trusted.
 
+### Quarantined Profile Retention
+
+When a browser profile turns out to be unusable, PinchTab renames it aside as
+`<profile>.quarantine-<unix>` and starts fresh. PinchTab keeps the most recent
+quarantined copy of each profile and prunes the older ones at the moment a new quarantine
+is created — the newest is the copy most likely to relate to a problem being investigated
+now, and nothing in the product reads the older ones. Every removal is logged with the
+path and the bytes reclaimed.
+
+```json
+{
+  "profiles": {
+    "quarantineKeep": 1
+  }
+}
+```
+
+`profiles.quarantineKeep` defaults to `1`. Set it to `0` to keep every quarantined
+profile, which is exactly the behaviour before this setting existed. Pruning only ever
+runs when a new quarantine is created, never on startup or a timer, so quarantined copies
+of a profile that never fails again are left alone — clearing that backlog is a separate,
+explicit operation.
+
 ### Activity Retention
 
 ```json
@@ -632,6 +703,17 @@ headers correctly.
   }
 }
 ```
+
+Activity logs are always written to `<server.stateDir>/activity`, so two instances cannot
+end up sharing one log directory. `observability.activity.stateDir` is therefore not
+settable: `config set` refuses it, and `config get observability.activity.stateDir` reports
+the derived directory in effect. Move the logs with `server.stateDir`.
+
+A file that already carries the key keeps loading and keeps working. The key is **ignored**,
+and saying so is an *advisory*, not a validation error: PinchTab reports it — at load, and
+on stderr when you run `config set`, `config patch` or `config validate` — and it never
+blocks anything. There is nothing to fix and nothing to remove; the value simply has no
+effect. Validation errors, such as an out-of-range `server.port`, still block a save.
 
 `server.trustProxyHeaders` should stay `false` unless PinchTab is behind a trusted reverse proxy that overwrites `Forwarded` and `X-Forwarded-*` headers. Do not enable it on direct-exposure deployments or behind proxies that pass client-supplied forwarding headers through unchanged.
 
@@ -692,5 +774,5 @@ Valid enum values:
 ## Notes
 
 - `config show` reports effective runtime values, not just raw file contents.
-- `config get`, `set`, and `patch` operate on the file config model, not transient runtime overrides.
+- `config get` reports the value in effect, including shipped defaults and values derived from another key. `config set` and `patch` write the file config model and do not carry transient runtime overrides.
 - the dashboard config API treats `server.token` as write-only; use the CLI or file editing to manage it.

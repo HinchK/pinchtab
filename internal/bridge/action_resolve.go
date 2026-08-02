@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/chromedp/chromedp"
 	bridgecdpops "github.com/pinchtab/pinchtab/internal/bridge/cdpops"
+	"github.com/pinchtab/pinchtab/internal/cdptk"
 	"github.com/pinchtab/pinchtab/internal/selector"
 )
 
@@ -40,32 +40,44 @@ type FrameElementMeta struct {
 // Passes frameID == "" through as a no-op (returns 0, nil) so callers can
 // fall back to the default top-level context without branching.
 func FrameExecutionContextID(ctx context.Context, frameID string) (int64, error) {
-	return frameExecutionContextID(ctx, frameID)
-}
-
-func frameExecutionContextID(ctx context.Context, frameID string) (int64, error) {
 	return bridgecdpops.FrameExecutionContextID(ctx, frameID)
 }
 
+// isolatedExecutionContextID returns the isolated world's execution context for
+// frameID, or for the top frame when frameID is empty. Selector and modal
+// discovery run there so page script cannot hide or redirect targets by
+// replacing DOM methods in the main world. It never returns a usable zero: a
+// caller that cannot get an isolated context gets an error, not the main world.
+//
+// The frame fallback and the world creation both live with the owner in
+// internal/cdptk. This package kept its own copy of that sequence, which is how
+// two world names came to exist for one rule.
+func isolatedExecutionContextID(ctx context.Context, frameID string) (int64, error) {
+	return cdptk.IsolatedContextID(ctx, frameID)
+}
+
+// IsolatedNodeObjectID converts a backend node id to a JS object handle in the
+// isolated world, so Runtime.callFunctionOn against it cannot be answered by
+// page script that has redefined the DOM methods the call uses.
+//
+// The rule has one owner in internal/cdptk, the lowest CDP layer, because the
+// same resolution is needed by the clip builder there and this package already
+// depends on it. A second implementation here is how the two capture paths
+// drifted apart before.
+func IsolatedNodeObjectID(ctx context.Context, backendNodeID int64) (string, error) {
+	return cdptk.IsolatedNodeObjectID(ctx, backendNodeID)
+}
+
+// IsolatedNodeObjectIDs resolves several nodes against one isolated context, for an
+// operation whose handles are compared in a single call.
+func IsolatedNodeObjectIDs(ctx context.Context, backendNodeIDs ...int64) ([]string, error) {
+	return cdptk.IsolatedNodeObjectIDs(ctx, backendNodeIDs...)
+}
+
 func frameDocumentObjectID(ctx context.Context, frameID string) (string, error) {
-	// Selector and modal discovery run in an isolated world so page script cannot
-	// hide or redirect targets by replacing DOM methods in the main world.
-	if frameID == "" {
-		frameTree, err := FetchFrameTree(ctx)
-		if err != nil {
-			return "", fmt.Errorf("resolve top frame: %w", err)
-		}
-		frameID = frameTree.Frame.ID
-		if frameID == "" {
-			return "", fmt.Errorf("resolve top frame: frame id is empty")
-		}
-	}
-	execID, err := frameExecutionContextID(ctx, frameID)
+	execID, err := isolatedExecutionContextID(ctx, frameID)
 	if err != nil {
 		return "", err
-	}
-	if execID == 0 {
-		return "", fmt.Errorf("frame %q has no isolated execution context", frameID)
 	}
 
 	params := map[string]any{
@@ -292,31 +304,14 @@ func TopmostModalNodeID(ctx context.Context, frameID string) (int64, bool, error
 // resolveNodeWithinBackendNode invokes functionDeclaration with the scope
 // element as `this` and converts the returned DOM object to a backend node ID.
 func resolveNodeWithinBackendNode(ctx context.Context, scopeBackendNodeID int64, functionDeclaration string, args []map[string]any) (int64, error) {
-	var scopeResult json.RawMessage
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId": scopeBackendNodeID,
-		}, &scopeResult)
-	}))
+	scopeObjectID, err := IsolatedNodeObjectID(ctx, scopeBackendNodeID)
 	if err != nil {
 		return 0, fmt.Errorf("resolve scope node: %w", err)
 	}
 
-	var scope struct {
-		Object struct {
-			ObjectID string `json:"objectId"`
-		} `json:"object"`
-	}
-	if err := json.Unmarshal(scopeResult, &scope); err != nil {
-		return 0, err
-	}
-	if scope.Object.ObjectID == "" {
-		return 0, fmt.Errorf("dialog scope is no longer attached")
-	}
-
 	params := map[string]any{
 		"functionDeclaration": functionDeclaration,
-		"objectId":            scope.Object.ObjectID,
+		"objectId":            scopeObjectID,
 		"returnByValue":       false,
 	}
 	if len(args) > 0 {
@@ -361,38 +356,14 @@ func BackendNodeWithinScope(ctx context.Context, scopeBackendNodeID, targetBacke
 		return false, nil
 	}
 
-	resolve := func(ctx context.Context, backendNodeID int64) (string, error) {
-		var raw json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.resolveNode", map[string]any{
-			"backendNodeId": backendNodeID,
-		}, &raw); err != nil {
-			return "", err
-		}
-		var parsed struct {
-			Object struct {
-				ObjectID string `json:"objectId"`
-			} `json:"object"`
-		}
-		if err := json.Unmarshal(raw, &parsed); err != nil {
-			return "", err
-		}
-		if parsed.Object.ObjectID == "" {
-			return "", fmt.Errorf("backend node %d is no longer attached", backendNodeID)
-		}
-		return parsed.Object.ObjectID, nil
+	objectIDs, err := IsolatedNodeObjectIDs(ctx, scopeBackendNodeID, targetBackendNodeID)
+	if err != nil {
+		return false, fmt.Errorf("resolve scope and target nodes: %w", err)
 	}
+	scopeObjectID, targetObjectID := objectIDs[0], objectIDs[1]
 
 	var contains bool
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		scopeObjectID, err := resolve(ctx, scopeBackendNodeID)
-		if err != nil {
-			return fmt.Errorf("resolve scope node: %w", err)
-		}
-		targetObjectID, err := resolve(ctx, targetBackendNodeID)
-		if err != nil {
-			return fmt.Errorf("resolve target node: %w", err)
-		}
-
+	err = chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 		var raw json.RawMessage
 		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "Runtime.callFunctionOn", map[string]any{
 			"functionDeclaration": `function(target) {
@@ -468,83 +439,9 @@ func resolveElementMetaInFrame(ctx context.Context, frameID, functionDeclaration
 	return meta, nil
 }
 
-func ResolveXPathToNodeID(ctx context.Context, xpath string) (int64, error) {
-	var backendNodeID int64
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		// Use DOM.getDocument first to ensure the DOM is available.
-		var docResult json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.getDocument", map[string]any{"depth": 0}, &docResult); err != nil {
-			return fmt.Errorf("get document: %w", err)
-		}
-
-		var searchResult json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.performSearch", map[string]any{
-			"query": xpath,
-		}, &searchResult); err != nil {
-			return fmt.Errorf("xpath search: %w", err)
-		}
-
-		var sr struct {
-			SearchID    string `json:"searchId"`
-			ResultCount int    `json:"resultCount"`
-		}
-		if err := json.Unmarshal(searchResult, &sr); err != nil {
-			return err
-		}
-		if sr.ResultCount == 0 {
-			return fmt.Errorf("xpath %q: %w", xpath, ErrSelectorNoMatch)
-		}
-
-		var getResult json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.getSearchResults", map[string]any{
-			"searchId":  sr.SearchID,
-			"fromIndex": 0,
-			"toIndex":   1,
-		}, &getResult); err != nil {
-			return fmt.Errorf("get search results: %w", err)
-		}
-
-		var gr struct {
-			NodeIDs []int64 `json:"nodeIds"`
-		}
-		if err := json.Unmarshal(getResult, &gr); err != nil {
-			return err
-		}
-		if len(gr.NodeIDs) == 0 {
-			return fmt.Errorf("xpath %q: no node IDs returned", xpath)
-		}
-
-		var descResult json.RawMessage
-		if err := chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.describeNode", map[string]any{
-			"nodeId": gr.NodeIDs[0],
-		}, &descResult); err != nil {
-			return fmt.Errorf("describe node: %w", err)
-		}
-
-		var desc struct {
-			Node struct {
-				BackendNodeID int64 `json:"backendNodeId"`
-			} `json:"node"`
-		}
-		if err := json.Unmarshal(descResult, &desc); err != nil {
-			return err
-		}
-		backendNodeID = desc.Node.BackendNodeID
-
-		_ = chromedp.FromContext(ctx).Target.Execute(ctx, "DOM.discardSearchResults", map[string]any{
-			"searchId": sr.SearchID,
-		}, nil)
-
-		return nil
-	}))
-	return backendNodeID, err
-}
-
-// jsNormalizeHelper is the shared text-normalization snippet injected into both
-// findTextFn and resolveSelectorAtFn so the two embedded JS programs can't drift
-// apart. It lowercases, collapses runs of whitespace to a single space, and
-// trims — identical in both call sites. Indentation here is cosmetic (JS ignores
-// it); only the runtime behavior matters.
+// jsNormalizeHelper lowercases, collapses runs of whitespace to a single space,
+// and trims. Indentation here is cosmetic (JS ignores it); only the runtime
+// behavior matters.
 const jsNormalizeHelper = `const normalize = (value) => String(value || "")
 		.toLowerCase()
 		.replace(/\s+/g, " ")
@@ -555,103 +452,10 @@ func ResolveTextToNodeID(ctx context.Context, text string) (int64, error) {
 }
 
 func ResolveTextToNodeIDInFrame(ctx context.Context, frameID, text string) (int64, error) {
-	var backendNodeID int64
-	// Implementation notes:
-	//   - Use `textContent` (not `innerText`) for the bulk scan. `innerText`
-	//     forces a synchronous layout pass per-element and is O(N^2) on large
-	//     pages; `textContent` is O(N). This fixes the intermittent
-	//     "context deadline exceeded" failures on dynamic/large fixtures.
-	//   - Exact-match pass first (single linear sweep). Fuzzy fallback is
-	//     only evaluated when no exact hit fires — most real lookups are
-	//     covered by the exact pass and cost nothing extra.
-	//   - "Leaf-most match wins": we keep the smallest element (by
-	//     descendant count) whose text contains the needle, so a button
-	//     that reads "Sign In" is preferred over its ancestor <body> which
-	//     technically also contains the string.
-	const findTextFn = `function(needle) {
-			const root = this.body || this.documentElement;
-			if (!root) return null;
-
-			` + jsNormalizeHelper + `
-			const semanticWeight = (el) => {
-				const tag = (el.tagName || "").toLowerCase();
-				if (tag === "button" || tag === "a" || tag === "input") return 0.25;
-				const role = normalize(el.getAttribute && el.getAttribute("role"));
-				if (role === "button" || role === "link" || role === "textbox") return 0.2;
-				return 0;
-			};
-
-			const needleNorm = normalize(needle);
-			if (!needleNorm) return null;
-
-			const elements = root.querySelectorAll("*");
-
-			// Exact-match pass: pick the leaf-most element whose textContent
-			// contains the needle. textContent is cheap (no layout), so we
-			// can afford to visit every node.
-			let exactBest = null;
-			let exactBestSize = Infinity;
-			for (const el of elements) {
-				const tc = normalize(el.textContent || "");
-				if (!tc || !tc.includes(needleNorm)) continue;
-				// "Leaf-most" = fewest descendants. Smaller subtree == more
-				// specific match. Ties broken by semantic weight.
-				const size = el.getElementsByTagName("*").length;
-				if (size < exactBestSize ||
-					(size === exactBestSize && exactBest && semanticWeight(el) > semanticWeight(exactBest))) {
-					exactBest = el;
-					exactBestSize = size;
-				}
-			}
-			if (exactBest) return exactBest;
-
-			// Fuzzy fallback: token-overlap score with semantic weighting.
-			// Only runs if exact-match missed.
-			const tokens = needleNorm.split(" ").filter(Boolean);
-			if (tokens.length === 0) return null;
-
-			let best = null;
-			let bestScore = 0;
-			for (const el of elements) {
-				const tc = normalize(el.textContent || "");
-				if (!tc) continue;
-				let hits = 0;
-				for (const token of tokens) {
-					if (tc.includes(token)) hits++;
-				}
-				let score = hits / tokens.length + semanticWeight(el);
-				if (score > bestScore) {
-					bestScore = score;
-					best = el;
-				}
-			}
-			return (best && bestScore >= 0.7) ? best : null;
-		}`
-
-	// Bound the lookup with its own short deadline so a slow resolution
-	// can't eat the entire action timeout. Callers can still pass a longer
-	// outer deadline if they really want to wait — this just caps how long
-	// we'll spend before giving up with "text not found".
-	lookupCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-
-	err := chromedp.Run(lookupCtx, chromedp.ActionFunc(func(ctx context.Context) error {
-		nid, err := resolveNodeInFrame(ctx, frameID, findTextFn, []map[string]any{{"value": text}})
-		if err != nil {
-			// If the parent context is still alive, this was a real
-			// "not found" rather than a timeout — surface it clearly.
-			if lookupCtx.Err() != nil && ctx.Err() == nil {
-				return fmt.Errorf("text %q lookup timed out after 3s (page may be large or unresponsive): %w", text, err)
-			}
-			return fmt.Errorf("text %q not found: %w", text, err)
-		}
-		backendNodeID = nid
-		return nil
-	}))
-	return backendNodeID, err
+	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindText, Value: text}, 0, false, false)
 }
 
-const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
+const resolveSelectorAtFn = `function(kind, value, index, fromEnd, positional) {
 	const root = this;
 	` + jsNormalizeHelper + `
 	const needle = normalize(value);
@@ -672,7 +476,7 @@ const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
 		if (idx < 0 || idx >= items.length) return null;
 		return items[idx];
 	};
-	const deepQueryAll = (selector) => {
+	const deepQueryAll = (selector, from) => {
 		const out = [];
 		const visit = (scope) => {
 			if (!scope || !scope.querySelectorAll) return;
@@ -681,36 +485,69 @@ const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
 			out.push(...Array.from(scope.querySelectorAll(selector)));
 			for (const el of elements) if (el.shadowRoot) visit(el.shadowRoot);
 		};
-		visit(root);
+		visit(from || root);
 		return out;
 	};
-	const textCandidates = (query) => {
-		const elements = deepQueryAll("*");
-		const exact = [];
-		for (const el of elements) {
-			const text = normalize(el.textContent || "");
-			if (!query || !text || !(text === query || text.includes(query))) continue;
-			exact.push({ el, size: el.getElementsByTagName("*").length });
-		}
-		if (exact.length) {
-			const minSize = Math.min(...exact.map((item) => item.size));
-			return exact.filter((item) => item.size === minSize).map((item) => item.el);
-		}
-		const tokens = query.split(" ").filter(Boolean);
-		if (!tokens.length) return [];
-		const fuzzy = [];
-		for (const el of elements) {
-			const text = normalize(el.textContent || "");
-			if (!text) continue;
-			let hits = 0;
-			for (const token of tokens) if (text.includes(token)) hits++;
-			if (hits / tokens.length >= 0.7) {
-				fuzzy.push({ el, size: el.getElementsByTagName("*").length });
+	// Source text is not rendered text: a CSS comment or a script string
+	// mentioning a label is nothing a user can see or click, so matching it
+	// hands back an element no action can operate on.
+	const nonRendered = new Set(["script", "style", "noscript", "template"]);
+	// At equal subtree size a control outranks a plain wrapper carrying the same
+	// label, so a bare text: lands on the <button> rather than the <div> beside it.
+	// This ranking is the BARE text: selector's rule only — a positional wrapper
+	// indexes the document, like css: and xpath:.
+	const semanticWeight = (el) => {
+		const tag = (el.tagName || "").toLowerCase();
+		if (tag === "button" || tag === "a" || tag === "input") return 0.25;
+		const role = normalize(el.getAttribute && el.getAttribute("role"));
+		if (role === "button" || role === "link" || role === "textbox") return 0.2;
+		return 0;
+	};
+	// Leaf-most wins: the fewest descendants is the most specific match. This
+	// REDUCES the match set, so it is shared by both paths — a wrapper chooses
+	// among matches and must never change which matches exist. What survives stays
+	// in document order, which is the order first:/last:/nth: index.
+	const smallestMatches = (matches) => {
+		const minSize = Math.min(...matches.map((item) => item.size));
+		return matches
+			.filter((item) => item.size === minSize)
+			.map((item) => item.el);
+	};
+	// The bare text: selector's own rule, applied to the document-ordered set. It
+	// has to pick the maximum weight EXPLICITLY: reading element zero of a
+	// weight-sorted list is what made nth:1 resolve earlier in the document than
+	// nth:0. Ties keep the first, so equal weights still mean document order.
+	const bestRanked = (items) => {
+		let best = items[0];
+		let bestWeight = semanticWeight(best);
+		for (const el of items) {
+			const weight = semanticWeight(el);
+			if (weight > bestWeight) {
+				best = el;
+				bestWeight = weight;
 			}
 		}
+		return best;
+	};
+	const textCandidates = (query) => {
+		if (!query) return [];
+		// textContent, not innerText: innerText forces a synchronous layout per
+		// element and is O(N^2) on large pages.
+		const elements = deepQueryAll("*", root.body || root)
+			.filter((el) => !nonRendered.has((el.tagName || "").toLowerCase()));
+		const measured = elements.map((el) => ({ el, text: normalize(el.textContent || ""), size: el.getElementsByTagName("*").length }));
+		const exact = measured.filter((item) => item.text && item.text.includes(query));
+		if (exact.length) return smallestMatches(exact);
+		const tokens = query.split(" ").filter(Boolean);
+		if (!tokens.length) return [];
+		const fuzzy = measured.filter((item) => {
+			if (!item.text) return false;
+			let hits = 0;
+			for (const token of tokens) if (item.text.includes(token)) hits++;
+			return hits / tokens.length >= 0.7;
+		});
 		if (!fuzzy.length) return [];
-		const minSize = Math.min(...fuzzy.map((item) => item.size));
-		return fuzzy.filter((item) => item.size === minSize).map((item) => item.el);
+		return smallestMatches(fuzzy);
 	};
 
 	try {
@@ -727,8 +564,11 @@ const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
 			}
 			return pick(items);
 		}
-		case "text":
-			return pick(textCandidates(needle));
+		case "text": {
+			const items = unique(textCandidates(needle));
+			if (!items.length) return null;
+			return positional ? pick(items) : bestRanked(items);
+		}
 		default:
 			return null;
 		}
@@ -737,116 +577,171 @@ const resolveSelectorAtFn = `function(kind, value, index, fromEnd) {
 	}
 }`
 
-func resolveSelectorAtInFrame(ctx context.Context, frameID string, sel selector.Selector, index int, fromEnd bool) (int64, error) {
-	kind := string(sel.Kind)
+// textLookupDeadline bounds the text scan so a slow resolution cannot eat the
+// whole action timeout. It applies wherever text is matched, wrapped or not —
+// first:/last:/nth: reach the same scan.
+const textLookupDeadline = 3 * time.Second
+
+// resolveSelectorAt is the single entry point for every css/xpath/text
+// resolution. scopeLabel names the scope in errors; call runs the resolver
+// against whichever root the caller resolved.
+// positional says a first:/last:/nth: wrapper asked for this resolution. Plain
+// text: and first:text: arrive with the same index and direction — 0 and forward —
+// so the two cannot be told apart from the pair alone, and they must be: a bare
+// text: ranks by control-likeness while a wrapper indexes the document.
+func resolveSelectorAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool, positional bool, scopeLabel string, call func(context.Context, []map[string]any) (int64, error)) (int64, error) {
 	switch sel.Kind {
 	case selector.KindCSS, selector.KindXPath, selector.KindText:
 	default:
 		return 0, fmt.Errorf("%s selector cannot be used with first/last/nth", sel.Kind)
 	}
 
-	var backendNodeID int64
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		nid, err := resolveNodeInFrame(ctx, frameID, resolveSelectorAtFn, []map[string]any{
-			{"value": kind},
-			{"value": sel.Value},
-			{"value": index},
-			{"value": fromEnd},
-		})
-		if err != nil {
-			return fmt.Errorf("%s %q: %w", sel.Kind, sel.Value, ErrSelectorNoMatch)
-		}
-		backendNodeID = nid
-		return nil
-	}))
-	return backendNodeID, err
-}
-
-func resolveSelectorAtWithinNode(ctx context.Context, scopeBackendNodeID int64, sel selector.Selector, index int, fromEnd bool) (int64, error) {
-	kind := string(sel.Kind)
-	switch sel.Kind {
-	case selector.KindCSS, selector.KindXPath, selector.KindText:
-	default:
-		return 0, fmt.Errorf("%s selector cannot be used with first/last/nth", sel.Kind)
+	lookupCtx := ctx
+	if sel.Kind == selector.KindText {
+		var cancel context.CancelFunc
+		lookupCtx, cancel = context.WithTimeout(ctx, textLookupDeadline)
+		defer cancel()
 	}
 
-	nid, err := resolveNodeWithinBackendNode(ctx, scopeBackendNodeID, resolveSelectorAtFn, []map[string]any{
-		{"value": kind},
+	nid, err := call(lookupCtx, []map[string]any{
+		{"value": string(sel.Kind)},
 		{"value": sel.Value},
 		{"value": index},
 		{"value": fromEnd},
+		{"value": positional},
 	})
 	if err != nil {
-		return 0, fmt.Errorf("%s %q inside topmost dialog: %w", sel.Kind, sel.Value, err)
+		if lookupCtx.Err() != nil && ctx.Err() == nil {
+			return 0, fmt.Errorf("%s %q%s lookup timed out after %s (page may be large or unresponsive): %w", sel.Kind, sel.Value, scopeLabel, textLookupDeadline, err)
+		}
+		return 0, fmt.Errorf("%s %q%s: %w", sel.Kind, sel.Value, scopeLabel, err)
 	}
 	return nid, nil
 }
 
-func parseNthSelectorValue(value string) (int, string, error) {
-	rawIndex, rawSelector, ok := strings.Cut(value, ":")
+func resolveSelectorAtInFrame(ctx context.Context, frameID string, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveSelectorAt(ctx, sel, index, fromEnd, positional, "", func(ctx context.Context, args []map[string]any) (int64, error) {
+		var backendNodeID int64
+		err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			nid, err := resolveNodeInFrame(ctx, frameID, resolveSelectorAtFn, args)
+			if err != nil {
+				return err
+			}
+			backendNodeID = nid
+			return nil
+		}))
+		return backendNodeID, err
+	})
+}
+
+func resolveSelectorAtWithinNode(ctx context.Context, scopeBackendNodeID int64, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveSelectorAt(ctx, sel, index, fromEnd, positional, " inside topmost dialog", func(ctx context.Context, args []map[string]any) (int64, error) {
+		return resolveNodeWithinBackendNode(ctx, scopeBackendNodeID, resolveSelectorAtFn, args)
+	})
+}
+
+// resolveScope is where a search is rooted. Selector grammar — unwrapping
+// first:/last:/nth: — does not depend on it, so the recursion below is written
+// once against this interface rather than once per scope kind.
+type resolveScope interface {
+	resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error)
+	resolveRef(ctx context.Context, sel selector.Selector, refCache *RefCache) (int64, error)
+}
+
+type frameScope struct{ frameID string }
+
+func (s frameScope) resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveSelectorAtInFrame(ctx, s.frameID, sel, index, fromEnd, positional)
+}
+
+func (s frameScope) resolveRef(_ context.Context, sel selector.Selector, refCache *RefCache) (int64, error) {
+	if refCache != nil {
+		if target, ok := refCache.Lookup(sel.Value); ok {
+			return target.BackendNodeID, nil
+		}
+	}
+	return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
+}
+
+type nodeScope struct{ backendNodeID int64 }
+
+func (s nodeScope) resolveAt(ctx context.Context, sel selector.Selector, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveSelectorAtWithinNode(ctx, s.backendNodeID, sel, index, fromEnd, positional)
+}
+
+// resolveRef differs from the frame scope only in containment. A cached ref still exists
+// while the dialog owns the interaction surface, so it must be proven to lie
+// inside the scope subtree — otherwise a dialog-scoped action silently reaches
+// an element behind the dialog. The outside-scope sentinel is distinct from
+// not-found: callers must not treat it as a stale ref.
+func (s nodeScope) resolveRef(ctx context.Context, sel selector.Selector, refCache *RefCache) (int64, error) {
+	if refCache == nil {
+		return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
+	}
+	target, ok := refCache.Lookup(sel.Value)
 	if !ok {
-		return 0, "", fmt.Errorf("nth selector requires nth:<index>:<selector>")
+		return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
 	}
-	rawIndex = strings.TrimSpace(rawIndex)
-	rawSelector = strings.TrimSpace(rawSelector)
-	if rawSelector == "" {
-		return 0, "", fmt.Errorf("nth selector requires a nested selector")
+	inside, err := BackendNodeWithinScope(ctx, s.backendNodeID, target.BackendNodeID)
+	if err != nil {
+		return 0, fmt.Errorf("validate ref %s against topmost dialog: %w", sel.Value, err)
 	}
-	index, err := strconv.Atoi(rawIndex)
-	if err != nil || index < 0 {
-		return 0, "", fmt.Errorf("nth selector index must be a zero-based non-negative integer")
+	if !inside {
+		return 0, fmt.Errorf("ref %s is outside the topmost dialog: %w", sel.Value, ErrSelectorOutsideScope)
 	}
-	return index, rawSelector, nil
+	return target.BackendNodeID, nil
 }
 
-func resolveNestedSelectorAtInFrame(ctx context.Context, frameID string, raw string, refCache *RefCache, index int, fromEnd bool) (int64, error) {
-	inner := selector.Parse(raw)
-	switch inner.Kind {
+func errSemanticAtResolver() error {
+	return fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
+}
+
+func errHandlerLayerKind(kind selector.Kind) error {
+	return fmt.Errorf("%s selectors must be resolved at the handler layer via semantic", kind)
+}
+
+// resolveParsed is the one switch over selector kinds: it turns a
+// first:/last:/nth: wrapper into the index/fromEnd pair the recursion carries, and
+// hands anything else to the scope. The wrapper arms used to exist twice, split on
+// whether the selector arrived parsed or raw — the grammar the scope refactor set
+// out to stop duplicating was the part still duplicated. Parsing is now the only
+// difference, and it lives in resolveNested.
+//
+// There is no "unknown selector kind" default. The old parsed-input copy had one and
+// no input could reach it: both entry points dispatch here only from a
+// case selector.KindFirst, selector.KindLast, selector.KindNth arm, and those arms
+// are still the narrow kind check. Keeping a second switch alive to hold an
+// unreachable error would be this duplication wearing a different hat.
+func resolveParsed(ctx context.Context, scope resolveScope, sel selector.Selector, refCache *RefCache, index int, fromEnd bool, positional bool) (int64, error) {
+	switch sel.Kind {
 	case selector.KindFirst:
-		return resolveNestedSelectorAtInFrame(ctx, frameID, inner.Value, refCache, 0, false)
+		return resolveNested(ctx, scope, sel.Value, refCache, 0, false, true)
 	case selector.KindLast:
-		return resolveNestedSelectorAtInFrame(ctx, frameID, inner.Value, refCache, 0, true)
+		return resolveNested(ctx, scope, sel.Value, refCache, 0, true, true)
 	case selector.KindNth:
-		nth, nestedRaw, err := parseNthSelectorValue(inner.Value)
+		nth, nestedRaw, err := selector.ParseNth(sel.Value)
 		if err != nil {
 			return 0, err
 		}
-		return resolveNestedSelectorAtInFrame(ctx, frameID, nestedRaw, refCache, nth, false)
+		return resolveNested(ctx, scope, nestedRaw, refCache, nth, false, true)
 	case selector.KindRef:
 		if fromEnd || index != 0 {
 			return 0, fmt.Errorf("ref selector cannot be used with last/nth")
 		}
-		return ResolveUnifiedSelectorInFrame(ctx, inner, refCache, frameID)
+		return scope.resolveRef(ctx, sel, refCache)
 	case selector.KindSemantic:
-		return 0, fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
+		return 0, errSemanticAtResolver()
 	default:
-		return resolveSelectorAtInFrame(ctx, frameID, inner, index, fromEnd)
+		return scope.resolveAt(ctx, sel, index, fromEnd, positional)
 	}
 }
 
-func resolveNestedSelectorWithinNode(ctx context.Context, scopeBackendNodeID int64, raw string, refCache *RefCache, index int, fromEnd bool) (int64, error) {
-	inner := selector.Parse(raw)
-	switch inner.Kind {
-	case selector.KindFirst:
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, inner.Value, refCache, 0, false)
-	case selector.KindLast:
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, inner.Value, refCache, 0, true)
-	case selector.KindNth:
-		nth, nestedRaw, err := parseNthSelectorValue(inner.Value)
-		if err != nil {
-			return 0, err
-		}
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, nestedRaw, refCache, nth, false)
-	case selector.KindRef:
-		if fromEnd || index != 0 {
-			return 0, fmt.Errorf("ref selector cannot be used with last/nth")
-		}
-		return ResolveUnifiedSelectorWithinNode(ctx, inner, refCache, scopeBackendNodeID)
-	case selector.KindSemantic:
-		return 0, fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
-	default:
-		return resolveSelectorAtWithinNode(ctx, scopeBackendNodeID, inner, index, fromEnd)
-	}
+func resolveNested(ctx context.Context, scope resolveScope, raw string, refCache *RefCache, index int, fromEnd bool, positional bool) (int64, error) {
+	return resolveParsed(ctx, scope, selector.Parse(raw), refCache, index, fromEnd, positional)
+}
+
+func ResolveXPathToNodeID(ctx context.Context, xpath string) (int64, error) {
+	return ResolveXPathToNodeIDInFrame(ctx, "", xpath)
 }
 
 func ResolveCSSToNodeID(ctx context.Context, css string) (int64, error) {
@@ -859,26 +754,14 @@ func ResolveCSSToNodeIDInFrame(ctx context.Context, frameID, css string) (int64,
 	// shadow root, not just the light DOM (issue #591). For light-DOM pages this
 	// returns the same first match as document.querySelector, and it works for both
 	// the main frame (frameID == "") and sub-frames.
-	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindCSS, Value: css}, 0, false)
+	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindCSS, Value: css}, 0, false, false)
 }
 
+// XPath does not pierce shadow roots: document.evaluate cannot cross a shadow
+// boundary. It resolves through the shared walker for consistency and
+// isolated-world execution, not for shadow support.
 func ResolveXPathToNodeIDInFrame(ctx context.Context, frameID, xpath string) (int64, error) {
-	if frameID == "" {
-		return ResolveXPathToNodeID(ctx, xpath)
-	}
-
-	var backendNodeID int64
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		nid, err := resolveNodeInFrame(ctx, frameID, `function(xpath) {
-			return this.evaluate(xpath, this, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-		}`, []map[string]any{{"value": xpath}})
-		if err != nil {
-			return fmt.Errorf("xpath %q: %w", xpath, err)
-		}
-		backendNodeID = nid
-		return nil
-	}))
-	return backendNodeID, err
+	return resolveSelectorAtInFrame(ctx, frameID, selector.Selector{Kind: selector.KindXPath, Value: xpath}, 0, false, false)
 }
 
 func ResolveFrameElementMetaInFrame(ctx context.Context, sel selector.Selector, frameID string) (FrameElementMeta, error) {
@@ -922,12 +805,7 @@ func ResolveFrameElementMetaInFrame(ctx context.Context, sel selector.Selector, 
 func ResolveUnifiedSelectorInFrame(ctx context.Context, sel selector.Selector, refCache *RefCache, frameID string) (int64, error) {
 	switch sel.Kind {
 	case selector.KindRef:
-		if refCache != nil {
-			if target, ok := refCache.Lookup(sel.Value); ok {
-				return target.BackendNodeID, nil
-			}
-		}
-		return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
+		return frameScope{frameID}.resolveRef(ctx, sel, refCache)
 
 	case selector.KindCSS:
 		return ResolveCSSToNodeIDInFrame(ctx, frameID, sel.Value)
@@ -939,24 +817,14 @@ func ResolveUnifiedSelectorInFrame(ctx context.Context, sel selector.Selector, r
 		return ResolveTextToNodeIDInFrame(ctx, frameID, sel.Value)
 
 	case selector.KindSemantic:
-		return 0, fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
+		return 0, errSemanticAtResolver()
 
 	case selector.KindRole, selector.KindLabel, selector.KindPlaceholder,
 		selector.KindAlt, selector.KindTitle, selector.KindTestID:
-		return 0, fmt.Errorf("%s selectors must be resolved at the handler layer via semantic", sel.Kind)
+		return 0, errHandlerLayerKind(sel.Kind)
 
-	case selector.KindFirst:
-		return resolveNestedSelectorAtInFrame(ctx, frameID, sel.Value, refCache, 0, false)
-
-	case selector.KindLast:
-		return resolveNestedSelectorAtInFrame(ctx, frameID, sel.Value, refCache, 0, true)
-
-	case selector.KindNth:
-		index, rawSelector, err := parseNthSelectorValue(sel.Value)
-		if err != nil {
-			return 0, err
-		}
-		return resolveNestedSelectorAtInFrame(ctx, frameID, rawSelector, refCache, index, false)
+	case selector.KindFirst, selector.KindLast, selector.KindNth:
+		return resolveParsed(ctx, frameScope{frameID}, sel, refCache, 0, false, false)
 
 	default:
 		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)
@@ -974,44 +842,20 @@ func ResolveUnifiedSelectorWithinNode(ctx context.Context, sel selector.Selector
 
 	switch sel.Kind {
 	case selector.KindRef:
-		if refCache == nil {
-			return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
-		}
-		target, ok := refCache.Lookup(sel.Value)
-		if !ok || target.BackendNodeID == 0 {
-			return 0, fmt.Errorf("ref %s not in snapshot cache: %w", sel.Value, ErrSelectorNoMatch)
-		}
-		inside, err := BackendNodeWithinScope(ctx, scopeBackendNodeID, target.BackendNodeID)
-		if err != nil {
-			return 0, fmt.Errorf("validate ref %s against topmost dialog: %w", sel.Value, err)
-		}
-		if !inside {
-			return 0, fmt.Errorf("ref %s is outside the topmost dialog: %w", sel.Value, ErrSelectorOutsideScope)
-		}
-		return target.BackendNodeID, nil
+		return nodeScope{scopeBackendNodeID}.resolveRef(ctx, sel, refCache)
 
 	case selector.KindCSS, selector.KindXPath, selector.KindText:
-		return resolveSelectorAtWithinNode(ctx, scopeBackendNodeID, sel, 0, false)
+		return nodeScope{scopeBackendNodeID}.resolveAt(ctx, sel, 0, false, false)
 
 	case selector.KindSemantic:
-		return 0, fmt.Errorf("semantic selectors must be resolved at the handler layer via /find")
+		return 0, errSemanticAtResolver()
 
 	case selector.KindRole, selector.KindLabel, selector.KindPlaceholder,
 		selector.KindAlt, selector.KindTitle, selector.KindTestID:
-		return 0, fmt.Errorf("%s selectors must be resolved at the handler layer via semantic", sel.Kind)
+		return 0, errHandlerLayerKind(sel.Kind)
 
-	case selector.KindFirst:
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, sel.Value, refCache, 0, false)
-
-	case selector.KindLast:
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, sel.Value, refCache, 0, true)
-
-	case selector.KindNth:
-		index, rawSelector, err := parseNthSelectorValue(sel.Value)
-		if err != nil {
-			return 0, err
-		}
-		return resolveNestedSelectorWithinNode(ctx, scopeBackendNodeID, rawSelector, refCache, index, false)
+	case selector.KindFirst, selector.KindLast, selector.KindNth:
+		return resolveParsed(ctx, nodeScope{scopeBackendNodeID}, sel, refCache, 0, false, false)
 
 	default:
 		return 0, fmt.Errorf("unknown selector kind: %q", sel.Kind)

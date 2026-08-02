@@ -53,7 +53,11 @@ func printEnforcedDriftWarning(cfg *config.RuntimeConfig) {
 	if cfg == nil {
 		return
 	}
-	snap, state := fetchHealthSnapshotWithToken(cfg.Port, resolveCLIToken(cfg))
+	localToken, err := resolveCLIToken(cfg, resolveDefaultCLIBase(cfg))
+	if err != nil {
+		return
+	}
+	snap, state := fetchHealthSnapshotWithToken(cfg.Port, localToken)
 	if state != healthSnapshotRunning || snap == nil || !snap.RestartRequired {
 		return
 	}

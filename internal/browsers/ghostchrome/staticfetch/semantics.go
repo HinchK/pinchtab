@@ -99,6 +99,23 @@ func getRole(el dom.Element) string {
 	return "generic"
 }
 
+// getAccessibleName returns every source UNCUT, and that is deliberate: the name is
+// the identity an agent matches on to decide what to click, so it has to mean the
+// same thing on every provider. The CDP path (internal/bridge/observe) takes the
+// accessibility node's name straight through, so chrome and cloak emit names in
+// full; a per-name byte cap here made the same button match on one provider and not
+// another, silently.
+//
+// A ceiling still exists, and it is the right one: internal/handlers/snapshot.go
+// applies TruncateToTokens to the flattened nodes of whatever provider produced
+// them, gated on the caller's maxTokens. That is provider-neutral and bounds the
+// payload the caller actually asked to bound. It is now the ONLY ceiling on name
+// length here — accepted, since it is the position chrome and cloak have always been
+// in.
+//
+// The cap it replaces covered one of five sources (TextContent), so the four
+// attribute paths were already unbounded; removing it takes away no property the
+// code had.
 func getAccessibleName(el dom.Element) string {
 	if label, ok := el.GetAttribute("aria-label"); ok {
 		return label
@@ -118,11 +135,7 @@ func getAccessibleName(el dom.Element) string {
 		}
 	}
 	if isInteractive(el) {
-		text := strings.TrimSpace(el.TextContent())
-		if len(text) > 100 {
-			text = text[:100] + "..."
-		}
-		return text
+		return strings.TrimSpace(el.TextContent())
 	}
 	return ""
 }

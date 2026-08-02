@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	bridgeobserve "github.com/pinchtab/pinchtab/internal/bridge/observe"
 )
 
 func TestRawAXValueString(t *testing.T) {
@@ -603,7 +605,7 @@ func TestBuildSnapshotRedactsPasswordByAutocomplete(t *testing.T) {
 	if flat[1].Value != "mario" {
 		t.Errorf("username value = %q, want mario", flat[1].Value)
 	}
-	if flat[2].Value != "••••••••" {
+	if flat[2].Value != bridgeobserve.MaskedValue {
 		t.Errorf("password value = %q, want redacted", flat[2].Value)
 	}
 }
@@ -629,7 +631,7 @@ func TestBuildSnapshotRedactsNewPassword(t *testing.T) {
 	}
 
 	flat, _ := BuildSnapshot(nodes, "", -1)
-	if flat[1].Value != "••••••••" {
+	if flat[1].Value != bridgeobserve.MaskedValue {
 		t.Errorf("new-password value = %q, want redacted", flat[1].Value)
 	}
 }

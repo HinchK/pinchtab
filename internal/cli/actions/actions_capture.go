@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -87,7 +86,8 @@ func Capture(client *http.Client, base, token string, cmd *cobra.Command) {
 	writeImage := !jsonOutput || outFileExplicit
 	var img []byte
 	if writeImage {
-		if outFile == "" {
+		autoNamed := outFile == ""
+		if autoNamed {
 			outFile = fmt.Sprintf("capture-%s%s", time.Now().Format("20060102-150405"), ext)
 		}
 		decoded, err := base64.StdEncoding.DecodeString(resp.Image.Base64)
@@ -96,10 +96,12 @@ func Capture(client *http.Client, base, token string, cmd *cobra.Command) {
 			return
 		}
 		img = decoded
-		if err := os.WriteFile(outFile, img, 0600); err != nil {
+		saved, err := writeOutputFile(outFile, autoNamed, img)
+		if err != nil {
 			output.Error("capture", fmt.Sprintf("write image: %v", err), output.ExitRuntime)
 			return
 		}
+		outFile = saved
 	}
 
 	if jsonOutput {

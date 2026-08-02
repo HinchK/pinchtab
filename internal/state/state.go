@@ -126,7 +126,15 @@ func Save(stateDir string, sf *StateFile, encryptionKey string) (string, error) 
 		return "", fmt.Errorf("invalid state file name: resolved path escapes state directory")
 	}
 
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	// Atomic write: Save overwrites by name, so a torn write would destroy the
+	// previously saved state as well as the new one — and a truncated encrypted
+	// payload fails GCM authentication, losing the session entirely.
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, data, 0600); err != nil {
+		return "", fmt.Errorf("write state file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
 		return "", fmt.Errorf("write state file: %w", err)
 	}
 
@@ -141,7 +149,14 @@ func Load(path, encryptionKey string) (*StateFile, error) {
 		return nil, fmt.Errorf("read state file: %w", err)
 	}
 
-	if encryptionKey != "" {
+	// The extension records what Save actually did, so trust it over the
+	// caller's key: a plaintext file must still load when a key happens to be
+	// configured. json.Valid also catches encrypted payloads written by older
+	// versions that did not use the .enc extension.
+	if strings.HasSuffix(path, fileExtension(true)) || !json.Valid(data) {
+		if encryptionKey == "" {
+			return nil, fmt.Errorf("state file is encrypted: an encryption key is required")
+		}
 		decrypted, decErr := Decrypt(data, encryptionKey)
 		if decErr != nil {
 			return nil, fmt.Errorf("decrypt state file: %w", decErr)

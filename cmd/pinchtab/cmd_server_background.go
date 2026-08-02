@@ -38,8 +38,11 @@ type serverBackgroundOptions struct {
 	Yolo       bool
 	Headed     bool
 	Verbose    bool
+	LogLevel   string
 	Extensions []string
 	Browser    string
+	Bind       string
+	Port       string
 }
 
 var readProcessCommand = defaultReadProcessCommand
@@ -207,11 +210,22 @@ func backgroundServerArgs(marker string, opts serverBackgroundOptions) []string 
 	if opts.Verbose {
 		args = append(args, "-v")
 	}
+	if opts.LogLevel != "" {
+		args = append(args, "--log-level", opts.LogLevel)
+	}
 	for _, ext := range opts.Extensions {
 		args = append(args, "-e", ext)
 	}
 	if opts.Browser != "" {
 		args = append(args, "--browser", opts.Browser)
+	}
+	// The parent already applied these to cfg and waits on the resulting URL, so
+	// the detached child must bind the same address, not the config default.
+	if opts.Bind != "" {
+		args = append(args, "--bind", opts.Bind)
+	}
+	if opts.Port != "" {
+		args = append(args, "--port", opts.Port)
 	}
 	return args
 }

@@ -9,7 +9,7 @@ import "time"
 
 // SchemaVersion is the current scrape report schema version, embedded in
 // every report so consumers can detect format changes.
-const SchemaVersion = "1.0"
+const SchemaVersion = "2.0"
 
 // Page sources: how a page's content was obtained.
 const (
@@ -73,11 +73,11 @@ type PageGroup struct {
 
 // SiteInfo describes the crawled site.
 type SiteInfo struct {
-	BaseURL         string `json:"baseUrl"`
-	Title           string `json:"title,omitempty"`
-	SitemapFound    bool   `json:"sitemapFound"`
-	TotalDiscovered int    `json:"totalDiscovered"`
-	SampledPages    int    `json:"sampledPages"`
+	BaseURL            string `json:"baseUrl"`
+	Title              string `json:"title,omitempty"`
+	SitemapFound       bool   `json:"sitemapFound"`
+	TotalURLsInSitemap int    `json:"totalURLsInSitemap,omitempty"`
+	SampledPages       int    `json:"sampledPages"`
 }
 
 // Summary is the run roll-up.

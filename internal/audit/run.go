@@ -213,8 +213,24 @@ func mergeSeaportal(pr PageResult, sp *SeaportalPage) PageResult {
 	return pr
 }
 
-// summaryScore is the mean accessibility score across browser-enriched
-// pages that were audited without error, 0 when none were.
+// PageStatus is the one-line health verdict every report surface prints for
+// a page: the audit failure when it could not be collected, otherwise the
+// uncaught-exception count, otherwise ok. An uncaught exception halts the
+// script that raised it, so a page carrying one is never ok.
+func PageStatus(p PageResult) string {
+	switch {
+	case p.Error != "":
+		return "error: " + p.Error
+	case len(p.Browser.JSErrors) > 0:
+		return fmt.Sprintf("%d uncaught JS error(s)", len(p.Browser.JSErrors))
+	default:
+		return "ok"
+	}
+}
+
+// summaryScore is the mean accessibility score of enriched pages that were
+// audited without error, 0 when none were. It deliberately ignores broken
+// assets, failed requests and uncaught JS errors; see AuditReport.SummaryScore.
 func summaryScore(plans []pagePlan, results []PageResult) int {
 	sum, n := 0, 0
 	for i, pr := range results {

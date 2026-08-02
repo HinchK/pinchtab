@@ -172,8 +172,12 @@ var boxCmd = &cobra.Command{
 
 var visibleCmd = &cobra.Command{
 	Use:   "visible <ref>",
-	Short: "Check if an element is visible by ref",
-	Args:  cobra.ExactArgs(1),
+	Short: "Check if an element is rendered (display/visibility/opacity/size) by ref",
+	Long: `Check if an element is rendered by ref: display, visibility, opacity and a
+non-zero box. Scroll position is not an input, so an element far below the fold
+is still rendered. Use --json to also read onScreen, the viewport-intersection
+answer that the capture snapshot's per-node visible field publishes.`,
+	Args: cobra.ExactArgs(1),
 	Run: func(cmd *cobra.Command, args []string) {
 		runCLI(func(rt cliRuntime) {
 			browseractions.Visible(rt.client, rt.base, rt.token, cmd, args)

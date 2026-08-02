@@ -41,22 +41,23 @@ func Download(client *http.Client, base, token string, args []string, output, ta
 		return
 	}
 
-	printDownloadResult(result)
-
-	if output != "" {
-		savedBytes, err := saveDownloadData(result, output)
-		if err != nil {
-			switch {
-			case errors.Is(err, errMissingDownloadData):
-				cli.Fatal("No base64 data in response")
-			case errors.Is(err, errDecodeDownloadData):
-				cli.Fatal("Failed to decode base64: %v", err)
-			default:
-				cli.Fatal("Write failed: %v", err)
-			}
-		}
-		fmt.Println(cli.StyleStdout(cli.SuccessStyle, formatDownloadSavedMessage(output, savedBytes)))
+	if output == "" {
+		printDownloadResult(result)
+		return
 	}
+
+	savedBytes, err := saveDownloadData(result, output)
+	if err != nil {
+		switch {
+		case errors.Is(err, errMissingDownloadData):
+			cli.Fatal("No base64 data in response")
+		case errors.Is(err, errDecodeDownloadData):
+			cli.Fatal("Failed to decode base64: %v", err)
+		default:
+			cli.Fatal("Write failed: %v", err)
+		}
+	}
+	printSaved(output, savedBytes)
 }
 
 func printDownloadResult(result map[string]any) {
@@ -100,8 +101,4 @@ func saveDownloadData(result map[string]any, output string) (int, error) {
 		return 0, err
 	}
 	return len(data), nil
-}
-
-func formatDownloadSavedMessage(output string, size int) string {
-	return fmt.Sprintf("Saved %s (%d bytes)", output, size)
 }

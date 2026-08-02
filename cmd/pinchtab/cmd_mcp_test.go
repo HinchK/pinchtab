@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/pinchtab/pinchtab/internal/server"
 )
 
 func TestIsServerHealthy_ReturnsTrue(t *testing.T) {
@@ -94,8 +96,8 @@ func TestEnsureServerNoopWhenHealthy(t *testing.T) {
 			started = true
 			return nil
 		},
-		func(baseURL, token string) bool {
-			return true
+		func(baseURL, token string) server.HealthProbe {
+			return server.HealthProbe{Reachable: true, StatusCode: http.StatusOK}
 		},
 		time.Second,
 	)
@@ -120,9 +122,12 @@ func TestEnsureServerStartsAndWaits(t *testing.T) {
 			started = true
 			return nil
 		},
-		func(baseURL, token string) bool {
+		func(baseURL, token string) server.HealthProbe {
 			healthChecks++
-			return started && healthChecks >= 2
+			if started && healthChecks >= 2 {
+				return server.HealthProbe{Reachable: true, StatusCode: http.StatusOK}
+			}
+			return server.HealthProbe{}
 		},
 		time.Second,
 	)
@@ -150,8 +155,8 @@ func TestEnsureServerDoesNotStartWhenAutoStartDisabled(t *testing.T) {
 			started = true
 			return nil
 		},
-		func(baseURL, token string) bool {
-			return false
+		func(baseURL, token string) server.HealthProbe {
+			return server.HealthProbe{}
 		},
 		time.Second,
 	)
@@ -185,8 +190,8 @@ func TestEnsureServerReturnsStartError(t *testing.T) {
 		func() error {
 			return wantErr
 		},
-		func(baseURL, token string) bool {
-			return false
+		func(baseURL, token string) server.HealthProbe {
+			return server.HealthProbe{}
 		},
 		time.Second,
 	)
