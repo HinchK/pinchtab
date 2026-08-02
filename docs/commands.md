@@ -279,7 +279,8 @@ curl -X POST "$PINCHTAB_SERVER/tabs/<tabId>/resume"
 
 ```bash
 pinchtab screenshot                     # Save a screenshot to a generated .jpg path
-pinchtab screenshot -o <path>           # Save screenshot to a chosen path
+pinchtab screenshot -o <path>           # Save to a chosen path (.png infers PNG; otherwise JPEG)
+pinchtab screenshot --format <jpeg|png>  # Override the inferred output format
 pinchtab screenshot -q <0-100>          # JPEG quality
 pinchtab screenshot -s <selector>       # Capture a specific element by selector
 pinchtab screenshot --scale 0.5         # Half-size output (quarter the pixels)

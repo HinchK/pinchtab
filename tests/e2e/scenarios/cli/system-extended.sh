@@ -16,6 +16,19 @@ assert_exit_code 1 "connection failure is reported to automation"
 end_test
 
 # ─────────────────────────────────────────────────────────────────
+start_test "pinchtab 403 policy denial exits non-zero"
+
+pt network route "*.png" --abort
+assert_exit_code 1 "403 policy denial is reported to automation"
+if echo "$PT_ERR" | grep -q "Error 403"; then
+  pass_assert "policy denial reports HTTP 403"
+else
+  fail_assert "policy denial reports HTTP 403"
+fi
+
+end_test
+
+# ─────────────────────────────────────────────────────────────────
 start_test "pinchtab daemon (non-interactive shows status)"
 
 pt daemon
