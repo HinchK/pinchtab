@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/cli"
@@ -38,7 +40,11 @@ func Screenshot(client *http.Client, base, token string, cmd *cobra.Command) {
 	annotate, _ := cmd.Flags().GetBool("annotate")
 	format, _ := cmd.Flags().GetString("format")
 	if format == "" {
-		format = "jpeg"
+		if strings.EqualFold(filepath.Ext(outFile), ".png") {
+			format = "png"
+		} else {
+			format = "jpeg"
+		}
 	}
 	if v, _ := cmd.Flags().GetString("quality"); v != "" {
 		params.Set("quality", v)

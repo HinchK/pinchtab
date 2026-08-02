@@ -43,3 +43,19 @@ func TestScreenshot(t *testing.T) {
 		t.Errorf("unexpected content: %s", string(data))
 	}
 }
+
+func TestScreenshotInfersPNGFromOutputExtension(t *testing.T) {
+	m := newMockServer()
+	m.response = "FAKEPNGDATA"
+	defer m.close()
+
+	outFile := filepath.Join(t.TempDir(), "screenshot.png")
+	cmd := &cobra.Command{}
+	cmd.Flags().String("output", outFile, "")
+	cmd.Flags().String("format", "", "")
+	Screenshot(m.server.Client(), m.base(), "", cmd)
+
+	if !strings.Contains(m.lastQuery, "format=png") {
+		t.Fatalf("query = %q, want format=png inferred from output extension", m.lastQuery)
+	}
+}
