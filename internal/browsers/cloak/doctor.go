@@ -14,8 +14,10 @@ import (
 
 const cloakMinVersion = "120.0.0"
 const cloakIdentityPlatform = "windows"
+const cloakDoctorLaunchTimeout = 60 * time.Second
 
 var launchAndEvaluate = chrome.LaunchAndEvaluate
+var launchAndProbe = chrome.LaunchAndProbe
 
 // DoctorChecks overrides the inherited Chrome DoctorChecks method.
 func (Browser) DoctorChecks(_ browsers.TargetConfig) []browsers.DoctorCheck {
@@ -129,7 +131,7 @@ func cloakPresenceCheck(ctx context.Context, cfg interface{}) browsers.DoctorChe
 	if env, ok := cfg.(*browsers.DoctorEnv); ok && env != nil && env.NoSandbox {
 		identityArgs = append(identityArgs, "--no-sandbox")
 	}
-	_, err = launchAndEvaluate(ctx, found, identityArgs, 10*time.Second, "navigator.platform", &platform)
+	_, err = launchAndEvaluate(ctx, found, identityArgs, cloakDoctorLaunchTimeout, "navigator.platform", &platform)
 	if err != nil || platform != "Win32" {
 		reason := fmt.Sprintf("fingerprint platform probe returned %q, want Win32", platform)
 		if err != nil {
@@ -176,7 +178,7 @@ func cdpReachableCheck(ctx context.Context, cfg interface{}) browsers.DoctorChec
 	if env.NoSandbox {
 		args = append(args, "--no-sandbox")
 	}
-	res, err := chrome.LaunchAndProbe(ctx, bin, args, 10*time.Second)
+	res, err := launchAndProbe(ctx, bin, args, cloakDoctorLaunchTimeout)
 	if err != nil {
 		return browsers.DoctorCheckResult{Status: browsers.DoctorFail, Detail: err.Error(), Err: err}
 	}
@@ -219,7 +221,7 @@ func fingerprintFlagsCheck(ctx context.Context, cfg interface{}) browsers.Doctor
 	if env.NoSandbox {
 		fpFlags = append(fpFlags, "--no-sandbox")
 	}
-	res, err := chrome.LaunchAndProbe(ctx, bin, fpFlags, 10*time.Second)
+	res, err := launchAndProbe(ctx, bin, fpFlags, cloakDoctorLaunchTimeout)
 	if err != nil {
 		return browsers.DoctorCheckResult{
 			Status: browsers.DoctorFail,

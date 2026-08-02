@@ -40,6 +40,15 @@ assert_json_contains "$RESULT" '.title' 'Table'
 end_test
 
 # ─────────────────────────────────────────────────────────────────
+start_test "pinchtab nav --new-tab follows the created target lifecycle"
+
+pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/navigation-extra-target.html\",\"newTab\":true,\"timeout\":3}"
+assert_ok "navigate owner target while the page spawns a loading side target"
+assert_json_contains "$RESULT" '.title' 'Navigation Target Owner'
+
+end_test
+
+# ────────────────────────────────────────────────────────────────
 start_test "pinchtab tabs"
 
 assert_tab_count_gte 2

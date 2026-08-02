@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
 	"github.com/pinchtab/pinchtab/internal/bridge"
@@ -508,6 +509,70 @@ func TestHandleNavigate_AdapterServedTab_NewTab_ClosesUnusedBlankTab(t *testing.
 	}
 	if got := w.Header().Get(activity.HeaderPTTabCreated); got != "true" {
 		t.Fatalf("created marker header = %q, want true", got)
+	}
+}
+
+func TestRunNavigate_NewTabTimeoutPreservesReadinessDiagnostics(t *testing.T) {
+	m := &mockBridge{navigateErr: fmt.Errorf(
+		"navigation target target-1 main frame frame-1 did not reach DOMContentLoaded (last lifecycle event %q): %w",
+		"init", context.DeadlineExceeded,
+	)}
+	h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/navigate", nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	h.runNavigate(w, r, navExec{
+		tabID:    "tab-1",
+		ctx:      ctx,
+		cancel:   cancel,
+		url:      "https://example.com",
+		isNewTab: true,
+	})
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusServiceUnavailable, w.Body.String())
+	}
+	for _, detail := range []string{"target-1", "frame-1", `last lifecycle event \"init\"`} {
+		if !strings.Contains(w.Body.String(), detail) {
+			t.Fatalf("response %q does not contain %q", w.Body.String(), detail)
+		}
+	}
+}
+
+func TestNavigateNewTabBrowserStartsNavigationBudgetAfterTabCreation(t *testing.T) {
+	var createdAt time.Time
+	var budgetAfterCreation time.Duration
+	m := &mockBridge{}
+	m.createTabFn = func(string) (string, context.Context, context.CancelFunc, error) {
+		time.Sleep(25 * time.Millisecond)
+		createdAt = time.Now()
+		ctx, cancel := context.WithCancel(context.Background())
+		return "tab-1", ctx, cancel, nil
+	}
+	m.navigateFn = func(ctx context.Context, url string, params bridge.NavigateParams) (*bridge.NavigateResult, error) {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			return nil, fmt.Errorf("navigation context has no deadline")
+		}
+		budgetAfterCreation = deadline.Sub(createdAt)
+		return &bridge.NavigateResult{URL: url, Title: "ready"}, nil
+	}
+	h := New(m, &config.RuntimeConfig{}, nil, nil, nil)
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, "/navigate", nil)
+
+	h.navigateNewTabBrowser(w, r, navigateBrowserOptions{
+		URL:        "https://example.com",
+		NavTimeout: 100 * time.Millisecond,
+	})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusOK, w.Body.String())
+	}
+	if budgetAfterCreation < 95*time.Millisecond {
+		t.Fatalf("navigation budget after tab creation = %v, want at least 95ms", budgetAfterCreation)
 	}
 }
 

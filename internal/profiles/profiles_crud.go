@@ -39,18 +39,13 @@ func (pm *ProfileManager) Import(name, sourcePath string) error {
 		return err
 	}
 
-	resolvedSourcePath, err := resolveImportSourcePath(sourcePath)
+	source, err := openImportSource(sourcePath)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = source.root.Close() }()
 
-	if _, err := os.Stat(filepath.Join(resolvedSourcePath, "Default")); err != nil {
-		if _, err2 := os.Stat(filepath.Join(resolvedSourcePath, "Preferences")); err2 != nil {
-			return fmt.Errorf("source doesn't look like a Chrome user data dir (no Default/ or Preferences found)")
-		}
-	}
-
-	srcInfo, err := os.Lstat(resolvedSourcePath)
+	srcInfo, err := source.root.Lstat(source.relative)
 	if err != nil {
 		return fmt.Errorf("source path invalid: %w", err)
 	}
@@ -60,18 +55,23 @@ func (pm *ProfileManager) Import(name, sourcePath string) error {
 	if !srcInfo.IsDir() {
 		return fmt.Errorf("source path must be a directory")
 	}
+	if _, err := source.root.Stat(source.child("Default")); err != nil {
+		if _, err2 := source.root.Stat(source.child("Preferences")); err2 != nil {
+			return fmt.Errorf("source doesn't look like a Chrome user data dir (no Default/ or Preferences found)")
+		}
+	}
 
-	slog.Info("importing profile", "name", name, "source", resolvedSourcePath)
+	slog.Info("importing profile", "name", name, "source", source.displayPath)
 	// Import is all-or-nothing. preflight already established that dest did not
 	// exist, so anything under it now is ours to remove — and leaving a partial
 	// copy would make every retry fail with "already exists" instead of the real
 	// cause (a live Chrome user data dir has Singleton* symlinks copyDir rejects).
-	if err := copyDir(resolvedSourcePath, dest); err != nil {
+	if err := copyDir(source, dest); err != nil {
 		_ = os.RemoveAll(dest)
 		return fmt.Errorf("copy failed: %w", err)
 	}
 
-	if err := os.WriteFile(filepath.Join(dest, ".pinchtab-imported"), []byte(resolvedSourcePath), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(dest, ".pinchtab-imported"), []byte(source.displayPath), 0600); err != nil {
 		slog.Warn("failed to write import marker", "err", err)
 	}
 	if err := writeProfileMeta(dest, ProfileMeta{

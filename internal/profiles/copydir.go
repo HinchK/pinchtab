@@ -8,20 +8,20 @@ import (
 	"path/filepath"
 )
 
-func copyDir(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+func copyDir(src *importSource, dst string) error {
+	return fs.WalkDir(src.root.FS(), filepath.ToSlash(src.relative), func(sourcePath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if d.Type()&os.ModeSymlink != 0 {
-			return fmt.Errorf("symlinks are not allowed in imported profiles: %s", path)
+			return fmt.Errorf("symlinks are not allowed in imported profiles: %s", sourcePath)
 		}
 
-		rel, err := filepath.Rel(src, path)
+		rel, err := filepath.Rel(filepath.FromSlash(src.relative), filepath.FromSlash(sourcePath))
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dst, rel)
+		target := filepath.Join(dst, filepath.FromSlash(rel))
 
 		if d.IsDir() {
 			info, err := d.Info()
@@ -31,12 +31,12 @@ func copyDir(src, dst string) error {
 			return os.MkdirAll(target, info.Mode().Perm())
 		}
 
-		return copyFile(path, target)
+		return copyFile(src.root, filepath.FromSlash(sourcePath), target)
 	})
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src) // #nosec G304 — src is validated by caller
+func copyFile(root *os.Root, src, dst string) error {
+	in, err := root.Open(src)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", src, err)
 	}

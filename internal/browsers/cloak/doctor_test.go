@@ -96,3 +96,64 @@ func TestCloakPresenceRejectsChromeEvenUnderCloakNamedDirectory(t *testing.T) {
 		})
 	}
 }
+
+func TestCloakPresenceAllowsColdStart(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("cloakbrowser_present is skipped on windows")
+	}
+	binary := filepath.Join(t.TempDir(), "cloakbrowser")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\necho 'Chromium 145.0.0.0'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	original := launchAndEvaluate
+	launchAndEvaluate = func(_ context.Context, _ string, _ []string, timeout time.Duration, _ string, value any) (chrome.CDPProbeResult, error) {
+		if timeout < 22*time.Second {
+			return chrome.CDPProbeResult{}, context.DeadlineExceeded
+		}
+		*value.(*string) = "Win32"
+		return chrome.CDPProbeResult{Port: 9222}, nil
+	}
+	t.Cleanup(func() { launchAndEvaluate = original })
+
+	result := cloakPresenceCheck(context.Background(), &browsers.DoctorEnv{Binary: binary})
+	if result.Status != browsers.DoctorPass {
+		t.Fatalf("status = %v, want pass after cold start: %s", result.Status, result.Detail)
+	}
+}
+
+func TestCDPReachableAllowsColdStart(t *testing.T) {
+	original := launchAndProbe
+	launchAndProbe = func(_ context.Context, _ string, _ []string, timeout time.Duration) (chrome.CDPProbeResult, error) {
+		if timeout < 22*time.Second {
+			return chrome.CDPProbeResult{}, context.DeadlineExceeded
+		}
+		return chrome.CDPProbeResult{Port: 9222}, nil
+	}
+	t.Cleanup(func() { launchAndProbe = original })
+
+	result := cdpReachableCheck(context.Background(), &browsers.DoctorEnv{Binary: "/cloakbrowser"})
+	if result.Status != browsers.DoctorPass {
+		t.Fatalf("status = %v, want pass after cold start: %s", result.Status, result.Detail)
+	}
+}
+
+func TestFingerprintFlagsAllowColdStart(t *testing.T) {
+	original := launchAndProbe
+	launchAndProbe = func(_ context.Context, _ string, _ []string, timeout time.Duration) (chrome.CDPProbeResult, error) {
+		if timeout < 22*time.Second {
+			return chrome.CDPProbeResult{}, context.DeadlineExceeded
+		}
+		return chrome.CDPProbeResult{Port: 9222}, nil
+	}
+	t.Cleanup(func() { launchAndProbe = original })
+
+	env := &browsers.DoctorEnv{
+		Binary: "/cloakbrowser",
+		Cloak:  browsers.CloakFingerprint{FingerprintSeed: "test-seed"},
+	}
+	result := fingerprintFlagsCheck(context.Background(), env)
+	if result.Status != browsers.DoctorPass {
+		t.Fatalf("status = %v, want pass after cold start: %s", result.Status, result.Detail)
+	}
+}
