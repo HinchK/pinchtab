@@ -4,11 +4,56 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
+
+func TestNavPolicyDenialExitsOne(t *testing.T) {
+	if os.Getenv("PINCHTAB_NAV_POLICY_HELPER") == "1" {
+		rootCmd.SetArgs([]string{"--server", os.Getenv("PINCHTAB_NAV_POLICY_SERVER"), "nav", "https://example.com"})
+		if err := rootCmd.Execute(); err != nil {
+			os.Exit(commandExitCode(err))
+		}
+		return
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == "/health" {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+			return
+		}
+		if r.URL.Path != "/navigate" {
+			t.Errorf("path = %q, want /navigate", r.URL.Path)
+		}
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"navigation blocked by IDPI","code":"idpi_domain_blocked"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	child := exec.Command(os.Args[0], "-test.run=^TestNavPolicyDenialExitsOne$", "-test.timeout=30s") // #nosec G204 -- re-executes this test binary with fixed arguments.
+	child.Env = append(os.Environ(),
+		"PINCHTAB_NAV_POLICY_HELPER=1",
+		"PINCHTAB_NAV_POLICY_SERVER="+srv.URL,
+		"HOME="+t.TempDir(),
+		"XDG_STATE_HOME="+t.TempDir(),
+	)
+	out, err := child.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("nav policy denial exited with %v, want exit 1; output:\n%s", err, out)
+	}
+	if exitErr.ExitCode() != 1 {
+		t.Fatalf("exit code = %d, want 1; output:\n%s", exitErr.ExitCode(), out)
+	}
+	if !strings.Contains(string(out), "Error 403: navigation blocked by IDPI") {
+		t.Fatalf("output did not report the policy 403:\n%s", out)
+	}
+}
 
 func TestTabHandoffFamilyRefusesLocallyOnAnEmptyTabID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

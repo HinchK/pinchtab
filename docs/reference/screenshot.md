@@ -1,6 +1,8 @@
 # Screenshot
 
-Capture the current page as an image. Defaults to **JPEG** format.
+Capture the current page as an image. The API defaults to **JPEG**. The CLI
+uses PNG when `-o` ends in `.png` and JPEG otherwise; an explicit `--format`
+always takes precedence.
 
 ```bash
 # Get raw PNG bytes
@@ -48,7 +50,8 @@ curl "http://localhost:9867/screenshot?output=file"
 
 ### CLI
 
-- `-o <path>`: Save to specific path.
+- `-o <path>`: Save to a specific path. A `.png` extension selects PNG when `--format` is omitted; other extensions use JPEG.
+- `--format <jpeg|png>`: Explicitly select the image format, overriding extension inference.
 - `-q <0-100>`: Set JPEG quality.
 - `-s <selector>`: Capture a specific element.
 - `--scale <f>`: Bitmap rescale (e.g. `0.5`).

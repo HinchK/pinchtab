@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"strings"
 
 	"github.com/chromedp/cdproto/page"
@@ -123,7 +124,9 @@ func ClipForNode(ctx context.Context, nodeID int64, css1x bool) (*ScreenshotClip
 // fresh compositor surface frame. On idle pages in headed browsers (e.g. Cloak) the
 // surface stops swapping frames, so the default fromSurface=true blocks until the action
 // deadline (~30s) — stalling one-shot screenshots and polling screencast alike. That is
-// why the nil-clip fast path matters and must be preserved.
+// why the nil-clip fast path matters and must be preserved outside Windows. Windows
+// headless Chrome with software rendering can return an unpainted white view through
+// that path, so it always requests a freshly composited surface.
 //
 // Anything that changes the captured region needs the page recomposited, which only
 // happens with fromSurface=true: capture-beyond-viewport, a render-time rescale, and the
@@ -140,7 +143,11 @@ func ClipForNode(ctx context.Context, nodeID int64, css1x bool) (*ScreenshotClip
 // The nil-clip pair matches on dimensions, which is why an unclipped browser test cannot
 // pin this choice; hence the table test beside this function.
 func CaptureFromSurface(beyondViewport bool, clip *page.Viewport) bool {
-	return beyondViewport || clip != nil
+	return captureFromSurface(runtime.GOOS, beyondViewport, clip)
+}
+
+func captureFromSurface(goos string, beyondViewport bool, clip *page.Viewport) bool {
+	return goos == "windows" || beyondViewport || clip != nil
 }
 
 // captureRefusal is the CDP error a renderer returns when it will not serve the

@@ -5,6 +5,30 @@ GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/cli.sh"
 
 # ─────────────────────────────────────────────────────────────────
+start_test "pinchtab transport failure exits non-zero"
+
+ORIGINAL_E2E_SERVER="$E2E_SERVER"
+E2E_SERVER="http://127.0.0.1:1"
+pt health
+E2E_SERVER="$ORIGINAL_E2E_SERVER"
+assert_exit_code 1 "connection failure is reported to automation"
+
+end_test
+
+# ─────────────────────────────────────────────────────────────────
+start_test "pinchtab 403 policy denial exits non-zero"
+
+pt network route "*.png" --abort
+assert_exit_code 1 "403 policy denial is reported to automation"
+if echo "$PT_ERR" | grep -q "Error 403"; then
+  pass_assert "policy denial reports HTTP 403"
+else
+  fail_assert "policy denial reports HTTP 403"
+fi
+
+end_test
+
+# ─────────────────────────────────────────────────────────────────
 start_test "pinchtab daemon (non-interactive shows status)"
 
 pt daemon

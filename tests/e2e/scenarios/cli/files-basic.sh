@@ -5,16 +5,38 @@ GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/cli.sh"
 
 start_test "pinchtab screenshot"
+
+FIRST_SCREENSHOT=/tmp/e2e-screenshot-first.png
+SECOND_SCREENSHOT=/tmp/e2e-screenshot-second.png
+rm -f "$FIRST_SCREENSHOT" "$SECOND_SCREENSHOT"
+
 pt_ok nav "${FIXTURES_URL}/index.html"
-pt_ok screenshot -o /tmp/e2e-screenshot-test.jpg
-if [ -f /tmp/e2e-screenshot-test.jpg ]; then
-  echo -e "  ${GREEN}✓${NC} screenshot file created"
-  ((ASSERTIONS_PASSED++)) || true
-  rm -f /tmp/e2e-screenshot-test.jpg
-else
-  echo -e "  ${RED}✗${NC} screenshot file not created"
-  ((ASSERTIONS_FAILED++)) || true
+pt_ok screenshot -o "$FIRST_SCREENSHOT"
+pt_ok nav "${FIXTURES_URL}/buttons.html"
+pt_ok screenshot -o "$SECOND_SCREENSHOT"
+
+assert_file_exists "$FIRST_SCREENSHOT" "first screenshot file created"
+assert_file_exists "$SECOND_SCREENSHOT" "second screenshot file created"
+
+PNG_MAGIC=""
+if [ -f "$FIRST_SCREENSHOT" ]; then
+  PNG_MAGIC=$(od -An -tx1 -N8 "$FIRST_SCREENSHOT" | tr -d ' \n')
 fi
+if [ "$PNG_MAGIC" = "89504e470d0a1a0a" ]; then
+  pass_assert ".png output contains PNG bytes"
+else
+  fail_assert ".png output contains PNG bytes"
+fi
+
+if [ ! -f "$FIRST_SCREENSHOT" ] || [ ! -f "$SECOND_SCREENSHOT" ]; then
+  fail_assert "different pages produce different viewport screenshots"
+elif cmp -s "$FIRST_SCREENSHOT" "$SECOND_SCREENSHOT"; then
+  fail_assert "different pages produce different viewport screenshots"
+else
+  pass_assert "different pages produce different viewport screenshots"
+fi
+
+rm -f "$FIRST_SCREENSHOT" "$SECOND_SCREENSHOT"
 end_test
 
 start_test "pinchtab pdf"

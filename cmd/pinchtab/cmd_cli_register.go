@@ -119,7 +119,7 @@ func configureBrowserFlags() {
 	screenshotCmd.Flags().StringP("selector", "s", "", "Element selector to capture (ref/CSS/XPath/text)")
 	screenshotCmd.Flags().String("scale", "", "Rescale the output image (e.g. 0.5 = half size, 0.25 = quarter). Default 1.")
 	screenshotCmd.Flags().Bool("annotate", false, "Overlay numbered ref boxes on interactive elements (or on --selector matches). Prints a [n] ref legend to stdout.")
-	screenshotCmd.Flags().String("format", "", "Image format: 'jpeg' (default) or 'png'")
+	screenshotCmd.Flags().String("format", "", "Image format: 'jpeg' or 'png' (default: inferred from -o .png, otherwise jpeg)")
 	screenshotCmd.Flags().Bool("beyond-viewport", false, "Capture the entire scrollable document, not just the visible viewport. Ignored when --selector is set.")
 	// Back-compat: --css-1x was removed (replaced by --scale). Keep it as a
 	// deprecated no-op so old scripts get a notice instead of a hard error.

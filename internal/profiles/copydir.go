@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-func copyDir(src *importSource, dst string) error {
+func copyDir(src *importSource, dst *os.Root) error {
 	return fs.WalkDir(src.root.FS(), filepath.ToSlash(src.relative), func(sourcePath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -21,22 +21,25 @@ func copyDir(src *importSource, dst string) error {
 		if err != nil {
 			return err
 		}
-		target := filepath.Join(dst, filepath.FromSlash(rel))
+		target := filepath.FromSlash(rel)
+		if !filepath.IsLocal(target) {
+			return fmt.Errorf("import path escapes destination: %s", sourcePath)
+		}
 
 		if d.IsDir() {
 			info, err := d.Info()
 			if err != nil {
 				return err
 			}
-			return os.MkdirAll(target, info.Mode().Perm())
+			return dst.MkdirAll(target, info.Mode().Perm())
 		}
 
-		return copyFile(src.root, filepath.FromSlash(sourcePath), target)
+		return copyFile(src.root, filepath.FromSlash(sourcePath), dst, target)
 	})
 }
 
-func copyFile(root *os.Root, src, dst string) error {
-	in, err := root.Open(src)
+func copyFile(srcRoot *os.Root, src string, dstRoot *os.Root, dst string) error {
+	in, err := srcRoot.Open(src)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", src, err)
 	}
@@ -47,7 +50,7 @@ func copyFile(root *os.Root, src, dst string) error {
 		return err
 	}
 
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	out, err := dstRoot.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}

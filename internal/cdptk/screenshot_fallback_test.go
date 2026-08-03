@@ -11,6 +11,12 @@ import (
 	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
+func TestWindowsViewportCaptureUsesSurface(t *testing.T) {
+	if !captureFromSurface("windows", false, nil) {
+		t.Fatal("Windows viewport capture used the read-the-view path")
+	}
+}
+
 // The property is that a REFUSAL of the read-the-view fast path is handled, whatever the
 // clip — not that an unclipped capture works. A browser fixture cannot pin this: the
 // refusal depends on whether the renderer's view is available, which no test can withhold
