@@ -23,7 +23,7 @@ COMMANDS=(
   "run:🏃:Run the application"
   "check:🧪:All checks"
   "all:✅:check + test + e2e"
-  "full:✅:check + test + e2e-browsers + smoke-browsers"
+  "full:✅:check + npm + test + e2e-browsers + smoke-browsers"
   "e2e-browsers:🐳:e2e extended across all 3 browsers"
   "smoke-browsers:💨:e2e smoke across all 3 browsers (browser-sensitive only for cloak/ghost-chrome)"
   "test unit:🔬:Go unit tests"
@@ -431,11 +431,12 @@ run_command() {
         || exit 1
       ;;
     "full")
-      echo "  ${ACCENT}${BOLD}✅ full: check + test + e2e-browsers + smoke-browsers${NC}"
+      echo "  ${ACCENT}${BOLD}✅ full: check + npm + test + e2e-browsers + smoke-browsers${NC}"
       echo ""
       bash scripts/check.sh || exit 1
       bash scripts/check-dashboard.sh || exit 1
       bash scripts/check-plugin.sh || exit 1
+      bash scripts/check-npm.sh || exit 1
       bash scripts/test.sh all || exit 1
       run_e2e_matrix "E2E-browsers summary" \
         "extended / chrome|extended|chrome" \

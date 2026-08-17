@@ -95,4 +95,9 @@ node -e "
 
 npm audit --audit-level=moderate || true
 
+# Hermetic install smoke: install under one $HOME, run the CLI under another, and
+# assert it still finds the binary (issue #628). Reuses the tarball packed above.
+echo "Running install HOME-divergence smoke (issue #628)..."
+bash scripts/npm-install-home-divergence.sh "$PWD/$TARBALL"
+
 echo "npm package verification passed."

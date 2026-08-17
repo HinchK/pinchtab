@@ -3,13 +3,7 @@ import { randomBytes } from 'crypto';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import {
-  detectPlatform,
-  getBinaryName,
-  getBinaryPath,
-  getCheckoutBinaryPath,
-  readPackageVersion,
-} from './platform';
+import { getCheckoutBinaryPath, resolveManagedBinaryPath } from './platform';
 import { withAuthedFetch } from './http';
 import {
   SnapshotParams,
@@ -251,20 +245,10 @@ export class Pinchtab {
       return checkoutBinaryPath;
     }
 
-    const platform = detectPlatform();
-    const binaryName = getBinaryName(platform);
-
-    // Try version-specific path first
-    let version: string | undefined;
-    try {
-      version = readPackageVersion(__dirname);
-    } catch (err) {
-      console.warn(
-        `Could not read version from package.json, falling back to unversioned binary. (${(err as Error).message})`
-      );
-    }
-
-    const binaryPath = getBinaryPath(binaryName, version);
+    // Shared resolver: package-relative managed location first, then the legacy
+    // $HOME fallback (issue #628). Keeps the SDK, the CLI wrapper, and the
+    // installer agreeing on one binary location.
+    const binaryPath = resolveManagedBinaryPath(__dirname);
     if (!fs.existsSync(binaryPath)) {
       throw new Error(
         `Pinchtab binary not found at ${binaryPath}.\n` +
