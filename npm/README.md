@@ -17,10 +17,16 @@ npm install -g pinchtab
 On install, the postinstall script automatically:
 1. Detects your OS and CPU architecture (darwin/linux/windows, amd64/arm64)
 2. Downloads the precompiled Pinchtab binary from GitHub Releases
-   - Example: `pinchtab-darwin-amd64`, `pinchtab-linux-arm64.exe` (Windows)
+   - Example: `pinchtab-darwin-amd64`, `pinchtab-windows-arm64.exe` (Windows)
 3. Verifies integrity (SHA256 checksum from `checksums.txt`)
-4. Stores in `~/.pinchtab/bin/0.7.1/` (version-specific to avoid conflicts)
+4. Stores it inside the installed package at `.managed-bin/<version>/` (version-specific to avoid conflicts)
 5. Makes it executable
+
+The binary lives inside the package directory rather than under `$HOME`, so a
+global install resolves the same binary no matter which user runs the CLI —
+including `sudo npm install -g pinchtab`, where postinstall runs as root but the
+CLI later runs as you. (Binaries placed by older versions under `~/.pinchtab/bin`
+are still honored.)
 
 **Requirements:**
 - Internet connection on first install (to download binary from GitHub Releases)
@@ -43,15 +49,21 @@ In a source checkout, the npm package now expects the local binary at
 `../pinchtab-dev` and will fail clearly if it is missing. It does not download a
 release binary in that mode.
 
-### Proxy Support
+### Restricted Networks and Mirrors
 
-Works with corporate proxies. Set standard environment variables:
+`npm install --https-proxy https://proxy.company.com:8080 pinchtab` (or the
+`HTTPS_PROXY` environment variable) routes npm's own registry fetches through a
+proxy. The postinstall binary download from GitHub Releases goes direct, however,
+and does **not** read `HTTP(S)_PROXY`.
+
+For proxied, mirrored, or air-gapped installs, point the binary download at a host
+you control with `PINCHTAB_DOWNLOAD_BASE_URL`. It must mirror the GitHub Releases
+layout — `<base>/v<version>/<asset>` — serving each platform binary alongside
+`checksums.txt`:
 
 ```bash
-npm install --https-proxy https://proxy.company.com:8080 pinchtab
-# or
-export HTTPS_PROXY=https://user:pass@proxy.company.com:8080
-npm install pinchtab
+export PINCHTAB_DOWNLOAD_BASE_URL=https://mirror.example.com/pinchtab
+npm install -g pinchtab
 ```
 
 ## Quick Start
@@ -183,9 +195,12 @@ If no binaries (only Docker images), rebuild with a newer release:
 npm rebuild pinchtab
 ```
 
-**Behind a proxy:**
+**Restricted network or mirror:**
+
+The binary download does not use `HTTP(S)_PROXY`. Point it at a reachable mirror
+(GitHub Releases layout) and rebuild:
 ```bash
-export HTTPS_PROXY=https://proxy:port
+export PINCHTAB_DOWNLOAD_BASE_URL=https://mirror.example.com/pinchtab
 npm rebuild pinchtab
 ```
 
