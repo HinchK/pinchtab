@@ -3,13 +3,45 @@ import * as path from 'path';
 import * as http from 'http';
 import * as https from 'https';
 import * as crypto from 'crypto';
-import { detectPlatform, getBinaryName, getBinaryPath, readPackageVersion } from './platform';
+import {
+  detectPlatform,
+  getBinaryName,
+  getManagedBinaryPath,
+  readPackageVersion,
+} from './platform';
 
 const GITHUB_REPO = 'pinchtab/pinchtab';
 
 // Resolve the published package version even when compiled code lives under dist/src.
 function getVersion(): string {
   return readPackageVersion(__dirname);
+}
+
+// releaseAssetUrl builds the download URL for a release asset. It defaults to
+// the GitHub release for GITHUB_REPO, but honors PINCHTAB_DOWNLOAD_BASE_URL so
+// installs can point at a private mirror or air-gapped cache — and so the
+// hermetic install smoke test can serve fixtures from a local http server
+// instead of the network. The asset layout under the base mirrors GitHub's:
+// <base>/v<version>/<asset>.
+function releaseAssetUrl(version: string, asset: string): string {
+  const base = process.env.PINCHTAB_DOWNLOAD_BASE_URL?.trim();
+  if (base) {
+    return `${base.replace(/\/+$/, '')}/v${version}/${asset}`;
+  }
+  return `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${asset}`;
+}
+
+// defaultGet dispatches to http.get or https.get by URL scheme so a plain-http
+// PINCHTAB_DOWNLOAD_BASE_URL (a mirror or the local test server) works: https.get
+// cannot fetch an http:// URL. Redirects are followed with this same dispatcher,
+// so a hop that changes scheme is still handled.
+function defaultGet(
+  url: string,
+  options: http.RequestOptions,
+  callback: (res: http.IncomingMessage) => void
+): http.ClientRequest {
+  const getter = new URL(url).protocol === 'http:' ? http.get : https.get;
+  return getter(url, options, callback);
 }
 
 // NOTE: HTTPS_PROXY / HTTP_PROXY are NOT honored — downloads go direct. A prior
@@ -33,7 +65,7 @@ export function httpGetFollowingRedirects(
     url: string,
     options: http.RequestOptions,
     callback: (res: http.IncomingMessage) => void
-  ) => http.ClientRequest = https.get
+  ) => http.ClientRequest = defaultGet
 ): void {
   const attempt = (currentUrl: string, redirectsRemaining: number) => {
     const request = requestFn(currentUrl, {}, (response) => {
@@ -100,7 +132,7 @@ function fetchUrl(url: string, maxRedirects = 5): Promise<Buffer> {
 }
 
 async function downloadChecksums(version: string): Promise<Map<string, string>> {
-  const url = `https://github.com/${GITHUB_REPO}/releases/download/v${version}/checksums.txt`;
+  const url = releaseAssetUrl(version, 'checksums.txt');
 
   try {
     const data = await fetchUrl(url);
@@ -145,7 +177,7 @@ async function downloadBinary(
   version: string
 ): Promise<void> {
   const binaryName = getBinaryName(platform);
-  const binaryPath = getBinaryPath(binaryName, version);
+  const binaryPath = getManagedBinaryPath(__dirname, binaryName, version);
 
   // Fetch the checksum map once and reuse it for both the existing-binary
   // verification and the post-download check (it was previously downloaded
@@ -175,7 +207,7 @@ async function downloadBinary(
   }
 
   console.log(`Downloading Pinchtab ${version} for ${platform.os}-${platform.arch}...`);
-  const downloadUrl = `https://github.com/${GITHUB_REPO}/releases/download/v${version}/${binaryName}`;
+  const downloadUrl = releaseAssetUrl(version, binaryName);
 
   // Ensure the managed install directory exists
   const binDir = path.dirname(binaryPath);
@@ -258,5 +290,5 @@ export async function ensureBinary(): Promise<string> {
   await downloadBinary(platform, version);
 
   const binaryName = getBinaryName(platform);
-  return getBinaryPath(binaryName, version);
+  return getManagedBinaryPath(__dirname, binaryName, version);
 }
