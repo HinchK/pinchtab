@@ -70,6 +70,22 @@ var serverRestartCmd = &cobra.Command{
 	},
 }
 
+// requireDetachedServerOwnership prevents the detached server launch paths from
+// competing with an installed service manager for the same configured port and
+// state directory. An installed daemon is the canonical owner; it is also
+// KeepAlive-managed, so callers should ask that manager to start it instead of
+// creating an orphaned background child.
+func requireDetachedServerOwnership(action string) error {
+	installed, err := daemonInstallationStatus()
+	if err != nil {
+		return fmt.Errorf("cannot determine background-service ownership; refusing %s: %w", action, err)
+	}
+	if installed {
+		return fmt.Errorf("background service is installed; use `pinchtab daemon start` so one service manager owns the server")
+	}
+	return nil
+}
+
 func runServerRestart(cfg *config.RuntimeConfig) error {
 	installed, err := daemonInstallationStatus()
 	if err != nil {
@@ -138,6 +154,10 @@ func spawnDetachedChild(binary string, args []string, out *os.File) (int, error)
 }
 
 func runServerBackground(cfg *config.RuntimeConfig, opts serverBackgroundOptions) error {
+	if err := requireDetachedServerOwnership("background start"); err != nil {
+		return err
+	}
+
 	stateDir := stateDirForConfig(cfg)
 	if info, ok := readServerPID(stateDir); ok {
 		if processAlive(info.PID) {

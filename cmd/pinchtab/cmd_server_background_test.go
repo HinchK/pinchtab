@@ -14,6 +14,44 @@ import (
 	"github.com/pinchtab/pinchtab/internal/server"
 )
 
+func TestDetachedServerStartsRefuseInstalledOrUnknownServiceOwnership(t *testing.T) {
+	original := daemonInstallationStatus
+	defer func() { daemonInstallationStatus = original }()
+
+	tests := []struct {
+		name      string
+		installed bool
+		err       error
+		start     func() error
+		want      string
+	}{
+		{
+			name: "background installed", installed: true,
+			start: func() error { return runServerBackground(&config.RuntimeConfig{}, serverBackgroundOptions{}) },
+			want:  "pinchtab daemon start",
+		},
+		{
+			name: "automatic installed", installed: true,
+			start: autoStartServer,
+			want:  "pinchtab daemon start",
+		},
+		{
+			name: "automatic unknown", err: errors.New("service path unreadable"),
+			start: autoStartServer,
+			want:  "refusing automatic start",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			daemonInstallationStatus = func() (bool, error) { return tt.installed, tt.err }
+			err := tt.start()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("detached start error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestServerRestartRefusesInstalledOrUnknownServiceOwnership(t *testing.T) {
 	original := daemonInstallationStatus
 	defer func() { daemonInstallationStatus = original }()
