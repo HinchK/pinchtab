@@ -156,11 +156,13 @@ func (b *Bridge) actionHumanizedType(ctx context.Context, req ActionRequest) (ma
 		return nil, NewInvalidActionRequestError("need selector, ref, or nodeId")
 	}
 
-	actions := Type(req.Text, req.Fast)
-	if err := chromedp.Run(ctx, actions...); err != nil {
+	return b.humanizedTypeFocused(ctx, req)
+}
+
+func (b *Bridge) humanizedTypeFocused(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	if err := chromedp.Run(ctx, Type(req.Text, req.Fast)...); err != nil {
 		return nil, err
 	}
-
 	result := textEntryResult("typed", req.Text)
 	result["human"] = true
 	return result, nil
@@ -177,6 +179,9 @@ func (b *Bridge) actionKeyboardType(ctx context.Context, req ActionRequest) (map
 	}
 
 	if b.effectiveHumanize(req) {
+		if req.Selector == "" && req.NodeID <= 0 {
+			return b.humanizedTypeFocused(ctx, req)
+		}
 		return b.actionHumanizedType(ctx, req)
 	}
 
