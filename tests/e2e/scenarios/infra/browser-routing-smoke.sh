@@ -44,12 +44,7 @@ pt_post "/navigate" -d "{\"url\":\"${FIXTURES_URL}/buttons.html\",\"browser\":\"
 assert_ok "navigate with browser=${CONFIGURED}"
 assert_json_contains "$RESULT" '.url' 'buttons.html' "navigated to buttons page"
 
-HAS_ROUTE=$(echo "$RESULT" | jq 'has("route")' 2>/dev/null || echo "false")
-if [ "$HAS_ROUTE" = "true" ]; then
-  assert_json_eq "$RESULT" '.route.requestedProvider' "${CONFIGURED}" "route.requestedProvider=${CONFIGURED}"
-else
-  soft_pass_assert "route metadata not in navigate response"
-fi
+assert_json_eq "$RESULT" '.route.requestedProvider' "${CONFIGURED}" "route.requestedProvider=${CONFIGURED}"
 
 end_test
 

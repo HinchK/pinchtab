@@ -11,12 +11,11 @@ start_test "browser selection: unknown browser name → structured error"
 pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/index.html\",\"browser\":\"nonexistent_xyz\"}"
 assert_not_ok "navigate with unknown browser rejects"
 
-# The response should contain a structured error code.
 ERROR_CODE=$(echo "$RESULT" | jq -r '.code // empty' 2>/dev/null || echo "")
-if [ -n "$ERROR_CODE" ] && [ "$ERROR_CODE" != "null" ]; then
+if [ -n "$ERROR_CODE" ]; then
   pass_assert "error has structured code: $ERROR_CODE"
 else
-  soft_pass_assert "no structured error code in response (server may use plain message)"
+  fail_assert "rejection carries no structured .code, so a caller cannot tell an unknown browser from any other 4xx: $RESULT"
 fi
 
 end_test
@@ -79,10 +78,12 @@ TEXT_EXPLICIT="$RESULT"
 
 DEFAULT_TEXT=$(echo "$TEXT_DEFAULT" | jq -r '.text // empty' 2>/dev/null | head -c 200)
 EXPLICIT_TEXT=$(echo "$TEXT_EXPLICIT" | jq -r '.text // empty' 2>/dev/null | head -c 200)
-if [ -n "$DEFAULT_TEXT" ] && [ "$DEFAULT_TEXT" = "$EXPLICIT_TEXT" ]; then
+if [ -z "$DEFAULT_TEXT" ]; then
+  fail_assert "the default-provider read returned no text, so there is nothing to compare the explicit provider against"
+elif [ "$DEFAULT_TEXT" = "$EXPLICIT_TEXT" ]; then
   pass_assert "explicit provider matches default text"
 else
-  soft_pass_assert "text content may differ slightly between calls"
+  fail_assert "naming the default provider changed the text read from the same page: '$DEFAULT_TEXT' vs '$EXPLICIT_TEXT'"
 fi
 
 end_test

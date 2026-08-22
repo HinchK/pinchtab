@@ -118,4 +118,9 @@ assert_field_value "#new-password" "$SECRET" "new-password value persisted after
 
 end_test
 
-finish_suite
+# Scenarios are SOURCED into one shell, and finish_suite exits when any earlier
+# test has failed — unguarded, this file amputates every scenario after it as
+# soon as something upstream goes red. Same guard the other scenarios use.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  finish_suite
+fi

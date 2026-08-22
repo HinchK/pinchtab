@@ -300,20 +300,13 @@ GC_TAB_ROUTE=$(echo "$RESULT" | jq -r '.tabId')
 ghostchrome_get "/text?tabId=${GC_TAB_ROUTE}"
 assert_ok "ghost-chrome text"
 
-HAS_ROUTE=$(echo "$RESULT" | jq 'has("route")' 2>/dev/null || echo "false")
-if [ "$HAS_ROUTE" = "true" ]; then
-  # /text bypasses the ghost-chrome adapter (uses readability.js directly),
-  # so route metadata reflects chrome, not ghost-chrome.
-  USED=$(echo "$RESULT" | jq -r '.route.usedProvider' 2>/dev/null)
-  if [ "$USED" = "ghost-chrome" ] || [ "$USED" = "chrome" ]; then
-    echo -e "  ${GREEN}✓${NC} ghost-chrome text route.usedProvider=$USED (text handler may bypass adapter)"
-    ((ASSERTIONS_PASSED++)) || true
-  else
-    echo -e "  ${RED}✗${NC} ghost-chrome text route.usedProvider unexpected: $USED"
-    ((ASSERTIONS_FAILED++)) || true
-  fi
+# /text bypasses the ghost-chrome adapter (uses readability.js directly), so
+# route metadata may name chrome as the provider that served it.
+USED=$(echo "$RESULT" | jq -r '.route.usedProvider // empty' 2>/dev/null)
+if [ "$USED" = "ghost-chrome" ] || [ "$USED" = "chrome" ]; then
+  pass_assert "ghost-chrome text route.usedProvider=$USED (text handler may bypass adapter)"
 else
-  soft_pass_assert "route metadata not in ghost-chrome text response (format may be text)"
+  fail_assert "ghost-chrome text route.usedProvider is '$USED', want ghost-chrome or chrome: $RESULT"
 fi
 
 pt_post /navigate "{\"url\":\"${FIXTURES_URL}/form.html\"}"
@@ -323,12 +316,7 @@ CHROME_TAB_ROUTE=$(echo "$RESULT" | jq -r '.tabId')
 pt_get "/text?tabId=${CHROME_TAB_ROUTE}"
 assert_ok "chrome text"
 
-CHROME_HAS_ROUTE=$(echo "$RESULT" | jq 'has("route")' 2>/dev/null || echo "false")
-if [ "$CHROME_HAS_ROUTE" = "true" ]; then
-  assert_json_eq "$RESULT" '.route.usedProvider' 'chrome' "chrome route.usedProvider=chrome"
-else
-  soft_pass_assert "route metadata not in chrome text response (format may be text)"
-fi
+assert_json_eq "$RESULT" '.route.usedProvider' 'chrome' "chrome route.usedProvider=chrome"
 
 end_test
 
@@ -354,12 +342,7 @@ else
   ((ASSERTIONS_FAILED++)) || true
 fi
 
-SNAP_HAS_ROUTE=$(echo "$RESULT" | jq 'has("route")' 2>/dev/null || echo "false")
-if [ "$SNAP_HAS_ROUTE" = "true" ]; then
-  assert_json_contains "$RESULT" '.route.usedProvider' 'ghost-chrome' "ghost-chrome snapshot route.usedProvider contains ghost-chrome"
-else
-  soft_pass_assert "route metadata not in ghost-chrome snapshot response"
-fi
+assert_json_contains "$RESULT" '.route.usedProvider' 'ghost-chrome' "ghost-chrome snapshot route.usedProvider contains ghost-chrome"
 
 end_test
 

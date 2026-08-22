@@ -214,6 +214,40 @@ start_test "tab focus"
 end_test
 ```
 
+### Assertions Must Be Able to Fail
+
+Every branch of a scenario ends in `pass_assert`, `fail_assert`, or a named skip
+(`skip_assert` / `skip_test`) — never in a pass that stands in for a failure. A
+helper that reports "the thing I was checking is not there" as a pass makes the
+scenario green for every input, which is indistinguishable in the report from
+working code. Use a skip only when the property genuinely cannot be observed on
+this server or provider, and say in the message which condition is missing.
+
+### Waiting
+
+Do not `sleep` for state to arrive. `wait_until <predicate> [timeout] [interval]`
+(in `helpers/base.sh`) polls the predicate, returns as soon as it holds, and
+fails the current test loudly if the timeout passes — so a wait is bounded on a
+slow machine and costs nothing on a fast one:
+
+```bash
+BEFORE_TS=$(newest_activity_event /navigate | jq -r '.timestamp // empty')
+pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/buttons.html\"}"
+assert_ok "navigate"
+
+if wait_until "activity_event_landed /navigate '$BEFORE_TS'" 10; then
+  assert_json_eq "$ACTIVITY_EVENT" '.status' "200" "activity event status=200"
+fi
+```
+
+`wait_for_instance_ready` stays separate: it gates a suite before any test is
+running, so it reports a readiness failure to its caller instead of failing a
+test that has not started.
+
+To drive a second server in the stack (a provider instance, the bridge), wrap
+the call in `pt_on <base_url> <token> <pt_command...>`; it retargets `E2E_SERVER`
+and the token together and restores both afterwards.
+
 ## Coverage
 
 Generate coverage for unit tests:

@@ -440,6 +440,15 @@
       ]
     },
     "api/browser-activity-basic.sh": {
+      "services": [
+        "pinchtab",
+        "pinchtab-bridge",
+        "fixtures"
+      ],
+      "ready": [
+        "E2E_SERVER",
+        "E2E_BRIDGE_URL|60|E2E_BRIDGE_TOKEN"
+      ],
       "tags": [
         "browser",
         "activity",

@@ -171,18 +171,25 @@ assert_input_not_contains() {
   return 0
 }
 
+# assert_http_error checks the RESPONSE status, not a `.status` field in the
+# body — PinchTab error bodies are {"code","error"} and never carry one, so the
+# old body lookup was empty for every call and the assertion rested entirely on
+# its pattern. error_pattern is an extended regex matched against the body; pass
+# "" to assert the status alone.
 assert_http_error() {
   local expected_status="$1"
-  local error_pattern="${2:-error}"
+  local error_pattern="${2:-}"
   local desc="${3:-HTTP $expected_status error}"
-  local actual_status
-  actual_status=$(echo "$RESULT" | jq -r '.status // empty')
 
-  if [ "$actual_status" = "$expected_status" ] || grep -q "$error_pattern" <<< "$RESULT"; then
-    pass_assert "$desc"
-  else
-    soft_pass_assert "$desc (got: $actual_status)"
+  if [ "$HTTP_STATUS" != "$expected_status" ]; then
+    fail_assert "$desc (want HTTP $expected_status, got $HTTP_STATUS: $RESULT)"
+    return
   fi
+  if [ -n "$error_pattern" ] && ! grep -qE "$error_pattern" <<< "$RESULT"; then
+    fail_assert "$desc (HTTP $expected_status but no match for /$error_pattern/ in: $RESULT)"
+    return
+  fi
+  pass_assert "$desc"
 }
 
 assert_contains_any() {
@@ -193,7 +200,7 @@ assert_contains_any() {
   if echo "$haystack" | grep -qE "$patterns"; then
     pass_assert "$desc"
   else
-    soft_pass_assert "$desc (not found)"
+    fail_assert "$desc (no match for /$patterns/ in: $haystack)"
   fi
 }
 

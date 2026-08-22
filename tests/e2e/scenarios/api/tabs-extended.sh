@@ -151,7 +151,7 @@ assert_ok "open tab 3 (triggers eviction)"
 echo -e "  ${MUTED}tab3: ${TAB3:0:12}...${NC}"
 
 pt_get "/tabs/$TAB1/snapshot"
-assert_http_error 404 "tab1 evicted (LRU)"
+assert_http_error 404 "" "tab1 evicted (LRU)"
 
 pt_get "/tabs/$TAB2/snapshot" > /dev/null
 assert_ok "tab2 survived (recently used)"
@@ -173,7 +173,7 @@ TAB4=$(echo "$RESULT" | jq -r '.tabId')
 assert_ok "open tab 4 (triggers second eviction)"
 
 pt_get "/tabs/$TAB2/snapshot"
-assert_http_error 404 "tab2 evicted (LRU)"
+assert_http_error 404 "" "tab2 evicted (LRU)"
 
 pt_get "/tabs/$TAB3/snapshot" > /dev/null
 assert_ok "tab3 survived"
