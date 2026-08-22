@@ -173,12 +173,17 @@ func TestExecuteInstallsTheGuard(t *testing.T) {
 	}
 	body := string(src)
 	install := strings.Index(body, "installUnknownSubcommandGuard(rootCmd)")
-	execute := strings.Index(body, "rootCmd.Execute()")
+	// Prefix match: the call has been both Execute() and ExecuteC(), and a
+	// rename must not read as an ordering failure.
+	execute := strings.Index(body, "rootCmd.Execute")
 	if install < 0 {
 		t.Fatal("Execute no longer installs the unknown-subcommand guard, so every group is back to exit 0")
 	}
+	if execute < 0 {
+		t.Fatal("Execute no longer runs the command tree through rootCmd.Execute/ExecuteC; re-point this ordering guard at whatever runs it rather than deleting it")
+	}
 	if execute < install {
-		t.Error("the guard is installed after rootCmd.Execute, which is too late to matter")
+		t.Error("the guard is installed after the command tree runs, which is too late to matter")
 	}
 }
 

@@ -319,7 +319,7 @@ pinchtab record status                  # Check recording status
 ## Instances, Profiles, And Activity
 
 ```bash
-pinchtab instances                      # List running instances
+pinchtab instance list                  # List running instances
 pinchtab instance start                 # Start an instance
 pinchtab instance start --profile <id-or-name>
 pinchtab instance start --mode headed

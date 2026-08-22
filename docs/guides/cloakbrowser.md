@@ -242,7 +242,7 @@ Look for these fields:
 If launch fails, inspect the instance:
 
 ```bash
-pinchtab instances
+pinchtab instance list
 pinchtab instance logs <instance-id>
 ```
 

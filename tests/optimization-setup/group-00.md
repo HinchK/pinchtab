@@ -17,7 +17,7 @@ Run a single navigation against the fixture server with no preceding `pinchtab` 
 - The command exits 0 and prints a tab ID. Capture it (`TAB_ID=...`) and reuse for every step in group 1.
 - `$PINCHTAB_CONFIG` now exists on disk — auto-created by the CLI.
 - A `pinchtab server` process is running on default port `9867` (`lsof -i :9867` or check `ps`).
-- A managed Chrome instance has come up (`./pinchtab instances` shows at least one row, `status=running`).
+- A managed Chrome instance has come up (`./pinchtab instance list` shows at least one row, `status=running`).
 
 ### 0.2 Auto-created config matches OOTB defaults
 Without ever running `config init` manually, inspect what the auto-flow wrote:

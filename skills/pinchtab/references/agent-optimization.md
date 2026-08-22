@@ -142,7 +142,7 @@ pinchtab server          # restart in the foreground, or use `pinchtab nav <url>
 pinchtab health          # confirm up before continuing
 ```
 
-For fleet workflows: check `pinchtab instances` to confirm the right instance is running.
+For fleet workflows: check `pinchtab instance list` to confirm the right instance is running.
 
 ---
 

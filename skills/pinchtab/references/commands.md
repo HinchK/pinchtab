@@ -349,7 +349,7 @@ pinchtab profiles
 pinchtab instance start --profile work
 ```
 
-### `pinchtab instances`
+### `pinchtab instance list`
 List running PinchTab instances across profiles.
 
 ---

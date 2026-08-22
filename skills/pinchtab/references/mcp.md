@@ -142,7 +142,7 @@ The MCP surface is intentionally scoped to browser automation. The following are
 | CAPTCHA or human verification | ❌ Not available | Hand the step to the user |
 | Modify stealth or fingerprint settings | ❌ Not available | Not part of an agent workflow |
 | Start or stop the PinchTab server | ❌ Not available | Use `pinchtab server` or `pinchtab daemon` CLI |
-| Manage fleet instances | ❌ Not available | Use `pinchtab instances` CLI |
+| Manage fleet instances | ❌ Not available | Use `pinchtab instance list` CLI |
 | Read/write PinchTab config | ❌ Not available | Edit `~/.pinchtab/config.json` directly |
 
 For supported non-MCP browser work, use the CLI commands alongside the MCP tools. Keep privileged controls within the explicit authorization and data-handling rules above.

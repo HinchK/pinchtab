@@ -56,10 +56,24 @@ func Execute() {
 	safelog.InstallDefault()
 	installUnknownSubcommandGuard(rootCmd)
 	rootCmd.SetArgs(rewriteNegativeNumberArgs(rootCmd, os.Args[1:]))
-	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(commandExitCode(err))
+	cmd, err := rootCmd.ExecuteC()
+	if err == nil {
+		return
 	}
+	if shouldPrintCommandError(cmd, rootCmd) {
+		fmt.Fprintln(os.Stderr, err)
+	}
+	os.Exit(commandExitCode(err))
+}
+
+// shouldPrintCommandError reports whether Execute still owes the user an error
+// line. cobra prints the error itself unless the command or the root silenced
+// it, so printing unconditionally showed every failure twice.
+func shouldPrintCommandError(cmd, root *cobra.Command) bool {
+	if cmd == nil {
+		return true
+	}
+	return cmd.SilenceErrors || root.SilenceErrors
 }
 
 type commandExitError struct {
