@@ -28,6 +28,25 @@ is set: `--log-level debug|info|warn|error`, then `server.logLevel` in the confi
 file, then `-v`, then the default `info`. `-v` always adds the full startup banner,
 and it raises the level to debug only when neither of the other two is set.
 
+Where those lines land depends on how the server was started, which is why `pinchtab`
+with no arguments prints a `logs` row naming the live destination: `<stateDir>/server.log`
+for `pinchtab server -b`, `~/.pinchtab/logs/daemon.err.log` for a daemon-installed
+service, and the terminal for a foreground run. A `server.log` left behind by an earlier
+detached run is called out as not being written by the current server, so it cannot be
+mistaken for a live one.
+
+A request that fails logs its cause there UNREDACTED — absolute paths intact — under the
+same `requestId` the access log records, so a 5xx can be joined to the reason it happened:
+
+```bash
+grep '"request failed"' <stateDir>/server.log        # causes, with requestId and status
+grep <requestId> ~/.pinchtab/activity/*.jsonl        # the access-log line it belongs to
+```
+
+The message that crosses the HTTP boundary is still path-sanitized (`fork/exec [path]`),
+so the unredacted copy exists only in the server's own log. Server faults (5xx) log at
+error level; a 4xx is the caller's input and logs at debug.
+
 The access log is what an open dashboard costs: its errors and console panels each poll
 on a 3s interval, so a dashboard left open writes roughly 40 lines a minute. That is the
 deliberate trade for a run that explains itself afterwards, and `--log-level warn` is the

@@ -1,9 +1,9 @@
 #!/bin/bash
 # browser-activity-basic.sh — what the activity log records about a routed
-# request. Route metadata is built inside the instance, so it reaches
-# /api/activity only where the recorder shares the instance's request context:
-# that is bridge mode. Through the orchestrator front door the same metadata
-# comes back on the response instead, and both surfaces are asserted here.
+# request through the orchestrator front door: the response carries the route
+# metadata and the event carries the request. The bridge topology, where that
+# metadata reaches the event itself, needs a second server and is asserted in
+# browser-activity-extended.sh so the PR tier keeps its one-server stack.
 
 GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/api.sh"
@@ -154,29 +154,5 @@ assert_json_jq "$RESULT" '.events | length >= 1' \
 assert_json_jq "$RESULT" '.events | all(has("method") and has("path") and has("status"))' \
   "every event has method, path and status" \
   "an activity event is missing method, path or status"
-
-end_test
-
-# ─────────────────────────────────────────────────────────────────
-start_test "activity metadata: bridge records route metadata on the event"
-
-if [ -z "${E2E_BRIDGE_URL:-}" ]; then
-  skip_test "E2E_BRIDGE_URL is not set; route metadata lands on the activity event only in bridge mode"
-else
-  BRIDGE_TOKEN="${E2E_BRIDGE_TOKEN:-}"
-  BEFORE_TS=$(pt_on "$E2E_BRIDGE_URL" "$BRIDGE_TOKEN" newest_activity_event /navigate | jq -r '.timestamp // empty')
-
-  pt_on "$E2E_BRIDGE_URL" "$BRIDGE_TOKEN" pt_post "/navigate?browser=${EXPECTED_BROWSER}" -d "{\"url\":\"${FIXTURES_URL}/index.html\"}"
-  assert_ok "bridge navigate with browser=${EXPECTED_BROWSER}"
-
-  if pt_on "$E2E_BRIDGE_URL" "$BRIDGE_TOKEN" wait_until "activity_event_landed /navigate '$BEFORE_TS'" "$ACTIVITY_TIMEOUT"; then
-    ROUTE=$(echo "$ACTIVITY_EVENT" | jq -c '.route // empty')
-    if [ -n "$ROUTE" ]; then
-      assert_route_metadata "$ROUTE" "bridge activity event"
-    else
-      fail_assert "bridge activity event has no route metadata: $ACTIVITY_EVENT"
-    fi
-  fi
-fi
 
 end_test

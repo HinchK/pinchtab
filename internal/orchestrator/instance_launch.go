@@ -15,6 +15,27 @@ import (
 	"github.com/pinchtab/pinchtab/internal/profiles"
 )
 
+// logLaunchBinaryFailure records what the exec actually tried, unredacted. The error
+// the caller gets back crosses the HTTP boundary, where the absolute path is rewritten
+// to [path] — leaving "fork/exec [path]: exec format error", which names no file. The
+// binary's size and mode go with it because the two failures an operator hits here, a
+// truncated install and a foreign-architecture build, are told apart by exactly those:
+// a 0-byte candidate is self-evident, a full-size one is not.
+func logLaunchBinaryFailure(instanceID, profile, binary string, cause error) {
+	attrs := []any{
+		"id", instanceID,
+		"profile", profile,
+		"binary", binary,
+		"err", cause,
+	}
+	if info, statErr := os.Stat(binary); statErr == nil {
+		attrs = append(attrs, "sizeBytes", info.Size(), "mode", info.Mode().String())
+	} else {
+		attrs = append(attrs, "statErr", statErr)
+	}
+	slog.Error("instance launch failed to exec the launch binary", attrs...)
+}
+
 func (o *Orchestrator) Launch(name, port string, headless bool, extensionPaths []string) (*bridge.Instance, error) {
 	opts := LaunchOptions{
 		ExtensionPaths: extensionPaths,
@@ -168,6 +189,7 @@ func (o *Orchestrator) LaunchWithOptions(name, port string, headless bool, opts 
 
 	cmd, err := o.runner.Run(context.Background(), o.binary, []string{"bridge"}, env, logBuf, logBuf)
 	if err != nil {
+		logLaunchBinaryFailure(instanceID, name, o.binary, err)
 		return nil, fmt.Errorf("failed to start: %w", err)
 	}
 

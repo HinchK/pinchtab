@@ -440,6 +440,15 @@
       ]
     },
     "api/browser-activity-basic.sh": {
+      "tags": [
+        "browser",
+        "activity",
+        "metadata",
+        "route",
+        "pr"
+      ]
+    },
+    "api/browser-activity-extended.sh": {
       "services": [
         "pinchtab",
         "pinchtab-bridge",
@@ -454,7 +463,7 @@
         "activity",
         "metadata",
         "route",
-        "pr"
+        "bridge"
       ]
     },
     "infra/browser-instance-basic.sh": {

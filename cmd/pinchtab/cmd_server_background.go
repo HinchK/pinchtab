@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -129,6 +130,78 @@ func serverLogFilePath(stateDir string) string {
 	return filepath.Join(stateDir, "server.log")
 }
 
+// backgroundChildFlag marks a server the CLI spawned detached. The spawn site and
+// the "is this server a background child" question have to spell it the same way, so
+// they share this rather than repeating the literal.
+const (
+	backgroundChildFlagName = "background-child"
+	backgroundChildFlag     = "--" + backgroundChildFlagName
+)
+
+// serverLogWhere answers the question an operator asks after a 5xx: which file is
+// this server writing to. The three launch paths land in three different places, and
+// a state dir usually holds a server.log from whichever one ran last — so the answer
+// has to name the LIVE destination and disown a file nothing is writing, rather than
+// let a stale path pass for a log.
+type serverLogWhere struct {
+	// Destination is the live log sink: a path, or a description when the logs go
+	// to a terminal rather than a file.
+	Destination string
+	// StalePath is a server.log that exists while something else is the live sink.
+	StalePath string
+}
+
+// resolveServerLogWhere is pure so the branch table is testable without a daemon, a
+// state dir or a running server; the caller does the I/O and hands in the facts.
+func resolveServerLogWhere(stateDir, daemonLogPath string, daemonInstalled, backgroundChild, running, serverLogExists bool) serverLogWhere {
+	backgroundLog := serverLogFilePath(stateDir)
+	where := serverLogWhere{}
+
+	switch {
+	case daemonInstalled:
+		where.Destination = daemonLogPath
+	case running && backgroundChild:
+		where.Destination = backgroundLog
+	case running:
+		where.Destination = "stdout/stderr of the terminal running `pinchtab server`"
+	default:
+		where.Destination = "no server running"
+	}
+
+	if serverLogExists && where.Destination != backgroundLog {
+		where.StalePath = backgroundLog
+	}
+	return where
+}
+
+// serverLogWhereForConfig gathers the facts resolveServerLogWhere needs. A daemon
+// environment that cannot be resolved is reported as "no daemon" rather than as an
+// error: the banner is a hint surface, and a missing home directory must not stop it
+// from naming the other sinks.
+func serverLogWhereForConfig(cfg *config.RuntimeConfig, running bool) serverLogWhere {
+	stateDir := stateDirForConfig(cfg)
+	daemonInstalled, err := detachedDaemonOwnership()
+	if err != nil {
+		daemonInstalled = false
+	}
+	daemonLogPath := ""
+	if daemonInstalled {
+		if path, pathErr := daemon.StderrLogPath(); pathErr == nil {
+			daemonLogPath = path
+		} else {
+			daemonLogPath = "pinchtab daemon logs"
+		}
+	}
+
+	backgroundChild := false
+	if info, ok := readServerPID(stateDir); ok && processAlive(info.PID) {
+		backgroundChild = slices.Contains(info.Args, backgroundChildFlag)
+	}
+	_, statErr := os.Stat(serverLogFilePath(stateDir))
+
+	return resolveServerLogWhere(stateDir, daemonLogPath, daemonInstalled, backgroundChild, running, statErr == nil)
+}
+
 func prepareServerSpawn() (binary, marker string, err error) {
 	binary, err = os.Executable()
 	if err != nil {
@@ -230,7 +303,7 @@ func runServerBackground(cfg *config.RuntimeConfig, opts serverBackgroundOptions
 }
 
 func backgroundServerArgs(marker string, opts serverBackgroundOptions) []string {
-	args := []string{"server", "--background-child", marker}
+	args := []string{"server", backgroundChildFlag, marker}
 	if opts.Yolo {
 		args = append(args, "-y")
 	}

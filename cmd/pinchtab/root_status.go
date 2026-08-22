@@ -13,6 +13,8 @@ type agentStatus struct {
 	running        bool
 	guardsDown     bool
 	listenAddr     string
+	logDestination string
+	staleLogPath   string
 	sensitive      []string
 	allowedDomains []string
 	idpiEnabled    bool
@@ -23,11 +25,13 @@ type agentStatus struct {
 // projectAgentStatus derives the banner fields from the runtime config and the
 // (possibly nil) health snapshot. snap is non-nil only when state is
 // healthSnapshotRunning.
-func projectAgentStatus(cfg *config.RuntimeConfig, snap *healthSnapshot, state healthSnapshotState) agentStatus {
+func projectAgentStatus(cfg *config.RuntimeConfig, snap *healthSnapshot, state healthSnapshotState, logs serverLogWhere) agentStatus {
 	st := agentStatus{
 		state:          state,
 		running:        state == healthSnapshotRunning,
 		listenAddr:     cfg.ListenAddr(),
+		logDestination: logs.Destination,
+		staleLogPath:   logs.StalePath,
 		allowedDomains: cfg.AllowedDomains,
 		idpiEnabled:    cfg.IDPI.Enabled,
 	}

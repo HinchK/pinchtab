@@ -39,6 +39,7 @@ type ProblemDetails struct {
 // non-2xx JSON response goes through here or through ErrorCode, so no failure reaches the
 // log, the metrics or the activity record with the response body as its only witness.
 func JSONError(w http.ResponseWriter, status int, code, message string, payload any) {
+	logFailureCause(w, status, code, message)
 	RecordFailureReason(w, code, SanitizeErrorMessage(message))
 	JSON(w, status, payload)
 }
@@ -63,6 +64,7 @@ func Error(w http.ResponseWriter, code int, err error) {
 }
 
 func ErrorCode(w http.ResponseWriter, status int, code, message string, retryable bool, details map[string]any) {
+	logFailureCause(w, status, code, message)
 	sanitized := SanitizeErrorMessage(message)
 	RecordFailureReason(w, code, sanitized)
 	payload := map[string]any{
@@ -135,6 +137,7 @@ func Problem(w http.ResponseWriter, status int, code, detail string, retryable b
 		title = "Error"
 	}
 
+	logFailureCause(w, status, code, detail)
 	sanitized := SanitizeErrorMessage(detail)
 	RecordFailureReason(w, code, sanitized)
 	payload := ProblemDetails{
@@ -210,6 +213,35 @@ const (
 	FailureCodeHeader    = "X-Pinchtab-Failure-Code"
 	FailureMessageHeader = "X-Pinchtab-Failure-Message"
 )
+
+// RequestIDHeader is the id the request-id middleware stamps on every response and
+// the activity recorder copies into its event, so it is the join key between an
+// access-log line and the cause logged for it.
+const RequestIDHeader = "X-Request-Id"
+
+// logFailureCause writes the UNREDACTED reason a failure was returned. The message
+// that crosses the HTTP boundary has its absolute paths rewritten to [path], which
+// removes the one fact that identifies a fault like a malformed executable — so the
+// producer's own copy is logged here, before sanitizing, keyed by the requestId the
+// activity event already carries.
+//
+// 5xx logs at error: the server is at fault and an operator has to be able to find it
+// without raising a level. 4xx logs at debug — it is the caller's input, and the
+// volume follows client behaviour rather than anything the server controls.
+func logFailureCause(w http.ResponseWriter, status int, code, message string) {
+	if status < 400 || message == "" {
+		return
+	}
+	level := slog.LevelDebug
+	if status >= 500 {
+		level = slog.LevelError
+	}
+	slog.Log(context.Background(), level, "request failed",
+		"requestId", w.Header().Get(RequestIDHeader),
+		"status", status,
+		"code", code,
+		"cause", sanitize.CleanForLog(message, maxErrorMessageBytes))
+}
 
 // RecordFailureReason gives w the code and the SANITIZED message that were just written.
 // It stamps the hop headers so the reason survives a proxy boundary, and walks the
