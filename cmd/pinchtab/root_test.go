@@ -78,7 +78,7 @@ func TestPrintAgentHintsDoesNotTreatAuthFailureAsRunning(t *testing.T) {
 	cfg.Token = "wrong-token"
 
 	output := captureStdout(t, func() {
-		printAgentHintsWithHealth(cfg)
+		printAgentHints(cfg)
 	})
 	if !strings.Contains(output, "protected listener") {
 		t.Fatalf("expected protected listener status, got\n%s", output)
@@ -88,7 +88,7 @@ func TestPrintAgentHintsDoesNotTreatAuthFailureAsRunning(t *testing.T) {
 	}
 }
 
-func TestPrintAgentHintsDoesNotProbeHealth(t *testing.T) {
+func TestPrintAgentHintsReportsALiveListenerAsRunning(t *testing.T) {
 	var probed bool
 	srv := newLocalhostHealthServerWithHandler(t, func(w http.ResponseWriter, r *http.Request) {
 		probed = true
@@ -107,11 +107,73 @@ func TestPrintAgentHintsDoesNotProbeHealth(t *testing.T) {
 	output := captureStdout(t, func() {
 		printAgentHints(cfg)
 	})
-	if probed {
-		t.Fatal("bare-help path probed localhost; it must not contact the server")
+	if !probed {
+		t.Fatal("bare banner did not probe localhost, so it can only be guessing the server state")
 	}
+	if strings.Contains(output, string(healthSnapshotStopped)) {
+		t.Fatalf("bare banner reported %q while a listener was answering on the configured port\n%s", healthSnapshotStopped, output)
+	}
+	if !strings.Contains(output, string(healthSnapshotRunning)) {
+		t.Fatalf("expected %q status, got\n%s", healthSnapshotRunning, output)
+	}
+}
+
+func TestPrintAgentHintsNeverOffersToStartAListeningServer(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"running", http.StatusOK, `{"status":"ok","mode":"dashboard","version":"dev"}`},
+		{"protected listener", http.StatusUnauthorized, `{"code":"missing_token","message":"unauthorized"}`},
+		{"unhealthy", http.StatusInternalServerError, `{"status":"error"}`},
+		{"foreign listener", http.StatusOK, `not json`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newLocalhostHealthServer(t, tc.status, tc.body)
+			defer srv.Close()
+
+			_, port, err := net.SplitHostPort(srv.Listener.Addr().String())
+			if err != nil {
+				t.Fatalf("SplitHostPort() error = %v", err)
+			}
+			cfg := testRuntimeConfig()
+			cfg.Port = port
+
+			output := captureStdout(t, func() {
+				printAgentHints(cfg)
+			})
+			if strings.Contains(output, "# start the server") {
+				t.Fatalf("banner told the user to start a server that is already listening\n%s", output)
+			}
+		})
+	}
+}
+
+func TestPrintAgentHintsReportsAStoppedServerWhenNothingListens(t *testing.T) {
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort() error = %v", err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	cfg := testRuntimeConfig()
+	cfg.Port = port
+
+	output := captureStdout(t, func() {
+		printAgentHints(cfg)
+	})
 	if !strings.Contains(output, string(healthSnapshotStopped)) {
-		t.Fatalf("expected %q status without probing, got\n%s", healthSnapshotStopped, output)
+		t.Fatalf("expected %q status with nothing listening, got\n%s", healthSnapshotStopped, output)
+	}
+	if !strings.Contains(output, "# start the server") {
+		t.Fatalf("a stopped server should still be offered a start hint\n%s", output)
 	}
 }
 

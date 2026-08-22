@@ -10,19 +10,11 @@ import (
 )
 
 // printAgentHints renders the bare-landing banner for `pinchtab` with no
-// arguments. It intentionally does NOT probe localhost: running the bare
-// command just to read help/next-step output must not block on a stopped or
-// firewalled local server. The banner reflects the on-disk config as the
-// "stopped" state; use printAgentHintsWithHealth when live server status is
-// required.
+// arguments. The probe is bounded by fetchHealthSnapshot's timeout: a live
+// listener answers in single-digit milliseconds and a stopped one refuses the
+// loopback connect immediately, so only a firewalled port pays the ceiling —
+// cheaper than the banner asserting a server state it never checked.
 func printAgentHints(cfg *config.RuntimeConfig) {
-	renderAgentHints(os.Stdout, projectAgentStatus(cfg, nil, healthSnapshotStopped))
-}
-
-// printAgentHintsWithHealth probes localhost and renders the banner with live
-// server status. Used by status/health-style paths that genuinely need the
-// probe.
-func printAgentHintsWithHealth(cfg *config.RuntimeConfig) {
 	snap, state := fetchHealthSnapshot(cfg.Port)
 	renderAgentHints(os.Stdout, projectAgentStatus(cfg, snap, state))
 }
