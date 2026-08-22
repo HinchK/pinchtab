@@ -122,7 +122,7 @@ func buildSuiteTimings(suite, stack, provider, timestamp string, results []suite
 func (r *Runner) writeSuiteTimings(def suiteDef, data suiteReportData, timestamp string) {
 	provider := r.args.Provider
 	if provider == "" {
-		provider = "chrome"
+		provider = defaultProvider
 	}
 	timings := buildSuiteTimings(def.Name, stackLabel(def.Compose), provider, timestamp, data.Results)
 

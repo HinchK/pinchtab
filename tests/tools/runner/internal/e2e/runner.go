@@ -738,7 +738,7 @@ func (r *Runner) suiteRunCommand(composeFile string, def suiteDef, scenarios []s
 func (r *Runner) suiteEnvironment(def suiteDef, scenarios []scenarioMeta) []string {
 	provider := r.args.Provider
 	if provider == "" {
-		provider = "chrome"
+		provider = defaultProvider
 	}
 	return []string{
 		"E2E_HELPER=" + def.Helper,

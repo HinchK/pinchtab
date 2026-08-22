@@ -22,6 +22,12 @@ type Args struct {
 	DryRun    bool
 }
 
+// defaultProvider is the browser a run uses when --browser is omitted. The
+// runner drives PINCHTAB_E2E_BROWSER from it and the timings artifact records
+// it as the run's condition, so all three must read the same value or a run
+// gets labelled with a browser it did not use.
+const defaultProvider = "chrome"
+
 var errHelp = errors.New("help requested")
 
 const usageText = `Usage:
@@ -211,7 +217,7 @@ func ParseArgs(argv []string) (Args, error) {
 		}
 	}
 	if args.Provider == "" {
-		args.Provider = "chrome"
+		args.Provider = defaultProvider
 	}
 	args.Providers = resolveProviderList(args.Provider)
 	if len(args.Providers) == 0 {
