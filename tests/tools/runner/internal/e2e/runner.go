@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -41,24 +42,25 @@ type overallReportData struct {
 }
 
 type suiteDef struct {
-	Name        string
-	Title       string
-	Compose     string
-	GroupDir    string
-	Helper      string
-	ScenarioDir string
-	Commands    []string
-	Ready       []string
-	Runner      string
-	RunSuite    string
-	Extended    bool
-	Smoke       bool
-	Summary     string
-	Report      string
-	Timings     string
-	LogPrefix   string
-	Output      string
-	LogServices []string
+	Name         string
+	Title        string
+	Compose      string
+	GroupDir     string
+	Helper       string
+	ScenarioDir  string
+	Commands     []string
+	Ready        []string
+	Runner       string
+	RunSuite     string
+	Extended     bool
+	Smoke        bool
+	Summary      string
+	Report       string
+	Timings      string
+	LogPrefix    string
+	Output       string
+	LogServices  []string
+	RestartAfter []string
 }
 
 type suitePlan struct {
@@ -145,35 +147,23 @@ func (r *Runner) run() int {
 
 	switch r.suite {
 	case "basic":
-		return r.runBasic()
+		return r.runStackLane(basicLane())
 	case "extended":
-		return r.runExtended()
+		return r.runStackLane(extendedLane())
 	case "smoke":
-		return r.runSmoke()
+		return r.runSmokeLane(smokeLane())
 	case "smoke-orchestrator":
 		return r.runSmokeFiltered("orchestrator")
 	case "smoke-security":
 		return r.runSmokeFiltered("security")
 	case "smoke-lifecycle":
 		return r.runSmokeFiltered("lifecycle")
-	case "api":
-		return r.runSingle(apiSuite())
-	case "cli":
-		return r.runSingle(cliSuite())
-	case "infra":
-		return r.runSingle(infraSuite())
-	case "plugin":
-		return r.runSingle(pluginSuite())
-	case "api-extended":
-		return r.runSingle(apiExtendedSuite())
-	case "cli-extended":
-		return r.runSingle(cliExtendedSuite())
-	case "infra-extended":
-		return r.runSingle(infraExtendedSuite())
-	default:
-		_, _ = fmt.Fprintf(r.stderr, "e2e: unknown suite %q\n", r.suite)
-		return 1
 	}
+	if def, ok := suiteDefByName(r.suite); ok {
+		return r.runSingle(def)
+	}
+	_, _ = fmt.Fprintf(r.stderr, "e2e: unknown suite %q\n", r.suite)
+	return 1
 }
 
 func (r *Runner) printPlanHeader() {
@@ -193,34 +183,49 @@ func (r *Runner) printPlanHeader() {
 	_, _ = fmt.Fprintln(r.stdout, "")
 }
 
-// stackPlanRun configures a shared-stack suite run for bringUpAndRunPlans.
-type stackPlanRun struct {
+type lane struct {
+	name  string
 	stack string
-	plans []suitePlan
-	// restartAfter returns the services to restart after the plan at index i of
-	// n (nil/empty = no restart), letting each caller encode its own timing.
-	restartAfter func(plan suitePlan, index, total int) []string
+	defs  []suiteDef
 }
 
-// bringUpAndRunPlans builds+starts the shared stack for the plans' services,
-// then runs each plan in order, restarting services per cfg.restartAfter
-// between plans and printing a blank line after each. It returns per-plan exit
-// codes keyed by def.Name (only non-zero codes are stored), whether any restart
-// returned non-zero, and a non-zero setupCode if bringup failed. It does NOT
-// tear down the stack — the caller owns teardown semantics.
-func (r *Runner) bringUpAndRunPlans(cfg stackPlanRun) (codes map[string]int, restartFailed bool, setupCode int) {
-	services := servicesForPlans(cfg.plans, []string{"pinchtab", "fixtures"})
-	if code := r.bringUpSharedStack(cfg.stack, services); code != 0 {
+func basicLane() lane {
+	return lane{
+		name:  "basic",
+		stack: singleCompose,
+		defs:  []suiteDef{apiSuite(), cliSuite(), infraSuite()},
+	}
+}
+
+func extendedLane() lane {
+	return lane{
+		name:  "extended",
+		stack: multiCompose,
+		defs:  []suiteDef{apiExtendedSuite(), cliExtendedSuite(), infraExtendedSuite(), pluginSuite()},
+	}
+}
+
+func smokeLane() lane {
+	return lane{
+		name:  "smoke",
+		stack: multiCompose,
+		defs:  []suiteDef{apiSmokeSuite(), cliSmokeSuite(), infraSmokeSuite(), pluginSmokeSuite()},
+	}
+}
+
+func (r *Runner) bringUpAndRunPlans(stack string, plans []suitePlan) (codes map[string]int, restartFailed bool, setupCode int) {
+	services := servicesForPlans(plans, []string{"pinchtab", "fixtures"})
+	if code := r.bringUpSharedStack(stack, services); code != 0 {
 		return nil, false, code
 	}
 
 	codes = map[string]int{}
-	for i, plan := range cfg.plans {
-		if code := r.runSinglePlanWithCompose(plan, cfg.stack); code != 0 {
+	for i, plan := range plans {
+		if code := r.runSinglePlanWithCompose(plan, stack); code != 0 {
 			codes[plan.def.Name] = code
 		}
-		if svcs := cfg.restartAfter(plan, i, len(cfg.plans)); len(svcs) > 0 {
-			if rc := r.restartSharedStack(cfg.stack, svcs); rc != 0 {
+		if svcs := plan.def.RestartAfter; len(svcs) > 0 && i < len(plans)-1 {
+			if rc := r.restartSharedStack(stack, svcs); rc != 0 {
 				restartFailed = true
 			}
 		}
@@ -229,159 +234,97 @@ func (r *Runner) bringUpAndRunPlans(cfg stackPlanRun) (codes map[string]int, res
 	return codes, restartFailed, 0
 }
 
-func (r *Runner) runBasic() int {
-	stack := singleCompose
-	exitCodes := map[string]int{"api": 0, "cli": 0, "infra": 0}
-	plans, code := r.planSuites([]suiteDef{apiSuite(), cliSuite(), infraSuite()})
-	if code != 0 {
-		return code
-	}
-
-	if len(plans) == 0 {
-		_, _ = fmt.Fprintf(r.stderr, "e2e: no basic suites matched filter %q\n", r.args.Filter)
-		return 1
-	}
-
-	codes, _, setupCode := r.bringUpAndRunPlans(stackPlanRun{
-		stack: stack,
-		plans: plans,
-		restartAfter: func(suitePlan, int, int) []string {
-			return nil
-		},
-	})
-	if setupCode != 0 {
-		_ = r.composeDown(stack)
-		return setupCode
-	}
-	defer r.composeDown(stack)
-
-	for name, code := range codes {
-		exitCodes[name] = code
-	}
-
-	if exitCodes["api"] != 0 || exitCodes["cli"] != 0 || exitCodes["infra"] != 0 {
-		_, _ = fmt.Fprintln(r.stderr, "e2e: basic suites failed")
-		_, _ = fmt.Fprintf(r.stderr, "e2e: exit codes: api=%d, cli=%d, infra=%d\n", exitCodes["api"], exitCodes["cli"], exitCodes["infra"])
-		return 1
-	}
-	if !r.args.DryRun {
-		_, _ = fmt.Fprintln(r.stdout, "E2E basic suites passed")
-	}
-	return 0
+func (r *Runner) reportNoSuitesMatched(l lane) int {
+	_, _ = fmt.Fprintf(r.stderr, "e2e: no %s suites matched filter %q\n", l.name, r.args.Filter)
+	return 1
 }
 
-func (r *Runner) runExtended() int {
-	stack := multiCompose
-	exitCodes := map[string]int{
-		"api-extended":   0,
-		"cli-extended":   0,
-		"infra-extended": 0,
-		"plugin":         0,
+func (r *Runner) reportLaneOutcome(l lane, codes map[string]int, otherFailure bool) int {
+	if len(codes) == 0 && !otherFailure {
+		if !r.args.DryRun {
+			_, _ = fmt.Fprintf(r.stdout, "E2E %s suites passed\n", l.name)
+		}
+		return 0
 	}
-	defs := []suiteDef{apiExtendedSuite(), cliExtendedSuite(), infraExtendedSuite(), pluginSuite()}
-	plans, code := r.planSuites(defs)
+	_, _ = fmt.Fprintf(r.stderr, "e2e: %s suites failed\n", l.name)
+	if len(codes) > 0 {
+		_, _ = fmt.Fprintf(r.stderr, "e2e: exit codes: %s\n", formatSuiteExitCodes(codes))
+	}
+	return 1
+}
+
+func formatSuiteExitCodes(codes map[string]int) string {
+	names := make([]string, 0, len(codes))
+	for name := range codes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	pairs := make([]string, 0, len(names))
+	for _, name := range names {
+		pairs = append(pairs, fmt.Sprintf("%s=%d", name, codes[name]))
+	}
+	return strings.Join(pairs, ", ")
+}
+
+func (r *Runner) runStackLane(l lane) int {
+	plans, code := r.planSuites(l.defs)
 	if code != 0 {
 		return code
 	}
 	if len(plans) == 0 {
-		_, _ = fmt.Fprintf(r.stderr, "e2e: no extended suites matched filter %q\n", r.args.Filter)
-		return 1
+		return r.reportNoSuitesMatched(l)
 	}
 
-	codes, _, setupCode := r.bringUpAndRunPlans(stackPlanRun{
-		stack: stack,
-		plans: plans,
-		restartAfter: func(plan suitePlan, _, _ int) []string {
-			if plan.def.Name == "cli-extended" || plan.def.Name == "infra-extended" {
-				return []string{"pinchtab"}
-			}
-			return nil
-		},
-	})
+	codes, restartFailed, setupCode := r.bringUpAndRunPlans(l.stack, plans)
 	if setupCode != 0 {
-		_ = r.composeDown(stack)
+		_ = r.composeDown(l.stack)
 		return setupCode
 	}
-	defer r.composeDown(stack)
+	defer r.composeDown(l.stack)
 
-	for name, code := range codes {
-		exitCodes[name] = code
-	}
-
-	if exitCodes["api-extended"] != 0 || exitCodes["cli-extended"] != 0 || exitCodes["infra-extended"] != 0 || exitCodes["plugin"] != 0 {
-		_, _ = fmt.Fprintln(r.stderr, "e2e: extended suites failed")
-		_, _ = fmt.Fprintf(r.stderr, "e2e: exit codes: api-extended=%d, cli-extended=%d, infra-extended=%d, plugin=%d\n",
-			exitCodes["api-extended"], exitCodes["cli-extended"], exitCodes["infra-extended"], exitCodes["plugin"])
-		return 1
-	}
-	if !r.args.DryRun {
-		_, _ = fmt.Fprintln(r.stdout, "E2E extended suites passed")
-	}
-	return 0
+	return r.reportLaneOutcome(l, codes, restartFailed)
 }
 
 func (r *Runner) runSmokeFiltered(filter string) int {
 	if r.args.Filter == "" {
 		r.args.Filter = filter
 	}
-	return r.runSmoke()
+	return r.runSmokeLane(smokeLane())
 }
 
-func (r *Runner) runSmoke() int {
-	stack := multiCompose
-	defs := []suiteDef{apiSmokeSuite(), cliSmokeSuite(), infraSmokeSuite(), pluginSmokeSuite()}
-	plans, code := r.planSuites(defs)
+func (r *Runner) runSmokeLane(l lane) int {
+	plans, code := r.planSuites(l.defs)
 	if code != 0 {
 		return code
 	}
 	dockerSteps := r.selectedDockerSmokeSteps()
 	if len(plans) == 0 && len(dockerSteps) == 0 {
-		_, _ = fmt.Fprintf(r.stderr, "e2e: no smoke suites matched filter %q\n", r.args.Filter)
-		return 1
+		return r.reportNoSuitesMatched(l)
 	}
 
-	failed := false
+	codes := map[string]int{}
+	otherFailure := false
 	if len(plans) > 0 {
-		codes, restartFailed, setupCode := r.bringUpAndRunPlans(stackPlanRun{
-			stack: stack,
-			plans: plans,
-			restartAfter: func(plan suitePlan, i, n int) []string {
-				if plan.def.Name == "cli-smoke" && i < n-1 {
-					return []string{"pinchtab"}
-				}
-				return nil
-			},
-		})
+		planCodes, restartFailed, setupCode := r.bringUpAndRunPlans(l.stack, plans)
 		if setupCode != 0 {
-			_ = r.composeDown(stack)
+			_ = r.composeDown(l.stack)
 			return setupCode
 		}
-		if len(codes) > 0 {
-			failed = true
-		}
-		if restartFailed {
-			failed = true
-		}
-		if code := r.composeDown(stack); code != 0 {
-			failed = true
+		codes = planCodes
+		otherFailure = restartFailed
+		if code := r.composeDown(l.stack); code != 0 {
+			otherFailure = true
 		}
 	}
 
 	if len(dockerSteps) > 0 {
 		if code := r.runDockerSmokeSteps(dockerSteps); code != 0 {
-			failed = true
+			codes[dockerSmokeSuite().Name] = code
 		}
 		_, _ = fmt.Fprintln(r.stdout, "")
 	}
 
-	if failed {
-		_, _ = fmt.Fprintln(r.stderr, "e2e: smoke suites failed")
-		return 1
-	}
-	if !r.args.DryRun {
-		_, _ = fmt.Fprintln(r.stdout, "E2E smoke suites passed")
-	}
-	return 0
+	return r.reportLaneOutcome(l, codes, otherFailure)
 }
 
 func (r *Runner) runDockerSmokeSteps(steps []dockerSmokeStep) int {
