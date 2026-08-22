@@ -39,37 +39,42 @@ func TestDetachedDaemonOwnershipTreatsUnsupportedOSAsNotInstalled(t *testing.T) 
 	}
 }
 
-func TestServerBackgroundOptionsAddressOverridden(t *testing.T) {
+func TestDetachedAddressChanged(t *testing.T) {
 	cases := []struct {
-		name string
-		opts serverBackgroundOptions
-		want bool
+		name       string
+		bind, port string
+		flagBind   string
+		flagPort   string
+		want       bool
 	}{
-		{"default", serverBackgroundOptions{}, false},
-		{"port", serverBackgroundOptions{Port: "9880"}, true},
-		{"bind", serverBackgroundOptions{Bind: "0.0.0.0"}, true},
-		{"blank", serverBackgroundOptions{Bind: "  ", Port: "  "}, false},
+		{"no flags", "127.0.0.1", "9867", "", "", false},
+		{"port equals default", "127.0.0.1", "9867", "", "9867", false},
+		{"bind equals default", "127.0.0.1", "9867", "127.0.0.1", "", false},
+		{"blank flags", "127.0.0.1", "9867", "  ", "  ", false},
+		{"port differs", "127.0.0.1", "9867", "", "5000", true},
+		{"bind differs", "127.0.0.1", "9867", "0.0.0.0", "", true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.opts.addressOverridden(); got != tc.want {
-				t.Fatalf("addressOverridden() = %v, want %v", got, tc.want)
+			cfg := &config.RuntimeConfig{Bind: tc.bind, Port: tc.port}
+			if got := detachedAddressChanged(cfg, tc.flagBind, tc.flagPort); got != tc.want {
+				t.Fatalf("detachedAddressChanged() = %v, want %v", got, tc.want)
 			}
 		})
 	}
 }
 
-func TestRequireDetachedServerOwnershipAllowsAddressOverride(t *testing.T) {
+func TestRequireDetachedServerOwnershipAllowsChangedAddress(t *testing.T) {
 	original := daemonInstallationStatus
 	defer func() { daemonInstallationStatus = original }()
 	daemonInstallationStatus = func() (bool, error) { return true, nil }
 
 	if err := requireDetachedServerOwnership("background start", true); err != nil {
-		t.Fatalf("an explicit address override must bypass the ownership gate, got %v", err)
+		t.Fatalf("a genuinely different address must bypass the ownership gate, got %v", err)
 	}
 	err := requireDetachedServerOwnership("background start", false)
 	if err == nil || !strings.Contains(err.Error(), "pinchtab daemon start") {
-		t.Fatalf("default address must still defer to the installed daemon, got %v", err)
+		t.Fatalf("the daemon-owned address must still defer to the installed daemon, got %v", err)
 	}
 }
 
@@ -98,7 +103,7 @@ func TestDetachedServerStartsRefuseInstalledOrUnknownServiceOwnership(t *testing
 	}{
 		{
 			name: "background installed", installed: true,
-			start: func() error { return runServerBackground(&config.RuntimeConfig{}, serverBackgroundOptions{}) },
+			start: func() error { return runServerBackground(&config.RuntimeConfig{}, serverBackgroundOptions{}, false) },
 			want:  "pinchtab daemon start",
 		},
 		{

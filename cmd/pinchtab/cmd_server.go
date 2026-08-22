@@ -32,7 +32,7 @@ var serverCmd = &cobra.Command{
 
 		bind, _ := cmd.Flags().GetString("bind")
 		port, _ := cmd.Flags().GetString("port")
-		applyServerAddressFlags(cfg, bind, port)
+		addressChanged := detachedAddressChanged(cfg, bind, port)
 
 		yolo, _ := cmd.Flags().GetBool("yolo")
 		if yolo {
@@ -79,7 +79,7 @@ var serverCmd = &cobra.Command{
 				Browser:    browserName,
 				Bind:       bind,
 				Port:       port,
-			}); err != nil {
+			}, addressChanged); err != nil {
 				fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, err.Error()))
 				os.Exit(1)
 			}
@@ -99,6 +99,12 @@ func applyServerAddressFlags(cfg *config.RuntimeConfig, bind, port string) {
 	if v := strings.TrimSpace(port); v != "" {
 		cfg.Port = v
 	}
+}
+
+func detachedAddressChanged(cfg *config.RuntimeConfig, bind, port string) bool {
+	daemonBind, daemonPort := cfg.Bind, cfg.Port
+	applyServerAddressFlags(cfg, bind, port)
+	return cfg.Bind != daemonBind || cfg.Port != daemonPort
 }
 
 // resolveLogLevel settles a run's threshold from the only inputs that carry it, in
