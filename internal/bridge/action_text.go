@@ -308,16 +308,7 @@ func (b *Bridge) dispatchSingleKeyEvent(ctx context.Context, req ActionRequest, 
 	if req.Key == "" {
 		return nil, fmt.Errorf("key required for %s", resultKey)
 	}
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		params := map[string]any{"type": eventType, "key": req.Key}
-		if def, ok := namedKeyDefs[req.Key]; ok {
-			params["code"] = def.code
-			params["windowsVirtualKeyCode"] = def.virtualKey
-			params["nativeVirtualKeyCode"] = def.virtualKey
-		}
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Input.dispatchKeyEvent", params, nil)
-	}))
-	if err != nil {
+	if err := dispatchNamedKeyEvent(ctx, req.Key, eventType); err != nil {
 		return nil, err
 	}
 	return map[string]any{resultKey: req.Key}, nil
