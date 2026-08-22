@@ -1,5 +1,12 @@
 {
   "scenarios": {
+    "api/keyboard-focus-basic.sh": {
+      "tags": [
+        "keyboard",
+        "kbfocus",
+        "pr"
+      ]
+    },
     "api/tab-budget-basic.sh": {
       "tags": [
         "tabs",
