@@ -215,6 +215,33 @@ git push origin v0.7.1
 - One tag = one release (all artifacts)
 - npm version must match Go binary tag
 
+## Breaking changes to note in the next release
+
+**BREAKING (MCP tool surface): 14 tools collapsed into 3.** An MCP client re-reads the tool
+list from the server on every session, so no client is stranded on the old names — but any
+hand-written skill or prompt that names one has to be updated:
+
+| Removed | Replacement |
+| --- | --- |
+| `pinchtab_wait(ms=…)` | `pinchtab_wait(for="ms", value=…)` |
+| `pinchtab_wait_for_selector(selector=…)` | `pinchtab_wait(for="selector", value=…)` |
+| `pinchtab_wait_for_text(text=…)` | `pinchtab_wait(for="text", value=…)` |
+| `pinchtab_wait_for_url(url=…)` | `pinchtab_wait(for="url", value=…)` |
+| `pinchtab_wait_for_load(load=…)` | `pinchtab_wait(for="load", value=…)` |
+| `pinchtab_wait_for_function(fn=…)` | `pinchtab_wait(for="function", value=…)` |
+| `pinchtab_press(key=…)` | `pinchtab_key(action="press", key=…)` |
+| `pinchtab_keydown(key=…)` | `pinchtab_key(action="down", key=…)` |
+| `pinchtab_keyup(key=…)` | `pinchtab_key(action="up", key=…)` |
+| `pinchtab_keyboard_type(text=…)` | `pinchtab_key(action="type", text=…)` |
+| `pinchtab_keyboard_inserttext(text=…)` | `pinchtab_key(action="insert", text=…)` |
+| `pinchtab_record_start(file=…)` | `pinchtab_record(action="start", file=…)` |
+| `pinchtab_record_stop(file=…)` | `pinchtab_record(action="stop", file=…)` |
+| `pinchtab_record_status()` | `pinchtab_record(action="status")` |
+
+Every parameter of the removed tools is carried over unchanged (`timeout` and `state` on
+selector waits, `fps`/`quality`/`scale`/`tabId` on recording, `nodeId` on key presses). The
+tool list an agent loads at session start drops from 47 tools to 36.
+
 ## See also
 
 - `.github/workflows/release.yml` — GitHub Actions workflow

@@ -12,6 +12,21 @@ import (
 	"github.com/pinchtab/pinchtab/internal/readiness"
 )
 
+func handleRecord(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	actions := map[string]func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error){
+		"start":  handleRecordStart(c),
+		"stop":   handleRecordStop(c),
+		"status": handleRecordStatus(c),
+	}
+	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		_, action, refusal := pickMode(r, "action", actions)
+		if refusal != nil {
+			return refusal, nil
+		}
+		return action(ctx, r)
+	}
+}
+
 func handleRecordStart(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		file, err := r.RequireString("file")
@@ -75,8 +90,6 @@ func handleRecordStop(c *Client) func(context.Context, mcp.CallToolRequest) (*mc
 			return mcp.NewToolResultError(msg), nil
 		}
 
-		// Server encodes to a controlled recordings directory; we move the
-		// file to the caller's desired destination after encoding completes.
 		body, code, err := c.Post(ctx, "/record/stop", map[string]any{})
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil

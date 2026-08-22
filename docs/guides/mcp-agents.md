@@ -146,7 +146,7 @@ Tool calls:
     → ...input[ref=e3] placeholder="Search Wikipedia"...
   pinchtab_click({selector: "e3"})
   pinchtab_type({selector: "e3", text: "climate change"})
-  pinchtab_press({key: "Enter"})
+  pinchtab_key({action: "press", key: "Enter"})
   pinchtab_snapshot({format: "compact"})
   pinchtab_get_text({})
 ```

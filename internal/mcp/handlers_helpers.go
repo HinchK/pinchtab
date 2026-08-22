@@ -3,6 +3,7 @@ package mcp
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -53,6 +54,20 @@ func optBool(r mcp.CallToolRequest, key string) (bool, bool) {
 		}
 	}
 	return false, false
+}
+
+func pickMode[T any](r mcp.CallToolRequest, key string, table map[string]T) (string, T, *mcp.CallToolResult) {
+	name := optTrimmedString(r, key)
+	if entry, ok := table[name]; ok {
+		return name, entry, nil
+	}
+	names := make([]string, 0, len(table))
+	for candidate := range table {
+		names = append(names, candidate)
+	}
+	sort.Strings(names)
+	var zero T
+	return "", zero, mcp.NewToolResultError(fmt.Sprintf("'%s' must be one of %s, got %q", key, strings.Join(names, ", "), name))
 }
 
 func firstNonEmptyString(r mcp.CallToolRequest, keys ...string) string {

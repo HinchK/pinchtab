@@ -1,6 +1,6 @@
 # MCP Tool Reference
 
-PinchTab currently exposes 43 MCP tools. All tool names are prefixed with `pinchtab_` and are served over stdio JSON-RPC.
+PinchTab currently exposes 36 MCP tools. All tool names are prefixed with `pinchtab_` and are served over stdio JSON-RPC.
 
 For selector-based interaction tools, prefer `selector`. `ref` and `query` are still accepted as deprecated/alias fallbacks on the element-action tools (`query` is shorthand for `find:<text>`).
 
@@ -40,7 +40,6 @@ All element-action tools accept the unified `selector` and the legacy aliases `r
 | --- | --- | --- |
 | `pinchtab_click` | `selector`, `ref`, `query`, `tabId`, `x`, `y`, `nodeId`, `dialogAction`, `dialogText`, `waitNav`, `mode`, `snap` | Click element by selector or coordinate; `mode` accepts `dom` or `dispatch` as a broad low-level escape hatch for click delivery; `mode` and `humanize` are mutually exclusive; `dialogAction` handles a dialog opened by the click; `waitNav=true` waits for navigation; `snap=true` returns a snapshot |
 | `pinchtab_type` | `selector`, `ref`, `query`, `nodeId`, `text` required, `tabId` | Sends key events at the targeted input; target with `selector` or `nodeId` |
-| `pinchtab_press` | `key` required, `nodeId`, `tabId` | Press a key such as `Enter`; `nodeId` focuses that node first, otherwise the key goes to the focused element |
 | `pinchtab_hover` | `selector`, `ref`, `query`, `tabId`, `x`, `y`, `nodeId` | Hover an element or coordinate |
 | `pinchtab_focus` | `selector`, `ref`, `query`, `tabId`, `nodeId` | Focus element |
 | `pinchtab_select` | `selector`, `ref`, `query`, `nodeId`, `value` required, `tabId`, `snap` | Select `<option>` by value or visible text; target with `selector` or `nodeId` |
@@ -52,10 +51,7 @@ All element-action tools accept the unified `selector` and the legacy aliases `r
 
 | Tool | Key Parameters | Notes |
 | --- | --- | --- |
-| `pinchtab_keyboard_type` | `text` required, `tabId` | Types at the currently focused element |
-| `pinchtab_keyboard_inserttext` | `text` required, `tabId` | Paste-like insert without key events |
-| `pinchtab_keydown` | `key` required, `tabId` | Hold a key down |
-| `pinchtab_keyup` | `key` required, `tabId` | Release a key |
+| `pinchtab_key` | `action` required, `key`, `text`, `nodeId`, `tabId` | One keyboard tool. `action=press` presses a key such as `Enter` (`nodeId` focuses that node first, otherwise the key goes to the focused element); `down` holds a key; `up` releases it; `type` types at the focused element with key events; `insert` is a paste-like insert without key events. `press`/`down`/`up` need `key`, `type`/`insert` need `text`. `nodeId` is honoured by `press` only |
 
 ## Content
 
@@ -86,12 +82,7 @@ All element-action tools accept the unified `selector` and the legacy aliases `r
 
 | Tool | Key Parameters | Notes |
 | --- | --- | --- |
-| `pinchtab_wait` | `ms` required | Fixed-duration wait, capped at 30000 ms |
-| `pinchtab_wait_for_selector` | `selector` required, `timeout`, `state`, `tabId` | `state` is `visible` (default) or `hidden` |
-| `pinchtab_wait_for_text` | `text` required, `timeout`, `tabId` | Wait for body text |
-| `pinchtab_wait_for_url` | `url` required, `timeout`, `tabId` | URL glob match |
-| `pinchtab_wait_for_load` | `load` required, `timeout`, `tabId` | `load` is `ready-state` (`readyState=complete`), `content-loaded` (`readyState` in `{interactive, complete}`), or `network-idle` (0 in-flight requests for 500 ms) |
-| `pinchtab_wait_for_function` | `fn` required, `timeout`, `tabId` | JS expression must become truthy |
+| `pinchtab_wait` | `for` required, `value` required, `timeout`, `state`, `tabId` | One wait tool: `for` names the condition and `value` carries it. `for=ms` is a fixed-duration wait capped at 30000 ms; `selector` waits for an element (`state` is `visible` (default) or `hidden`); `text` waits for body text; `url` is a URL glob match; `load` is `ready-state` (`readyState=complete`), `content-loaded` (`readyState` in `{interactive, complete}`), or `network-idle` (0 in-flight requests for 500 ms); `function` waits for a JS expression to become truthy |
 
 ## Network
 
@@ -107,9 +98,7 @@ All element-action tools accept the unified `selector` and the legacy aliases `r
 
 | Tool | Key Parameters | Notes |
 | --- | --- | --- |
-| `pinchtab_record_start` | `file` required, `fps`, `quality`, `scale`, `tabId` | Start recording; format inferred from extension (`.gif`, `.webm`, `.mp4`). Requires `security.allowScreencast`. GIF works without ffmpeg |
-| `pinchtab_record_stop` | `file` required | Stop recording, encode, and save to `file`. Encoding may take a while for long recordings |
-| `pinchtab_record_status` | — | Returns active recording status (format, fps, duration, frame count) |
+| `pinchtab_record` | `action` required, `file`, `fps`, `quality`, `scale`, `tabId` | One recording tool. `action=start` starts recording (format inferred from the `file` extension — `.gif`, `.webm`, `.mp4`; requires `security.allowScreencast`; GIF works without ffmpeg); `stop` encodes and saves to `file`, which may take a while for long recordings; `status` returns the active recording status (format, fps, duration, frame count) |
 
 ## Dialog
 

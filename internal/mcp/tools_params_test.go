@@ -237,7 +237,7 @@ func TestSharedParamsHaveOneWordingPerConcept(t *testing.T) {
 		want  int
 	}{
 		{"ref", 1},
-		{"selector", 8},
+		{"selector", 7},
 		{"browser", 2},
 		{"tabId", 3},
 	} {

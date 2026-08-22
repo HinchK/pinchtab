@@ -169,10 +169,10 @@ Use when the site needs real keystrokes (e.g., some autocomplete widgets).
 ### Press key
 
 ```
-pinchtab_press(key="Enter")
+pinchtab_key(action="press", key="Enter")
 ```
 
-Common keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, `ArrowUp`, `Backspace`.
+Common keys: `Enter`, `Tab`, `Escape`, `ArrowDown`, `ArrowUp`, `Backspace`. The same tool holds and releases a key with `action="down"` / `action="up"`, and types at the focused element with `action="type"` (key events) or `action="insert"` (paste-like).
 
 ### Select dropdown
 
@@ -293,11 +293,12 @@ pinchtab_close_tab(tabId="...")  # Close a specific tab
 Use for async content (spinners, XHR, lazy-loaded elements):
 
 ```
-pinchtab_wait(ms=2000)                          # Fixed delay (last resort)
-pinchtab_wait_for_selector(selector="e5")       # Wait for element
-pinchtab_wait_for_text(text="Success")          # Wait for text
-pinchtab_wait_for_url(url="**/dashboard")       # Wait for URL change
-pinchtab_wait_for_load(load="network-idle")     # Wait for page load
+pinchtab_wait(for="ms", value="2000")               # Fixed delay (last resort)
+pinchtab_wait(for="selector", value="e5")           # Wait for element
+pinchtab_wait(for="text", value="Success")          # Wait for text
+pinchtab_wait(for="url", value="**/dashboard")      # Wait for URL change
+pinchtab_wait(for="load", value="network-idle")     # Wait for page load
+pinchtab_wait(for="function", value="window.ready") # Wait for a truthy expression
 ```
 
 Timeout: 10s default, 30s max. Prefer selector/text waits over fixed delays.
@@ -359,5 +360,5 @@ For these, use the pinchtab CLI or HTTP API directly.
 | `ref not found` | Stale element ref | Re-call `pinchtab_snapshot()` |
 | `evaluate not allowed` | `security.allowEvaluate` is false | Use `pinchtab_find` instead |
 | `invalid URL` | Missing scheme | Include `http://` or `https://` |
-| Element not found | Page not loaded | Use `pinchtab_wait_for_selector` |
+| Element not found | Page not loaded | Use `pinchtab_wait(for="selector", value=…)` |
 | Action seems ignored | Page changed mid-action | Re-snapshot, use fresh refs |

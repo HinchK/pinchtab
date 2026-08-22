@@ -223,13 +223,55 @@ func TestHandlePress(t *testing.T) {
 	srv := mockPinchTab()
 	defer srv.Close()
 
-	r := callTool(t, "pinchtab_press", map[string]any{
-		"key": "Enter",
+	r := callTool(t, "pinchtab_key", map[string]any{
+		"action": "press",
+		"key":    "Enter",
 	}, srv)
 
 	text := resultText(t, r)
 	if !strings.Contains(text, "Enter") {
 		t.Errorf("expected Enter in response, got %s", text)
+	}
+}
+
+// The five keyboard actions are one tool over one endpoint, so each has to reach
+// /action under the bridge kind that implements it, carrying its own argument —
+// a wrong kind is dispatched as a different keystroke, silently.
+func TestEveryKeyboardActionReachesItsBridgeKind(t *testing.T) {
+	for _, tc := range []struct{ action, arg, value, kind string }{
+		{"press", "key", "Enter", "press"},
+		{"down", "key", "Control", "keydown"},
+		{"up", "key", "Control", "keyup"},
+		{"type", "text", "hello", "keyboard-type"},
+		{"insert", "text", "hello", "keyboard-inserttext"},
+	} {
+		t.Run(tc.action, func(t *testing.T) {
+			srv, _ := upstreamRecorder(t)
+
+			r := callTool(t, "pinchtab_key", map[string]any{"action": tc.action, tc.arg: tc.value}, srv)
+			if r.IsError {
+				t.Fatalf("action=%q was rejected: %s", tc.action, resultText(t, r))
+			}
+			body, _ := resultJSON(t, r)["body"].(map[string]any)
+			if got, _ := body["kind"].(string); got != tc.kind {
+				t.Errorf("action=%q sent kind=%q, want %q", tc.action, got, tc.kind)
+			}
+			if got, _ := body[tc.arg].(string); got != tc.value {
+				t.Errorf("action=%q sent %s=%q, want %q", tc.action, tc.arg, got, tc.value)
+			}
+		})
+	}
+}
+
+func TestKeyboardRefusesAnUnknownAction(t *testing.T) {
+	srv, paths := upstreamRecorder(t)
+
+	r := callTool(t, "pinchtab_key", map[string]any{"action": "tap", "key": "Enter"}, srv)
+	if !r.IsError {
+		t.Fatalf("action=\"tap\" was accepted; upstream saw %v", *paths)
+	}
+	if text := resultText(t, r); !strings.Contains(text, "press") || !strings.Contains(text, "insert") {
+		t.Errorf("refusal %q does not list the accepted actions, so the caller cannot correct it", text)
 	}
 }
 
@@ -514,7 +556,7 @@ var actionToolTargets = []struct {
 	{tool: "pinchtab_select", requiredArgs: map[string]any{"value": "v"}, selectorOptionalWithNodeID: true},
 	{tool: "pinchtab_scroll_into_view", selectorOptionalWithNodeID: true},
 	{tool: "pinchtab_scroll"},
-	{tool: "pinchtab_press", requiredArgs: map[string]any{"key": "Enter"}},
+	{tool: "pinchtab_key", requiredArgs: map[string]any{"action": "press", "key": "Enter"}},
 }
 
 func actionArgs(tool string, extra map[string]any) map[string]any {
