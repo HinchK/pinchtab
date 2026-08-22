@@ -33,45 +33,20 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     outputs:
-      api_extended_touched: ${{ steps.changes.outputs.api_extended_touched }}
-      cli_extended_touched: ${{ steps.changes.outputs.cli_extended_touched }}
-      infra_extended_touched: ${{ steps.changes.outputs.infra_extended_touched }}
-      smoke_touched: ${{ steps.changes.outputs.smoke_touched }}
+      run_api_extended: ${{ steps.changes.outputs.run_api_extended }}
+      run_cli_extended: ${{ steps.changes.outputs.run_cli_extended }}
+      run_infra_extended: ${{ steps.changes.outputs.run_infra_extended }}
+      run_smoke: ${{ steps.changes.outputs.run_smoke }}
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-      - name: Detect touched E2E files
+      - name: Decide which suites this diff needs
         id: changes
+        shell: bash
         run: |
-          CHANGED=$(git diff --name-only origin/main...HEAD)
-
-          # Touching any non-basic, non-smoke scenario should trigger the matching
-          # extended suite in its native environment rather than trying to
-          # inject that file into the basic-stack PR jobs.
-          if echo "$CHANGED" | grep -E '^tests/e2e/scenarios/api/[^/]+\.sh$' | grep -Ev '(^|/)[^/]+-(basic|smoke)\.sh$' >/dev/null; then
-            echo "api_extended_touched=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "api_extended_touched=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if echo "$CHANGED" | grep -E '^tests/e2e/scenarios/cli/[^/]+\.sh$' | grep -Ev '(^|/)[^/]+-(basic|smoke)\.sh$' >/dev/null; then
-            echo "cli_extended_touched=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "cli_extended_touched=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if echo "$CHANGED" | grep -E '^tests/e2e/scenarios/infra/[^/]+\.sh$' | grep -Ev '(^|/)[^/]+-(basic|smoke)\.sh$' >/dev/null; then
-            echo "infra_extended_touched=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "infra_extended_touched=false" >> "$GITHUB_OUTPUT"
-          fi
-
-          if echo "$CHANGED" | grep -E '^(tests/e2e/scenarios/[^/]+/[^/]+-smoke\.sh|scripts/docker-.*smoke\.sh|tests/tools/docker/chrome-cft-smoke\.Dockerfile|Dockerfile|\.dockerignore|\.github/workflows/(ci-smoke|reusable-smoke)\.yml)$' >/dev/null; then
-            echo "smoke_touched=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "smoke_touched=false" >> "$GITHUB_OUTPUT"
-          fi
+          git diff --name-only origin/main...HEAD |
+            ./scripts/ci/detect-e2e-suites.sh >> "$GITHUB_OUTPUT"
 
   api:
     needs: [detect-changes]
@@ -88,7 +63,7 @@ jobs:
 
   api-extended-pr:
     needs: [detect-changes]
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.api_extended_touched == 'true'
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.run_api_extended == 'true'
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       ref: ${{ github.sha }}
@@ -111,7 +86,7 @@ jobs:
 
   cli-extended-pr:
     needs: [detect-changes]
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.cli_extended_touched == 'true'
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.run_cli_extended == 'true'
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       ref: ${{ github.sha }}
@@ -134,7 +109,7 @@ jobs:
 
   infra-extended-pr:
     needs: [detect-changes]
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.infra_extended_touched == 'true'
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.run_infra_extended == 'true'
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       ref: ${{ github.sha }}
@@ -144,7 +119,7 @@ jobs:
 
   smoke-pr:
     needs: [detect-changes]
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.smoke_touched == 'true'
+    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.run_smoke == 'true'
     uses: ./.github/workflows/reusable-smoke.yml
     with:
       ref: ${{ github.sha }}

@@ -64,6 +64,22 @@ Add new scenarios under `tests/e2e/scenarios/<group>/`, choose the tier by filen
 
 CI uses `.github/workflows/reusable-e2e.yml` and `.github/workflows/reusable-smoke.yml`, both calling the Go runner directly. The workflow layer decides when to run; the Go layer decides what to run and how to report it.
 
+### What a pull request runs
+
+Every pull request runs the three basic suites. Which extended and smoke suites join them comes from `scripts/ci/e2e-escalation.map`, evaluated against the diff by `scripts/ci/detect-e2e-suites.sh` in the `detect-changes` job of `.github/workflows/ci-e2e.yml`. One rule per line maps a path expression to the suites that cover that path; the first rule matching a changed path decides, and a path matching no rule adds nothing.
+
+The map reads product paths as well as test paths:
+
+| Changed path | Suites added |
+| --- | --- |
+| `tests/e2e/scenarios/<group>/*-basic.sh` | none — the basic suites already run |
+| `tests/e2e/scenarios/<group>/*-smoke.sh` | `smoke` |
+| any other `*.sh` under `tests/e2e/scenarios/api/`, `cli/` or `infra/` | that group's extended suite |
+| `Dockerfile`, `.dockerignore`, `scripts/docker-*smoke.sh`, the smoke Dockerfile and workflows | `smoke` |
+| audit implementation — `internal/audit/`, `pkg/pinchtabaudit/`, the audit handlers, `cmd/pinchtab/cmd_audit*` | `api-extended`, `cli-extended` |
+
+Covering a new product area is one line in the map. `go test ./internal/devtools/` drives the script over synthetic file lists, so a mapping is verified by running it rather than by reading the YAML. Extended coverage the map does not claim still runs on `workflow_dispatch` only.
+
 ### Basic Suites
 
 ```bash

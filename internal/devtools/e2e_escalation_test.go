@@ -1,0 +1,221 @@
+package devtools
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"testing"
+)
+
+const (
+	escalationScript   = "scripts/ci/detect-e2e-suites.sh"
+	escalationMap      = "scripts/ci/e2e-escalation.map"
+	escalationWorkflow = ".github/workflows/ci-e2e.yml"
+)
+
+func TestEscalationFollowsProductPathsAndTestPaths(t *testing.T) {
+	root := repoRoot(t)
+
+	cases := []struct {
+		name    string
+		changed []string
+		want    []string
+	}{
+		{
+			name:    "audit implementation with no scenario file",
+			changed: []string{"internal/audit/run.go", "pkg/pinchtabaudit/client.go", "internal/handlers/audit.go", "cmd/pinchtab/cmd_audit.go"},
+			want:    []string{"run_api_extended", "run_cli_extended"},
+		},
+		{
+			name:    "audit implementation alongside a basic scenario",
+			changed: []string{"internal/audit/enrich.go", "tests/e2e/scenarios/api/audit-basic.sh"},
+			want:    []string{"run_api_extended", "run_cli_extended"},
+		},
+		{
+			name:    "api extended scenario churn",
+			changed: []string{"tests/e2e/scenarios/api/tabs-extended.sh"},
+			want:    []string{"run_api_extended"},
+		},
+		{
+			name:    "cli extended scenario churn",
+			changed: []string{"tests/e2e/scenarios/cli/audit-pdf-extended.sh"},
+			want:    []string{"run_cli_extended"},
+		},
+		{
+			name:    "infra extended scenario churn",
+			changed: []string{"tests/e2e/scenarios/infra/auth-extended.sh"},
+			want:    []string{"run_infra_extended"},
+		},
+		{
+			name:    "standalone scenario churn",
+			changed: []string{"tests/e2e/scenarios/api/network-retain-body.sh"},
+			want:    []string{"run_api_extended"},
+		},
+		{
+			name:    "smoke inputs",
+			changed: []string{"tests/e2e/scenarios/cli/tabs-smoke.sh", "Dockerfile"},
+			want:    []string{"run_smoke"},
+		},
+		{
+			name:    "basic scenario churn only",
+			changed: []string{"tests/e2e/scenarios/api/tabs-basic.sh", "tests/e2e/scenarios/infra/network-basic.sh"},
+			want:    nil,
+		},
+		{
+			name:    "product paths no extended suite covers",
+			changed: []string{"internal/dashboard/dashboard.go", "README.md", "internal/scroll/scroll.go"},
+			want:    nil,
+		},
+		{
+			name:    "empty diff",
+			changed: nil,
+			want:    nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := detectSuites(t, root, tc.changed)
+			if strings.Join(got, " ") != strings.Join(tc.want, " ") {
+				t.Errorf("%s escalated %v, want %v", strings.Join(tc.changed, ", "), got, tc.want)
+			}
+		})
+	}
+}
+
+func TestEveryEscalationRuleMatchesATrackedPath(t *testing.T) {
+	root := repoRoot(t)
+	tracked := trackedPaths(t, root)
+
+	for _, rule := range escalationRules(t, root) {
+		pattern, err := regexp.Compile(rule)
+		if err != nil {
+			t.Errorf("rule %q is not a valid expression: %v", rule, err)
+			continue
+		}
+		matched := false
+		for _, path := range tracked {
+			if pattern.MatchString(path) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			t.Errorf("rule %q matches no tracked file, so the coverage it claims is not wired to anything; re-point it at the path that moved rather than leaving it", rule)
+		}
+	}
+}
+
+func TestTheWorkflowConsumesExactlyTheEmittedOutputs(t *testing.T) {
+	root := repoRoot(t)
+	body := readRepoFile(t, root, escalationWorkflow)
+
+	if !strings.Contains(body, escalationScript) {
+		t.Fatalf("%s does not invoke %s, so the mapping decides nothing", escalationWorkflow, escalationScript)
+	}
+
+	emitted := map[string]bool{}
+	for _, name := range detectSuiteNames(t, root) {
+		emitted[name] = true
+		if !strings.Contains(body, "steps.changes.outputs."+name) {
+			t.Errorf("%s emits %s but %s never exports it, so the suite it gates can never run", escalationScript, name, escalationWorkflow)
+		}
+	}
+
+	consumed := regexp.MustCompile(`detect-changes\.outputs\.([a-z_]+)`)
+	for _, match := range consumed.FindAllStringSubmatch(body, -1) {
+		if !emitted[match[1]] {
+			t.Errorf("%s gates a job on %s, which %s never emits, so the job never runs", escalationWorkflow, match[1], escalationScript)
+		}
+	}
+}
+
+func detectSuites(t *testing.T, root string, changed []string) []string {
+	t.Helper()
+	var escalated []string
+	for _, line := range runDetect(t, root, changed) {
+		name, value, ok := strings.Cut(line, "=")
+		if !ok {
+			t.Fatalf("%s emitted %q, which is not a name=value pair", escalationScript, line)
+		}
+		if value == "true" {
+			escalated = append(escalated, name)
+		}
+	}
+	sort.Strings(escalated)
+	return escalated
+}
+
+func detectSuiteNames(t *testing.T, root string) []string {
+	t.Helper()
+	var names []string
+	for _, line := range runDetect(t, root, nil) {
+		name, _, _ := strings.Cut(line, "=")
+		names = append(names, name)
+	}
+	if len(names) == 0 {
+		t.Fatalf("%s emitted no output, so every guard over it is vacuous", escalationScript)
+	}
+	return names
+}
+
+func runDetect(t *testing.T, root string, changed []string) []string {
+	t.Helper()
+	if readRepoFile(t, root, escalationScript) == "" || readRepoFile(t, root, escalationMap) == "" {
+		t.Fatalf("%s and %s must both hold content, and reading them here is also what keeps a cached green from surviving an edit to either", escalationScript, escalationMap)
+	}
+	cmd := exec.Command("bash", filepath.Join(root, escalationScript))
+	cmd.Stdin = strings.NewReader(strings.Join(changed, "\n"))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("%s failed on %v: %v\n%s", escalationScript, changed, err, stderr.String())
+	}
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(stdout.String()), "\n") {
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func escalationRules(t *testing.T, root string) []string {
+	t.Helper()
+	var rules []string
+	for _, line := range strings.Split(readRepoFile(t, root, escalationMap), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		rules = append(rules, strings.Fields(line)[0])
+	}
+	if len(rules) == 0 {
+		t.Fatalf("%s holds no rule", escalationMap)
+	}
+	return rules
+}
+
+func trackedPaths(t *testing.T, root string) []string {
+	t.Helper()
+	cmd := exec.Command("git", "ls-files")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("cannot list tracked files, so staleness is unprovable: %v", err)
+	}
+	return strings.Split(strings.TrimSpace(string(out)), "\n")
+}
+
+func readRepoFile(t *testing.T, root, rel string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", rel, err)
+	}
+	return string(body)
+}
