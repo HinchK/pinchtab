@@ -7,10 +7,7 @@ source "${GROUP_DIR}/../../helpers/cli.sh"
 # ─────────────────────────────────────────────────────────────────
 start_test "pinchtab transport failure exits non-zero"
 
-ORIGINAL_E2E_SERVER="$E2E_SERVER"
-E2E_SERVER="http://127.0.0.1:1"
-pt health
-E2E_SERVER="$ORIGINAL_E2E_SERVER"
+with_server "http://127.0.0.1:1" pt health
 assert_exit_code 1 "connection failure is reported to automation"
 
 end_test

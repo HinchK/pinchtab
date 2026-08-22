@@ -138,6 +138,19 @@ assert_file_exists() {
   fi
 }
 
+config_setup() {
+  TMPDIR=$(mktemp -d)
+  CFG="$TMPDIR/config.json"
+}
+
+config_cleanup() {
+  rm -rf "$TMPDIR"
+}
+
+config_init() {
+  PINCHTAB_CONFIG="$CFG" HOME="$TMPDIR" pt_ok config init
+}
+
 config_version_of() {
   local path="$1"
   safe_jq -r '.configVersion // "none"' "$path"

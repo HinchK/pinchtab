@@ -34,31 +34,19 @@ if ! requires_providers; then
 fi
 
 ghostchrome_get() {
-  local old="$E2E_SERVER"
-  E2E_SERVER="$E2E_SERVER_GHOSTCHROME"
-  pt_get "$1"
-  E2E_SERVER="$old"
+  with_server "$E2E_SERVER_GHOSTCHROME" pt_get "$1"
 }
 
 ghostchrome_post() {
-  local old="$E2E_SERVER"
-  E2E_SERVER="$E2E_SERVER_GHOSTCHROME"
-  pt_post "$1" "$2"
-  E2E_SERVER="$old"
+  with_server "$E2E_SERVER_GHOSTCHROME" pt_post "$1" "$2"
 }
 
 secure_get() {
-  local old="$E2E_SERVER"
-  E2E_SERVER="$E2E_SECURE_SERVER"
-  pt_get "$1"
-  E2E_SERVER="$old"
+  with_server "$E2E_SECURE_SERVER" pt_get "$1"
 }
 
 secure_post() {
-  local old="$E2E_SERVER"
-  E2E_SERVER="$E2E_SECURE_SERVER"
-  pt_post "$1" "$2"
-  E2E_SERVER="$old"
+  with_server "$E2E_SECURE_SERVER" pt_post "$1" "$2"
 }
 
 # ═══════════════════════════════════════════════════════════════════

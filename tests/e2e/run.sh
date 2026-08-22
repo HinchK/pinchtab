@@ -152,9 +152,6 @@ echo "Waiting for configured targets..."
 wait_for_ready_targets
 
 echo ""
-# When E2E_TEST_FILTER is set, source only scenario preamble + matching
-# start_test...end_test blocks. Lets a single test run end-to-end with the
-# scenario's setup intact, no per-helper guards needed.
 TEST_FILTER="${E2E_TEST_FILTER:-}"
 
 source_filtered_scenario() {
@@ -208,7 +205,30 @@ source_filtered_scenario() {
   return 0
 }
 
-# Run scenarios
+# Each scenario file runs in its own subshell: file-scope variables, functions
+# and traps die with the file, so no scenario can be reached by state another
+# one left behind. The subshell cannot write TESTS_FAILED back, so it reports
+# failure through its exit status instead.
+run_scenario_file() {
+  local script_path="$1" script_name="$2"
+  (
+    CURRENT_SCENARIO_FILE="${script_name%.sh}"
+    TESTS_FAILED=0
+    trap run_scenario_cleanup EXIT
+    if [ -n "${TEST_FILTER}" ]; then
+      if ! source_filtered_scenario "${script_path}" "${TEST_FILTER}"; then
+        echo -e "${MUTED}  no matching test in ${script_name}${NC}"
+      fi
+    else
+      # shellcheck disable=SC1090
+      source "${script_path}"
+    fi
+    [ "${TESTS_FAILED}" -eq 0 ]
+  )
+}
+
+SUITE_FAILED=0
+
 for script_name in "${SCENARIO_GROUPS[@]}"; do
   script_path="${GROUP_DIR}/${script_name}"
   if [ ! -f "${script_path}" ]; then
@@ -218,16 +238,9 @@ for script_name in "${SCENARIO_GROUPS[@]}"; do
 
   echo -e "${YELLOW}Running: ${script_name}${NC}"
   echo ""
-  CURRENT_SCENARIO_FILE="${script_name%.sh}"
-  if [ -n "${TEST_FILTER}" ]; then
-    if ! source_filtered_scenario "${script_path}" "${TEST_FILTER}"; then
-      echo -e "${MUTED}  no matching test in ${script_name}${NC}"
-    fi
-  else
-    source "${script_path}"
-  fi
+  run_scenario_file "${script_path}" "${script_name}" || SUITE_FAILED=1
   echo ""
 
 done
 
-finish_suite
+finish_suite "${SUITE_FAILED}"

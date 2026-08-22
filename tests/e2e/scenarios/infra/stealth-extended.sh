@@ -560,38 +560,37 @@ echo ""
 echo -e "${BLUE}Testing FULL stealth mode (restrictive instance)${NC}"
 echo -e "${YELLOW}Note: evaluate disabled on restrictive instance, testing navigation only${NC}"
 
-ORIG_URL="$E2E_SERVER"
-E2E_SERVER="$E2E_SECURE_SERVER"
+full_stealth_checks() {
+  start_test "bot-detect-full: can navigate with full stealth"
 
-start_test "bot-detect-full: can navigate with full stealth"
+  pt_post /navigate "{\"url\":\"${FIXTURES_URL}/bot-detect.html\"}"
+  assert_ok "navigate to bot-detect fixture (full stealth)"
 
-pt_post /navigate "{\"url\":\"${FIXTURES_URL}/bot-detect.html\"}"
-assert_ok "navigate to bot-detect fixture (full stealth)"
+  TAB_ID=$(echo "$RESULT" | jq -r '.tabId // empty')
+  if [ -n "$TAB_ID" ]; then
+    echo -e "  ${GREEN}✓${NC} Got tabId: $TAB_ID"
+    ((ASSERTIONS_PASSED++)) || true
+  else
+    echo -e "  ${RED}✗${NC} No tabId in response"
+    ((ASSERTIONS_FAILED++)) || true
+  fi
 
-TAB_ID=$(echo "$RESULT" | jq -r '.tabId // empty')
-if [ -n "$TAB_ID" ]; then
-  echo -e "  ${GREEN}✓${NC} Got tabId: $TAB_ID"
-  ((ASSERTIONS_PASSED++)) || true
-else
-  echo -e "  ${RED}✗${NC} No tabId in response"
-  ((ASSERTIONS_FAILED++)) || true
-fi
+  end_test
 
-end_test
+  start_test "bot-detect-full: page title loaded correctly"
 
-start_test "bot-detect-full: page title loaded correctly"
+  TITLE=$(echo "$RESULT" | jq -r '.title // empty')
+  if [ "$TITLE" = "Bot Detection Tests" ]; then
+    echo -e "  ${GREEN}✓${NC} Page title: $TITLE"
+    ((ASSERTIONS_PASSED++)) || true
+  else
+    echo -e "  ${YELLOW}⚠${NC} Unexpected title: $TITLE"
+  fi
 
-TITLE=$(echo "$RESULT" | jq -r '.title // empty')
-if [ "$TITLE" = "Bot Detection Tests" ]; then
-  echo -e "  ${GREEN}✓${NC} Page title: $TITLE"
-  ((ASSERTIONS_PASSED++)) || true
-else
-  echo -e "  ${YELLOW}⚠${NC} Unexpected title: $TITLE"
-fi
+  end_test
+}
 
-end_test
-
-E2E_SERVER="$ORIG_URL"
+with_server "$E2E_SECURE_SERVER" full_stealth_checks
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   finish_suite

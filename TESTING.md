@@ -214,6 +214,32 @@ start_test "tab focus"
 end_test
 ```
 
+### Scenario Files Are Isolated
+
+Each scenario file is sourced into its own subshell, so its variables, functions
+and traps die with the file. A scenario must not rely on state another scenario
+left behind — not a variable, not a helper function, not an open tab, and not
+the value of `E2E_SERVER`. Anything two scenarios both need belongs in
+`tests/e2e/helpers/`, and anything a scenario sets up it must be able to set up
+itself.
+
+Failure accounting crosses the subshell boundary through exit status: a scenario
+that ends with any failed test exits non-zero and the executor fails the suite.
+The `E2E_RESULT` lines the Go runner parses are unaffected — they are printed,
+not accumulated in a variable.
+
+To clean up after a scenario, define `scenario_cleanup`; the executor calls it
+when the file finishes, including when the file exits early:
+
+```bash
+scenario_cleanup() {
+  rm -f "$AUTH_COOKIE_FILE"
+}
+```
+
+Do not install `trap ... EXIT` in a scenario — bash keeps exactly one EXIT trap,
+so a second `trap` silently replaces the first.
+
 ### Assertions Must Be Able to Fail
 
 Every branch of a scenario ends in `pass_assert`, `fail_assert`, or a named skip
@@ -244,9 +270,21 @@ fi
 running, so it reports a readiness failure to its caller instead of failing a
 test that has not started.
 
-To drive a second server in the stack (a provider instance, the bridge), wrap
-the call in `pt_on <base_url> <token> <pt_command...>`; it retargets `E2E_SERVER`
-and the token together and restores both afterwards.
+### Targeting Another Server
+
+Never assign `E2E_SERVER` directly. `with_server <base_url> <command...>` points
+it at another server in the stack for the duration of one command and restores
+the previous value whatever the command returns, passing the command's exit
+status back:
+
+```bash
+with_server "$E2E_SECURE_SERVER" secure_only_checks
+with_server "http://127.0.0.1:1" pt health
+```
+
+`pt_on <base_url> <token> <command...>` is the same thing when the second server
+also has its own token — it retargets `E2E_SERVER` and `E2E_SERVER_TOKEN`
+together and restores both.
 
 ## Coverage
 

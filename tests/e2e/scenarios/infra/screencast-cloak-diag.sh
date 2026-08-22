@@ -141,77 +141,76 @@ if [ -n "${E2E_FULL_SERVER:-}" ]; then
 
 start_test "screencast-diag: dashboard proxy screencast (polling)"
 
-SAVED_SERVER="$E2E_SERVER"
-E2E_SERVER="${E2E_FULL_SERVER}"
+proxy_screencast_checks() {
+  pt_get "/instances/tabs?fresh=1"
+  assert_ok "list tabs for proxy screencast"
 
-pt_get "/instances/tabs?fresh=1"
-assert_ok "list tabs for proxy screencast"
+  INST_ID=$(echo "$RESULT" | jq -r '.[] | select((.url // "") | contains("evaluate.html")) | .instanceId // empty' | head -n 1)
+  PROXY_TAB_ID=$(echo "$RESULT" | jq -r '.[] | select((.url // "") | contains("evaluate.html")) | .id // empty' | head -n 1)
 
-INST_ID=$(echo "$RESULT" | jq -r '.[] | select((.url // "") | contains("evaluate.html")) | .instanceId // empty' | head -n 1)
-PROXY_TAB_ID=$(echo "$RESULT" | jq -r '.[] | select((.url // "") | contains("evaluate.html")) | .id // empty' | head -n 1)
+  if [ -n "${INST_ID}" ] && [ -n "${PROXY_TAB_ID}" ]; then
+    pass_assert "found instance ${INST_ID} with tab ${PROXY_TAB_ID:0:12}..."
 
-if [ -n "${INST_ID}" ] && [ -n "${PROXY_TAB_ID}" ]; then
-  pass_assert "found instance ${INST_ID} with tab ${PROXY_TAB_ID:0:12}..."
+    PROXY_WS_HEADERS=$(mktemp)
+    PROXY_WS_BODY=$(mktemp)
 
-  PROXY_WS_HEADERS=$(mktemp)
-  PROXY_WS_BODY=$(mktemp)
+    (
+      e2e_curl -s --http1.1 \
+        -X GET \
+        "${E2E_SERVER}/instances/${INST_ID}/proxy/screencast?tabId=${PROXY_TAB_ID}&fps=5&everyNthFrame=1&quality=20&maxWidth=320" \
+        -D "${PROXY_WS_HEADERS}" \
+        -o "${PROXY_WS_BODY}" \
+        -H "Origin: ${E2E_SERVER}" \
+        -H "Connection: Upgrade" \
+        -H "Upgrade: websocket" \
+        -H "Sec-WebSocket-Version: 13" \
+        -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+        --max-time 15 >/dev/null 2>&1 || true
+    ) &
+    PROXY_WS_PID=$!
 
-  (
-    e2e_curl -s --http1.1 \
-      -X GET \
-      "${E2E_SERVER}/instances/${INST_ID}/proxy/screencast?tabId=${PROXY_TAB_ID}&fps=5&everyNthFrame=1&quality=20&maxWidth=320" \
-      -D "${PROXY_WS_HEADERS}" \
-      -o "${PROXY_WS_BODY}" \
-      -H "Origin: ${E2E_SERVER}" \
-      -H "Connection: Upgrade" \
-      -H "Upgrade: websocket" \
-      -H "Sec-WebSocket-Version: 13" \
-      -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
-      --max-time 15 >/dev/null 2>&1 || true
-  ) &
-  PROXY_WS_PID=$!
+    PROXY_WS_STATUS=""
+    for _ in $(seq 1 20); do
+      PROXY_WS_STATUS=$(grep '^HTTP/' "${PROXY_WS_HEADERS}" | tail -n 1 | awk '{print $2}')
+      if [ -n "${PROXY_WS_STATUS}" ]; then
+        break
+      fi
+      sleep 0.2
+    done
 
-  PROXY_WS_STATUS=""
-  for _ in $(seq 1 20); do
-    PROXY_WS_STATUS=$(grep '^HTTP/' "${PROXY_WS_HEADERS}" | tail -n 1 | awk '{print $2}')
-    if [ -n "${PROXY_WS_STATUS}" ]; then
-      break
+    if [ "${PROXY_WS_STATUS}" = "101" ]; then
+      pass_assert "proxy screencast WS upgraded (101)"
+    else
+      fail_assert "proxy screencast WS upgrade failed (status: ${PROXY_WS_STATUS:-none})"
     fi
-    sleep 0.2
-  done
 
-  if [ "${PROXY_WS_STATUS}" = "101" ]; then
-    pass_assert "proxy screencast WS upgraded (101)"
-  else
-    fail_assert "proxy screencast WS upgrade failed (status: ${PROXY_WS_STATUS:-none})"
-  fi
+    PROXY_FRAME_BYTES=0
+    PROXY_START=$(get_time_ms)
+    for _ in $(seq 1 40); do
+      PROXY_FRAME_BYTES=$(wc -c < "${PROXY_WS_BODY}" | tr -d '[:space:]')
+      if [ "${PROXY_FRAME_BYTES}" -gt 0 ]; then
+        break
+      fi
+      sleep 0.2
+    done
+    PROXY_END=$(get_time_ms)
+    PROXY_LATENCY=$((PROXY_END - PROXY_START))
 
-  PROXY_FRAME_BYTES=0
-  PROXY_START=$(get_time_ms)
-  for _ in $(seq 1 40); do
-    PROXY_FRAME_BYTES=$(wc -c < "${PROXY_WS_BODY}" | tr -d '[:space:]')
     if [ "${PROXY_FRAME_BYTES}" -gt 0 ]; then
-      break
+      pass_assert "proxy first frame arrived (${PROXY_FRAME_BYTES} bytes in ${PROXY_LATENCY}ms)"
+    else
+      fail_assert "proxy screencast: no frames within 8s — frames lost in proxy hop"
     fi
-    sleep 0.2
-  done
-  PROXY_END=$(get_time_ms)
-  PROXY_LATENCY=$((PROXY_END - PROXY_START))
 
-  if [ "${PROXY_FRAME_BYTES}" -gt 0 ]; then
-    pass_assert "proxy first frame arrived (${PROXY_FRAME_BYTES} bytes in ${PROXY_LATENCY}ms)"
+    kill "${PROXY_WS_PID}" 2>/dev/null || true
+    wait "${PROXY_WS_PID}" 2>/dev/null || true
+    rm -f "${PROXY_WS_HEADERS}" "${PROXY_WS_BODY}"
   else
-    fail_assert "proxy screencast: no frames within 8s — frames lost in proxy hop"
+    skip_assert "no evaluate.html tab found — cannot test proxy screencast"
   fi
+}
 
-  kill "${PROXY_WS_PID}" 2>/dev/null || true
-  wait "${PROXY_WS_PID}" 2>/dev/null || true
-  rm -f "${PROXY_WS_HEADERS}" "${PROXY_WS_BODY}"
-else
-  skip_assert "no evaluate.html tab found — cannot test proxy screencast"
-fi
-
-E2E_SERVER="${SAVED_SERVER}"
+with_server "${E2E_FULL_SERVER}" proxy_screencast_checks
 
 end_test
 

@@ -24,19 +24,6 @@ end_test
 
 # Note: instance start is implicitly tested (server is running)
 
-config_setup() {
-  TMPDIR=$(mktemp -d)
-  CFG="$TMPDIR/config.json"
-}
-
-config_cleanup() {
-  rm -rf "$TMPDIR"
-}
-
-config_init() {
-  PINCHTAB_CONFIG="$CFG" HOME="$TMPDIR" pt_ok config init
-}
-
 assert_config_field() {
   local path="$1" expected="$2" desc="$3"
   local actual

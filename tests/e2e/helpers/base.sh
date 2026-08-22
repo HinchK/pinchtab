@@ -122,10 +122,7 @@ wait_until() {
   done
 }
 
-# pt_on runs a pt_* call against another PinchTab in the stack — a second
-# provider instance, the bridge — and restores the caller's target afterwards.
-# The base URL and token move together: a second server usually has its own.
-pt_on() {
+_e2e_against() {
   local base_url="$1" token="$2"
   shift 2
   local prev_url="$E2E_SERVER" prev_token="${E2E_SERVER_TOKEN:-}"
@@ -136,6 +133,18 @@ pt_on() {
   E2E_SERVER="$prev_url"
   E2E_SERVER_TOKEN="$prev_token"
   return $rc
+}
+
+with_server() {
+  local base_url="$1"
+  shift
+  _e2e_against "$base_url" "${E2E_SERVER_TOKEN:-}" "$@"
+}
+
+pt_on() {
+  local base_url="$1" token="$2"
+  shift 2
+  _e2e_against "$base_url" "$token" "$@"
 }
 
 start_test() {
@@ -253,8 +262,15 @@ assert_ref_json_jq() {
   assert_json_jq "$(_e2e_default_ref_json)" "$expr" "$success_desc" "$fail_desc" "$@"
 }
 
+run_scenario_cleanup() {
+  if declare -F scenario_cleanup >/dev/null 2>&1; then
+    scenario_cleanup
+  fi
+  return 0
+}
+
 finish_suite() {
-  if [ "$TESTS_FAILED" -gt 0 ]; then
+  if [ "${1:-$TESTS_FAILED}" -gt 0 ]; then
     exit 1
   fi
 }

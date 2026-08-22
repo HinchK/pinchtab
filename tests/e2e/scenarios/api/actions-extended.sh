@@ -509,12 +509,6 @@ assert_not_ok "unscoped selector cannot type into cross-origin iframe"
 
 end_test
 
-# Regression test for GitHub issue #236: press action was typing key names
-# as literal text instead of dispatching keyboard events.
-
-# Use permissive instance (needs evaluate enabled)
-E2E_SERVER="http://pinchtab:9999"
-
 # ─────────────────────────────────────────────────────────────────
 start_test "press Enter: does not type 'Enter' as text"
 
