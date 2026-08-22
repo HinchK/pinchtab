@@ -3,13 +3,16 @@ package httpx
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/pinchtab/pinchtab/internal/safelog"
+	"github.com/pinchtab/pinchtab/internal/srccensus"
 )
 
 const launchFailure = `failed to start: fork/exec /Users/op/.pinchtab/bin/pinchtab: exec format error`
@@ -137,5 +140,61 @@ func TestClientErrorsAreLoggedAtDebugNotError(t *testing.T) {
 	})
 	if !strings.Contains(atDebug, "missing required field") {
 		t.Errorf("a 400 is unrecoverable even at debug level:\n%s", atDebug)
+	}
+}
+
+const (
+	minHttpxSourceFiles  = 4
+	minModuleSourceFiles = 300
+	minFailureProducers  = 3
+	moduleRoot           = "../.."
+	recorderChainFunc    = "RecordFailureReason"
+)
+
+var directFailureWrite = regexp.MustCompile(`http\.Error\(|WriteHeader\(http\.Status(BadRequest|Unauthorized|Forbidden|NotFound|MethodNotAllowed|Conflict|Gone|RequestEntityTooLarge|TooManyRequests|InternalServerError|NotImplemented|BadGateway|ServiceUnavailable|GatewayTimeout)\)|WriteHeader\([45][0-9][0-9]\)`)
+
+func TestEveryFailureRecorderAlsoLogsItsCause(t *testing.T) {
+	pkg := srccensus.Load(t, ".", minHttpxSourceFiles)
+
+	logsItsCause := map[string]bool{}
+	for _, site := range pkg.Calls(t, "logFailureCause") {
+		logsItsCause[site.Func] = true
+	}
+
+	var offenders []string
+	producers := 0
+	for _, site := range pkg.Calls(t, recorderChainFunc) {
+		if site.Func == recorderChainFunc {
+			continue
+		}
+		producers++
+		if !logsItsCause[site.Func] {
+			offenders = append(offenders, site.String())
+		}
+	}
+	if producers < minFailureProducers {
+		t.Fatalf("found %d failure producers outside the recorder chain, want at least %d; the census matched almost nothing and would pass vacuously", producers, minFailureProducers)
+	}
+	if len(offenders) > 0 {
+		t.Errorf("these producers sanitize a failure and record it, but never log the unredacted cause, so the fault they describe is recoverable from nowhere; call logFailureCause before the sanitize, in the frame that still holds the raw message:\n%s",
+			strings.Join(offenders, "\n"))
+	}
+}
+
+func TestNoSiteOutsideHttpxWritesAFailureResponseDirectly(t *testing.T) {
+	var offenders []string
+	for _, file := range srccensus.Tree(t, moduleRoot, minModuleSourceFiles) {
+		if strings.HasPrefix(file.Name, "internal/httpx/") {
+			continue
+		}
+		for i, line := range strings.Split(file.Text, "\n") {
+			if directFailureWrite.MatchString(line) {
+				offenders = append(offenders, fmt.Sprintf("%s:%d: %s", file.Name, i+1, strings.TrimSpace(line)))
+			}
+		}
+	}
+	if len(offenders) > 0 {
+		t.Errorf("these sites write a failure response without going through httpx, so no cause is logged for them and no requestId joins them to the access log; route them through httpx.Error, httpx.ErrorCode or httpx.Problem:\n%s",
+			strings.Join(offenders, "\n"))
 	}
 }
