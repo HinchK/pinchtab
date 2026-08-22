@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,8 +12,78 @@ import (
 	"testing"
 
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/daemon"
 	"github.com/pinchtab/pinchtab/internal/server"
 )
+
+func TestDetachedDaemonOwnershipTreatsUnsupportedOSAsNotInstalled(t *testing.T) {
+	original := daemonInstallationStatus
+	defer func() { daemonInstallationStatus = original }()
+
+	daemonInstallationStatus = func() (bool, error) {
+		return false, fmt.Errorf("resolve manager: %w", daemon.ErrUnsupportedOS)
+	}
+	installed, err := detachedDaemonOwnership()
+	if err != nil {
+		t.Fatalf("unsupported OS must not be an ownership error, got %v", err)
+	}
+	if installed {
+		t.Fatal("a daemon cannot own the server on an OS that cannot host one")
+	}
+
+	daemonInstallationStatus = func() (bool, error) {
+		return false, errors.New("service path unreadable")
+	}
+	if _, err := detachedDaemonOwnership(); err == nil {
+		t.Fatal("a genuine ownership error must still propagate")
+	}
+}
+
+func TestServerBackgroundOptionsAddressOverridden(t *testing.T) {
+	cases := []struct {
+		name string
+		opts serverBackgroundOptions
+		want bool
+	}{
+		{"default", serverBackgroundOptions{}, false},
+		{"port", serverBackgroundOptions{Port: "9880"}, true},
+		{"bind", serverBackgroundOptions{Bind: "0.0.0.0"}, true},
+		{"blank", serverBackgroundOptions{Bind: "  ", Port: "  "}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.opts.addressOverridden(); got != tc.want {
+				t.Fatalf("addressOverridden() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequireDetachedServerOwnershipAllowsAddressOverride(t *testing.T) {
+	original := daemonInstallationStatus
+	defer func() { daemonInstallationStatus = original }()
+	daemonInstallationStatus = func() (bool, error) { return true, nil }
+
+	if err := requireDetachedServerOwnership("background start", true); err != nil {
+		t.Fatalf("an explicit address override must bypass the ownership gate, got %v", err)
+	}
+	err := requireDetachedServerOwnership("background start", false)
+	if err == nil || !strings.Contains(err.Error(), "pinchtab daemon start") {
+		t.Fatalf("default address must still defer to the installed daemon, got %v", err)
+	}
+}
+
+func TestRequireDetachedServerOwnershipAllowsUnsupportedOS(t *testing.T) {
+	original := daemonInstallationStatus
+	defer func() { daemonInstallationStatus = original }()
+	daemonInstallationStatus = func() (bool, error) {
+		return false, fmt.Errorf("resolve manager: %w", daemon.ErrUnsupportedOS)
+	}
+
+	if err := requireDetachedServerOwnership("automatic start", false); err != nil {
+		t.Fatalf("auto-start on an OS without daemon support must be allowed, got %v", err)
+	}
+}
 
 func TestDetachedServerStartsRefuseInstalledOrUnknownServiceOwnership(t *testing.T) {
 	original := daemonInstallationStatus

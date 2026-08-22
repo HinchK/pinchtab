@@ -23,7 +23,7 @@ func ensureServerForCLI(cfg *config.RuntimeConfig, baseURL, token, command strin
 		baseURL, token, command,
 		canAutoStartServerForCLI(cfg, baseURL),
 		autoStartServer, probeServerHealth,
-		daemonInstallationStatus, startInstalledDaemon,
+		detachedDaemonOwnership, startInstalledDaemon,
 		ensureServerTimeout,
 	)
 }
@@ -140,7 +140,7 @@ func isServerHealthy(baseURL, token string) bool {
 }
 
 func autoStartServer() error {
-	if err := requireDetachedServerOwnership("automatic start"); err != nil {
+	if err := requireDetachedServerOwnership("automatic start", false); err != nil {
 		return err
 	}
 

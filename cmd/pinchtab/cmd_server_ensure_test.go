@@ -190,6 +190,30 @@ func TestEnsureServerWithDaemonRecoveryOwnsInstalledDaemonLifecycle(t *testing.T
 		}
 	})
 
+	t.Run("not installed auto-starts detached", func(t *testing.T) {
+		daemonStarted := false
+		detachedStarted := false
+		err := ensureServerWithDaemonRecovery(
+			"http://127.0.0.1:9867", "", "nav", true,
+			func() error { detachedStarted = true; return nil },
+			func(string, string) server.HealthProbe {
+				if detachedStarted {
+					return server.HealthProbe{Reachable: true, StatusCode: http.StatusOK}
+				}
+				return server.HealthProbe{}
+			},
+			func() (bool, error) { return false, nil },
+			func() (string, error) { daemonStarted = true; return "started", nil },
+			time.Second,
+		)
+		if err != nil {
+			t.Fatalf("ensureServerWithDaemonRecovery() error = %v", err)
+		}
+		if !detachedStarted || daemonStarted {
+			t.Fatalf("no installed daemon must cold-start a detached server: detached=%t daemon=%t", detachedStarted, daemonStarted)
+		}
+	})
+
 	t.Run("unknown ownership refuses detached fallback", func(t *testing.T) {
 		daemonStarted := false
 		detachedStarted := false

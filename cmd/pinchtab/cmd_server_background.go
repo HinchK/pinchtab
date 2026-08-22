@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -70,24 +71,37 @@ var serverRestartCmd = &cobra.Command{
 	},
 }
 
-// requireDetachedServerOwnership prevents the detached server launch paths from
-// competing with an installed service manager for the same configured port and
-// state directory. An installed daemon is the canonical owner; it is also
-// KeepAlive-managed, so callers should ask that manager to start it instead of
-// creating an orphaned background child.
-func requireDetachedServerOwnership(action string) error {
+func detachedDaemonOwnership() (bool, error) {
 	installed, err := daemonInstallationStatus()
+	if err != nil {
+		if errors.Is(err, daemon.ErrUnsupportedOS) {
+			return false, nil
+		}
+		return false, err
+	}
+	return installed, nil
+}
+
+func (o serverBackgroundOptions) addressOverridden() bool {
+	return strings.TrimSpace(o.Bind) != "" || strings.TrimSpace(o.Port) != ""
+}
+
+func requireDetachedServerOwnership(action string, addressOverridden bool) error {
+	if addressOverridden {
+		return nil
+	}
+	installed, err := detachedDaemonOwnership()
 	if err != nil {
 		return fmt.Errorf("cannot determine background-service ownership; refusing %s: %w", action, err)
 	}
 	if installed {
-		return fmt.Errorf("background service is installed; use `pinchtab daemon start` so one service manager owns the server")
+		return fmt.Errorf("background service is installed; use `pinchtab daemon start` so one service manager owns the server, or pass --bind/--port to run a separate detached server")
 	}
 	return nil
 }
 
 func runServerRestart(cfg *config.RuntimeConfig) error {
-	installed, err := daemonInstallationStatus()
+	installed, err := detachedDaemonOwnership()
 	if err != nil {
 		return fmt.Errorf("cannot determine background-service ownership; refusing restart: %w", err)
 	}
@@ -154,7 +168,7 @@ func spawnDetachedChild(binary string, args []string, out *os.File) (int, error)
 }
 
 func runServerBackground(cfg *config.RuntimeConfig, opts serverBackgroundOptions) error {
-	if err := requireDetachedServerOwnership("background start"); err != nil {
+	if err := requireDetachedServerOwnership("background start", opts.addressOverridden()); err != nil {
 		return err
 	}
 
