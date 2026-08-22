@@ -209,3 +209,32 @@ func TestInstallStableBinaryDoesNotDestroyTheBinaryItWasLaunchedFrom(t *testing.
 		t.Errorf("self-install left staging files behind: %v", leftovers)
 	}
 }
+
+func TestInstallStableBinaryLeavesTheDestinationMatchingTheSource(t *testing.T) {
+	dir := t.TempDir()
+	src := writeBinary(t, filepath.Join(dir, "running"), "the whole binary", 0755)
+	dst := filepath.Join(dir, "pinchtab")
+
+	if err := installStableBinary(src, dst); err != nil {
+		t.Fatalf("first install failed: %v", err)
+	}
+	first, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("cannot stat the installed binary: %v", err)
+	}
+
+	if err := installStableBinary(src, dst); err != nil {
+		t.Fatalf("second install failed: %v", err)
+	}
+	second, err := os.Stat(dst)
+	if err != nil {
+		t.Fatalf("cannot stat the reinstalled binary: %v", err)
+	}
+
+	if !os.SameFile(first, second) {
+		t.Errorf("installing the same source twice replaced %s with a different file; the first install must leave the destination matching the source, otherwise every orchestrator construction recopies the launch binary and the skip never engages in production", dst)
+	}
+	if leftovers := stagedTempFiles(t, dir); len(leftovers) != 0 {
+		t.Errorf("repeated install left staging files behind: %v", leftovers)
+	}
+}
