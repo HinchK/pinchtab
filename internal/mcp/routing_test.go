@@ -36,6 +36,8 @@ var browserToolArgs = map[string]map[string]any{
 	"pinchtab_keyboard_inserttext": {"text": "hello"},
 	"pinchtab_keydown":             {"key": "a"},
 	"pinchtab_keyup":               {"key": "a"},
+	"pinchtab_wait_for_selector":   {"selector": ".loaded"},
+	"pinchtab_wait_for_text":       {"text": "done"},
 	"pinchtab_wait_for_url":        {"url": "https://example.com/done"},
 	"pinchtab_wait_for_load":       {"load": "content-loaded"},
 	"pinchtab_wait_for_function":   {"fn": "1"},
