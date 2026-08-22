@@ -425,7 +425,9 @@ func configureManagementFlags() {
 	activityCmd.PersistentFlags().Int("limit", 200, "Maximum number of events to return")
 	activityCmd.PersistentFlags().Int("age-sec", 0, "Only include events from the last N seconds")
 
-	instancesCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
+	// Both spellings share one implementation, and listInstances forwards the
+	// INVOKED command to the action, so the flag has to exist on each of them.
+	addJSONFlag(instancesCmd, instanceListCmd)
 	profilesCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
 
 	profilesPruneCmd.Flags().Bool("confirm", false, "Actually remove the quarantined profiles (without it, nothing is deleted)")

@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/pinchtab/pinchtab/internal/cli"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func instanceSubcommand(t *testing.T, name string) *cobra.Command {
@@ -135,5 +137,32 @@ func TestExecutePrintsAnErrorOnlyWhenCobraDidNot(t *testing.T) {
 				t.Errorf("shouldPrintCommandError() = %v, want %v; a wrong answer here either prints the error twice or swallows it entirely", got, tc.want)
 			}
 		})
+	}
+}
+
+func flagNames(cmd *cobra.Command) []string {
+	var names []string
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		names = append(names, f.Name)
+	})
+	sort.Strings(names)
+	return names
+}
+
+// listInstances forwards the INVOKED command to the action, so every flag the
+// action reads has to be declared on both spellings — sharing the Run body does
+// not share the flags. The --json flag was declared only on the alias, which
+// left the documented `pinchtab instance list --json` failing with "unknown
+// flag" while the deprecated spelling kept working.
+func TestBothInstanceListSpellingsExposeTheSameFlags(t *testing.T) {
+	canonical := flagNames(instanceSubcommand(t, "list"))
+	alias := flagNames(instancesCmd)
+
+	if len(canonical) == 0 {
+		t.Fatal("pinchtab instance list declares no flags at all; this guard would pass vacuously")
+	}
+	if strings.Join(canonical, ",") != strings.Join(alias, ",") {
+		t.Errorf("the two spellings of the listing accept different flags:\n  instance list = %v\n  instances     = %v\nA flag on only one of them breaks whichever spelling the docs tell people to run.",
+			canonical, alias)
 	}
 }

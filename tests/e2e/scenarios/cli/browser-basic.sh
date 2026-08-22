@@ -14,13 +14,19 @@ assert_output_contains "ok" "returns ok status"
 end_test
 
 # ─────────────────────────────────────────────────────────────────
-start_test "pinchtab instances"
+start_test "pinchtab instance list"
 
-pt_ok instances --json
+pt_ok instance list --json
 assert_output_json
 # Output is an array like [{id:..., status:...}], check for instance properties
 assert_output_contains "id" "returns instance id"
 assert_output_contains "status" "returns instance status"
+
+# The pre-rename spelling stays runnable for existing scripts, so it is exercised
+# here rather than only asserted on the command tree.
+pt_ok instances --json
+assert_output_json
+assert_output_contains "id" "deprecated alias still returns instance ids"
 
 end_test
 
