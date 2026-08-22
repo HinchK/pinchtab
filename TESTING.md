@@ -76,9 +76,11 @@ The map reads product paths as well as test paths:
 | `tests/e2e/scenarios/<group>/*-smoke.sh` | `smoke` |
 | any other `*.sh` under `tests/e2e/scenarios/api/`, `cli/` or `infra/` | that group's extended suite |
 | `Dockerfile`, `.dockerignore`, `scripts/docker-*smoke.sh`, the smoke Dockerfile and workflows | `smoke` |
-| audit implementation — `internal/audit/`, `pkg/pinchtabaudit/`, the audit handlers, `cmd/pinchtab/cmd_audit*` | `api-extended`, `cli-extended` |
+| audit implementation — `internal/audit/`, `pkg/pinchtabaudit/`, the audit handlers, `internal/cli/actions/actions_audit*`, `cmd/pinchtab/cmd_audit*` | `api-extended`, `cli-extended` |
 
 Covering a new product area is one line in the map. `go test ./internal/devtools/` drives the script over synthetic file lists, so a mapping is verified by running it rather than by reading the YAML. Extended coverage the map does not claim still runs on `workflow_dispatch` only.
+
+Audit is also declared there as an *enrolled area*: every tracked audit source file must escalate the audit suites, with a short exclusion list for files that only share the word (`internal/authn/audit.go` is security audit logging). So a new file in an enrolled family cannot quietly miss the map — which is how the CLI audit implementation went unenrolled while its cobra wrapper was covered. Enrolling a second area is one entry in `enrolledAreas`.
 
 ### Basic Suites
 

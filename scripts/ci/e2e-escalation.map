@@ -18,4 +18,5 @@
 ^internal/audit/                                           api-extended cli-extended
 ^pkg/pinchtabaudit/                                        api-extended cli-extended
 ^internal/handlers/(a11y_)?audit                           api-extended cli-extended
+^internal/cli/actions/actions_audit                        api-extended cli-extended
 ^cmd/pinchtab/cmd_audit                                    api-extended cli-extended

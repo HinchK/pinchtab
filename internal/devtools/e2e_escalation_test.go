@@ -31,6 +31,11 @@ func TestEscalationFollowsProductPathsAndTestPaths(t *testing.T) {
 			want:    []string{"run_api_extended", "run_cli_extended"},
 		},
 		{
+			name:    "audit CLI implementation rather than its command wrapper",
+			changed: []string{"internal/cli/actions/actions_audit.go"},
+			want:    []string{"run_api_extended", "run_cli_extended"},
+		},
+		{
 			name:    "audit implementation alongside a basic scenario",
 			changed: []string{"internal/audit/enrich.go", "tests/e2e/scenarios/api/audit-basic.sh"},
 			want:    []string{"run_api_extended", "run_cli_extended"},
@@ -218,4 +223,86 @@ func readRepoFile(t *testing.T, root, rel string) string {
 		t.Fatalf("cannot read %s: %v", rel, err)
 	}
 	return string(body)
+}
+
+type enrolledArea struct {
+	name     string
+	match    string
+	suites   []string
+	excluded map[string]string
+}
+
+var enrolledAreas = []enrolledArea{
+	{
+		name:   "audit",
+		match:  `(?i)audit`,
+		suites: []string{"run_api_extended", "run_cli_extended"},
+		excluded: map[string]string{
+			"internal/authn/audit.go": "security audit logging — AuditLog writes slog entries, a different sense of the word, covered by no audit scenario",
+		},
+	},
+}
+
+func TestEveryEnrolledAreaIsCoveredByTheMap(t *testing.T) {
+	root := repoRoot(t)
+	tracked := trackedPaths(t, root)
+
+	for _, area := range enrolledAreas {
+		t.Run(area.name, func(t *testing.T) {
+			pattern, err := regexp.Compile(area.match)
+			if err != nil {
+				t.Fatalf("area %q has an unusable match %q: %v", area.name, area.match, err)
+			}
+
+			var sources []string
+			for _, path := range tracked {
+				if isAreaSource(path) && pattern.MatchString(path) {
+					sources = append(sources, path)
+				}
+			}
+			if len(sources) < 2 {
+				t.Fatalf("area %q matches %d source files; the match has stopped finding the area and this guard would pass vacuously", area.name, len(sources))
+			}
+
+			usedExclusion := map[string]bool{}
+			for _, path := range sources {
+				escalated := detectSuites(t, root, []string{path})
+				if why, excluded := area.excluded[path]; excluded {
+					usedExclusion[path] = true
+					if len(escalated) > 0 {
+						t.Errorf("%s is excluded from the %s area (%s) yet escalates %v; drop the exclusion rather than keeping a claim the map contradicts", path, area.name, why, escalated)
+					}
+					continue
+				}
+				for _, want := range area.suites {
+					if !containsString(escalated, want) {
+						t.Errorf("%s is %s implementation but escalates %v, not %s; the extended scenarios covering %s never fire on the diff most likely to break them",
+							path, area.name, escalated, want, area.name)
+					}
+				}
+			}
+
+			for path, why := range area.excluded {
+				if !usedExclusion[path] {
+					t.Errorf("%s is excluded from the %s area (%s) but is no longer a source file the area matches; drop the exclusion or re-point it", path, area.name, why)
+				}
+			}
+		})
+	}
+}
+
+func isAreaSource(path string) bool {
+	if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+		return false
+	}
+	return !strings.HasPrefix(path, "tests/")
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
