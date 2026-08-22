@@ -3,6 +3,8 @@ package external
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -173,5 +175,50 @@ func TestExtractSitekeyReadsBothQuoteStyles(t *testing.T) {
 				t.Errorf("extractSitekey(%q) = %q, want %q", tc.html, got, tc.want)
 			}
 		})
+	}
+}
+
+// captchaPatterns and detectCaptchaType encode the same domain rule twice:
+// CanHandle scans the slice, prepare asks detectCaptchaType. They agree today,
+// so a page one accepts the other must classify — otherwise CanHandle promises
+// a solve that prepare immediately refuses with "no supported CAPTCHA detected".
+func TestCanHandleAndDetectCaptchaTypeAgreeOnEveryPage(t *testing.T) {
+	var corpus []string
+	for _, marker := range []string{
+		"recaptcha", "g-recaptcha", "hcaptcha", "h-captcha",
+		"challenges.cloudflare.com/turnstile", "turnstile", "captcha", "funcaptcha",
+		"arkoselabs", "geetest", "",
+	} {
+		for _, shape := range []string{
+			`<div class="%s"></div>`,
+			`<script src="https://%s/api.js"></script>`,
+			`<p>%s</p>`,
+			`<DIV CLASS="%s">`,
+		} {
+			corpus = append(corpus, fmt.Sprintf(shape, marker), strings.ToUpper(fmt.Sprintf(shape, marker)))
+		}
+	}
+	corpus = append(corpus, "", "<html></html>", "<p>nothing here</p>")
+
+	solver := NewCapsolver(CapsolverConfig{APIKey: "k"})
+	var accepted, declined int
+	for _, html := range corpus {
+		canHandle, err := solver.CanHandle(context.Background(), stubPage{html: html})
+		if err != nil {
+			t.Fatalf("CanHandle(%q) error = %v", html, err)
+		}
+		detected := detectCaptchaType(html) != ""
+		if canHandle != detected {
+			t.Errorf("CanHandle = %v but detectCaptchaType(%q) != \"\" = %v; the two encodings of the supported-CAPTCHA rule have drifted, so CanHandle accepts a page prepare then refuses",
+				canHandle, html, detected)
+		}
+		if canHandle {
+			accepted++
+		} else {
+			declined++
+		}
+	}
+	if accepted == 0 || declined == 0 {
+		t.Fatalf("corpus exercised only one outcome (accepted=%d declined=%d); the agreement claim is vacuous unless both arms occur", accepted, declined)
 	}
 }
