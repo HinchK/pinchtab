@@ -252,3 +252,42 @@ func TestSharedParamsHaveOneWordingPerConcept(t *testing.T) {
 		}
 	}
 }
+
+// Collapsing a tool family moves per-variant capability into one schema, so a
+// parameter can be dropped without any handler losing a caller — the agent
+// simply stops being able to discover it. These are the unions the replaced
+// tools carried, as promised by the migration table in RELEASE.md.
+var collapsedToolCapabilities = map[string][]string{
+	"pinchtab_wait":   {"for", "value", "state", "timeout", "tabId", "browser"},
+	"pinchtab_key":    {"action", "key", "text", "nodeId", "tabId", "browser"},
+	"pinchtab_record": {"action", "file", "fps", "quality", "scale", "tabId"},
+}
+
+func TestCollapsedToolsStillDeclareEveryReplacedCapability(t *testing.T) {
+	declared := map[string]map[string]bool{}
+	for _, tool := range allTools() {
+		want, ok := collapsedToolCapabilities[tool.Name]
+		if !ok {
+			continue
+		}
+		props := map[string]bool{}
+		for name := range tool.InputSchema.Properties {
+			props[name] = true
+		}
+		if len(props) == 0 {
+			t.Fatalf("%s declares no parameters at all; this guard would pass vacuously", tool.Name)
+		}
+		declared[tool.Name] = props
+		for _, param := range want {
+			if !props[param] {
+				t.Errorf("%s no longer declares %q; the tools it replaced carried it, and an MCP client validates arguments against the declared schema, so the capability becomes undiscoverable rather than merely undocumented",
+					tool.Name, param)
+			}
+		}
+	}
+	for name := range collapsedToolCapabilities {
+		if _, ok := declared[name]; !ok {
+			t.Errorf("%s is missing from allTools(); the consolidated tool that replaced a whole family is gone", name)
+		}
+	}
+}
