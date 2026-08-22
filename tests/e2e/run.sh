@@ -205,6 +205,17 @@ source_filtered_scenario() {
   return 0
 }
 
+# finish_scenario is the scenario's verdict, and it runs from the subshell's EXIT trap
+# so that a scenario which calls `exit` cannot skip it. A file ending in
+# `fail_assert; end_test; exit 0` — a live shape in the smoke tier — otherwise reported a
+# counted failure as a passing file, which is the green-lane-that-stopped-checking this
+# card exists to prevent. Leaving the status alone when nothing failed keeps an explicit
+# non-zero exit intact.
+finish_scenario() {
+  run_scenario_cleanup
+  [ "${TESTS_FAILED:-0}" -eq 0 ] || exit 1
+}
+
 # Each scenario file runs in its own subshell: file-scope variables, functions
 # and traps die with the file, so no scenario can be reached by state another
 # one left behind. The subshell cannot write TESTS_FAILED back, so it reports
@@ -214,7 +225,7 @@ run_scenario_file() {
   (
     CURRENT_SCENARIO_FILE="${script_name%.sh}"
     TESTS_FAILED=0
-    trap run_scenario_cleanup EXIT
+    trap finish_scenario EXIT
     if [ -n "${TEST_FILTER}" ]; then
       if ! source_filtered_scenario "${script_path}" "${TEST_FILTER}"; then
         echo -e "${MUTED}  no matching test in ${script_name}${NC}"

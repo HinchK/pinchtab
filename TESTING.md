@@ -225,8 +225,9 @@ itself.
 
 Failure accounting crosses the subshell boundary through exit status: a scenario
 that ends with any failed test exits non-zero and the executor fails the suite.
-The `E2E_RESULT` lines the Go runner parses are unaffected — they are printed,
-not accumulated in a variable.
+That holds however the file ends — a guard that records a failure and then calls
+`exit 0` to stop the file still fails it. The `E2E_RESULT` lines the Go runner
+parses are unaffected — they are printed, not accumulated in a variable.
 
 To clean up after a scenario, define `scenario_cleanup`; the executor calls it
 when the file finishes, including when the file exits early:
