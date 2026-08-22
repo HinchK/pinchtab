@@ -32,7 +32,7 @@ var serverCmd = &cobra.Command{
 
 		bind, _ := cmd.Flags().GetString("bind")
 		port, _ := cmd.Flags().GetString("port")
-		addressChanged := detachedAddressChanged(cfg, bind, port)
+		addressChanged := applyServerAddressFlags(cfg, bind, port)
 
 		yolo, _ := cmd.Flags().GetBool("yolo")
 		if yolo {
@@ -89,22 +89,15 @@ var serverCmd = &cobra.Command{
 	},
 }
 
-// applyServerAddressFlags applies the --bind/--port overrides, mirroring the
-// bridge's precedence: a non-empty flag wins over config, an omitted one leaves
-// the configured value in place.
-func applyServerAddressFlags(cfg *config.RuntimeConfig, bind, port string) {
+func applyServerAddressFlags(cfg *config.RuntimeConfig, bind, port string) bool {
+	configuredBind, configuredPort := cfg.Bind, cfg.Port
 	if v := strings.TrimSpace(bind); v != "" {
 		cfg.Bind = v
 	}
 	if v := strings.TrimSpace(port); v != "" {
 		cfg.Port = v
 	}
-}
-
-func detachedAddressChanged(cfg *config.RuntimeConfig, bind, port string) bool {
-	daemonBind, daemonPort := cfg.Bind, cfg.Port
-	applyServerAddressFlags(cfg, bind, port)
-	return cfg.Bind != daemonBind || cfg.Port != daemonPort
+	return cfg.Bind != configuredBind || cfg.Port != configuredPort
 }
 
 // resolveLogLevel settles a run's threshold from the only inputs that carry it, in
