@@ -1,5 +1,12 @@
 {
   "scenarios": {
+    "api/wait-url-basic.sh": {
+      "tags": [
+        "wait",
+        "waiturl",
+        "pr"
+      ]
+    },
     "api/keyboard-focus-basic.sh": {
       "tags": [
         "keyboard",
