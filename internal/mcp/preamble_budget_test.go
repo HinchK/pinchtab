@@ -20,6 +20,7 @@ var fileSurfaces = []string{"skills/pinchtab-mcp/SKILL.md", "skills/pinchtab/SKI
 
 type preambleBudget struct {
 	Surface  string `json:"surface"`
+	MinBytes int    `json:"minBytes"`
 	MaxBytes int    `json:"maxBytes"`
 	TakenOn  string `json:"takenOn"`
 	Commit   string `json:"commit"`
@@ -46,36 +47,34 @@ func percentOf(part, whole int) string {
 	return fmt.Sprintf("%d%%", part*100/whole)
 }
 
-func descriptionStrings(tools []mcp.Tool) []string {
-	var texts []string
-	for _, tool := range tools {
-		if tool.Description != "" {
-			texts = append(texts, tool.Description)
-		}
-		for _, property := range tool.InputSchema.Properties {
-			fields, ok := property.(map[string]any)
-			if !ok {
-				continue
-			}
-			if text, ok := fields["description"].(string); ok && text != "" {
-				texts = append(texts, text)
-			}
-		}
-	}
-	return texts
+type propertyCensus struct {
+	bodyBytes int
+	copies    int
 }
 
-func repeatedBytes(texts []string) int {
-	seen := make(map[string]bool, len(texts))
-	repeated := 0
-	for _, text := range texts {
-		if seen[text] {
-			repeated += len(text)
-			continue
+func repeatedPropertyBytes(tools []mcp.Tool) (int, error) {
+	census := map[string]*propertyCensus{}
+	for _, tool := range tools {
+		for name, value := range tool.InputSchema.Properties {
+			body, err := json.Marshal(value)
+			if err != nil {
+				return 0, err
+			}
+			key := strconv.Quote(name) + ":" + string(body)
+			entry := census[key]
+			if entry == nil {
+				entry = &propertyCensus{bodyBytes: len(body)}
+				census[key] = entry
+			}
+			entry.copies++
 		}
-		seen[text] = true
 	}
-	return repeated
+
+	repeated := 0
+	for _, entry := range census {
+		repeated += entry.bodyBytes * (entry.copies - 1)
+	}
+	return repeated, nil
 }
 
 func toolDescriptionBytes(tools []mcp.Tool) int {
@@ -93,13 +92,17 @@ func measureToolPayload(t *testing.T) preambleMeasurement {
 	if err != nil {
 		t.Fatalf("cannot serialize %s, so the preamble an MCP agent loads is unmeasurable: %v", toolPayloadSurface, err)
 	}
+	repeated, err := repeatedPropertyBytes(tools)
+	if err != nil {
+		t.Fatalf("cannot serialize the input-schema properties of %s: %v", toolPayloadSurface, err)
+	}
 	return preambleMeasurement{
 		surface: toolPayloadSurface,
 		bytes:   len(payload),
 		composition: &toolComposition{
 			tools:            len(tools),
 			descriptionBytes: toolDescriptionBytes(tools),
-			repeatedBytes:    repeatedBytes(descriptionStrings(tools)),
+			repeatedBytes:    repeated,
 		},
 	}
 }
@@ -131,10 +134,10 @@ func loadPreambleBudgets(t *testing.T) map[string]preambleBudget {
 }
 
 func renderPreambleReport(measurements []preambleMeasurement, budgets map[string]preambleBudget) string {
-	const row = "%-30s %6s %8s %8s %8s %8s %8s\n"
+	const row = "%-30s %6s %8s %8s %8s %8s %8s %8s\n"
 	var report strings.Builder
 	report.WriteString("agent preamble\n")
-	fmt.Fprintf(&report, row, "surface", "tools", "bytes", "~tokens", "desc", "repeat", "budget")
+	fmt.Fprintf(&report, row, "surface", "tools", "bytes", "~tokens", "desc", "repeat", "floor", "budget")
 	for _, measurement := range measurements {
 		tools, description, repeat := "-", "-", "-"
 		if composition := measurement.composition; composition != nil {
@@ -149,6 +152,7 @@ func renderPreambleReport(measurements []preambleMeasurement, budgets map[string
 			strconv.Itoa(measurement.approxTokens()),
 			description,
 			repeat,
+			strconv.Itoa(budgets[measurement.surface].MinBytes),
 			strconv.Itoa(budgets[measurement.surface].MaxBytes),
 		)
 	}
@@ -156,7 +160,12 @@ func renderPreambleReport(measurements []preambleMeasurement, budgets map[string
 }
 
 func TestAgentPreambleStaysWithinBudget(t *testing.T) {
-	measurements := []preambleMeasurement{measureToolPayload(t)}
+	payload := measureToolPayload(t)
+	if payload.composition.tools == 0 {
+		t.Fatalf("allTools() returned no tools, so every budget below would pass while measuring an empty surface")
+	}
+
+	measurements := []preambleMeasurement{payload}
 	for _, surface := range fileSurfaces {
 		measurements = append(measurements, measureFile(t, surface))
 	}
@@ -170,11 +179,14 @@ func TestAgentPreambleStaysWithinBudget(t *testing.T) {
 			t.Errorf("%s is measured but carries no budget in %s; record today's number there so the surface can only ratchet down", measurement.surface, preambleBudgetPath)
 			continue
 		}
-		if measurement.bytes <= budget.MaxBytes {
-			continue
+		if measurement.bytes > budget.MaxBytes {
+			over := measurement.bytes - budget.MaxBytes
+			t.Errorf("%s is %d bytes (~%d tokens), %d bytes (~%d tokens) over the budget of %d recorded on %s at %s; shrink the surface, or raise the budget as a deliberate line in this diff",
+				measurement.surface, measurement.bytes, measurement.approxTokens(), over, over/4, budget.MaxBytes, budget.TakenOn, budget.Commit)
 		}
-		over := measurement.bytes - budget.MaxBytes
-		t.Errorf("%s is %d bytes (~%d tokens), %d bytes (~%d tokens) over the budget of %d recorded on %s at %s; shrink the surface, or raise the budget as a deliberate line in this diff",
-			measurement.surface, measurement.bytes, measurement.approxTokens(), over, over/4, budget.MaxBytes, budget.TakenOn, budget.Commit)
+		if measurement.bytes < budget.MinBytes {
+			t.Errorf("%s is %d bytes, under the floor of %d recorded on %s at %s; a preamble surface does not shrink this far by optimisation, so this reads as the surface being deleted or truncated rather than improved — if the shrink is real, lower the floor in the same diff",
+				measurement.surface, measurement.bytes, budget.MinBytes, budget.TakenOn, budget.Commit)
+		}
 	}
 }

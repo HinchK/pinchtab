@@ -1,18 +1,21 @@
 [
   {
     "surface": "mcp:allTools",
+    "minBytes": 19333,
     "maxBytes": 38666,
     "takenOn": "2026-08-22",
     "commit": "9cb14d50"
   },
   {
     "surface": "skills/pinchtab-mcp/SKILL.md",
+    "minBytes": 6634,
     "maxBytes": 13269,
     "takenOn": "2026-08-22",
     "commit": "9cb14d50"
   },
   {
     "surface": "skills/pinchtab/SKILL.md",
+    "minBytes": 10176,
     "maxBytes": 20352,
     "takenOn": "2026-08-22",
     "commit": "9cb14d50"
