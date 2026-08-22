@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -21,6 +22,11 @@ func writeProbeContext(t *testing.T) string {
 		"tests/tools/docker/cft.Dockerfile": "FROM ubuntu\nARG VERSION=1\n",
 		"docs/examples/enrich/main.go":      "package main\n",
 		"node_modules/dep/index.js":         "module.exports = 1\n",
+		// Nested trees whose BASE NAME matches a root-level exclude. Docker matches
+		// .dockerignore against the context-root-relative path, so it sends these — the
+		// fixture has to contain them or a walk that skips them looks correct.
+		"npm/node_modules/dep/index.js": "module.exports = 1\n",
+		"npm/tests/integration.test.ts": "test('x', () => {})\n",
 	} {
 		full := filepath.Join(root, filepath.FromSlash(path))
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -127,8 +133,20 @@ func TestBuildInputDigestFollowsTheDockerignoreOnlyWhereItIsUnambiguous(t *testi
 			file: "tests/e2e/scenarios/probe.sh", body: "echo edited\n", wantChange: false,
 		},
 		{
-			name: "an excluded directory nested anywhere does not affect the digest",
+			name: "the ROOT-LEVEL directory a bare pattern names does not affect the digest",
 			file: "node_modules/dep/index.js", body: "module.exports = 2\n", wantChange: false,
+		},
+		{
+			// The hole this fixture exists for. `node_modules/` excludes the root one and
+			// nothing else, so docker sends npm/node_modules and the digest must see it.
+			// Matching on the base name instead skipped 36k files docker was sending, and
+			// the previous fixture — a ROOT-level path — could not tell the two apart.
+			name: "a NESTED directory whose base name matches a root-level pattern still counts",
+			file: "npm/node_modules/dep/index.js", body: "module.exports = 2\n", wantChange: true,
+		},
+		{
+			name: "a nested directory named like the excluded tests/ still counts",
+			file: "npm/tests/integration.test.ts", body: "test('y', () => {})\n", wantChange: true,
 		},
 		{
 			name: "a directory with a negation stays in the digest, because the negation puts part of it back",
@@ -262,4 +280,60 @@ func TestDockerSmokeRunNamesEachImageAndWhy(t *testing.T) {
 			t.Errorf("the run does not state the image decision %q:\n%s", want, out)
 		}
 	}
+}
+
+// A file's mode and a symlink's target both travel into the image, so both are build
+// inputs. Content-only hashing is the same fail-open shape as the nested-directory hole:
+// the image changes, the tag does not, and a stale one is reused.
+func TestBuildInputDigestCoversModeAndSymlinkTargets(t *testing.T) {
+	t.Run("chmod +x on a context file changes the digest", func(t *testing.T) {
+		root := writeProbeContext(t)
+		before := digestOf(t, root, probeSpec)
+
+		script := filepath.Join(root, "scripts", "build.sh")
+		if err := os.Chmod(script, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if after := digestOf(t, root, probeSpec); after == before {
+			t.Error("making a context file executable did not change the digest, so an image built from a non-executable copy would be reused for one that needs the exec bit")
+		}
+	})
+
+	t.Run("retargeting a symlink changes the digest", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation needs privileges on windows")
+		}
+		root := writeProbeContext(t)
+		link := filepath.Join(root, "current.go")
+		if err := os.Symlink("main.go", link); err != nil {
+			t.Fatal(err)
+		}
+		before := digestOf(t, root, probeSpec)
+
+		if err := os.Remove(link); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("scripts/build.sh", link); err != nil {
+			t.Fatal(err)
+		}
+		if after := digestOf(t, root, probeSpec); after == before {
+			t.Error("pointing a symlink somewhere else did not change the digest, although the image now contains a different link")
+		}
+	})
+
+	t.Run("a symlink is hashed by its target rather than followed", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation needs privileges on windows")
+		}
+		root := writeProbeContext(t)
+		if err := os.Symlink("loop.go", filepath.Join(root, "loop.go")); err != nil {
+			t.Fatal(err)
+		}
+		// A self-referential link is unreadable as a file; the digest must still complete,
+		// because failing here would fail the whole build-input hash and force a rebuild
+		// on every run.
+		if _, err := buildInputsDigest(root, probeSpec); err != nil {
+			t.Errorf("a symlink loop broke the digest: %v", err)
+		}
+	})
 }

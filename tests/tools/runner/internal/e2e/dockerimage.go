@@ -192,12 +192,15 @@ func contextFiles(repoRoot string, excludedDirs map[string]bool) ([]string, erro
 			return nil
 		}
 		if entry.IsDir() {
-			if excludedDirs[rel] || excludedDirs[filepath.Base(rel)] {
+			// Matched against the context-root-relative path, exactly as docker matches
+			// .dockerignore. A bare `node_modules/` entry excludes the root one and NOT
+			// a nested `npm/node_modules` — which is why this repo's .dockerignore lists
+			// `dashboard/node_modules/` on its own line. Matching on the base name
+			// instead would skip every directory of that name at any depth: files docker
+			// sends, absent from the digest, and a stale image reused for changed inputs.
+			if excludedDirs[rel] {
 				return filepath.SkipDir
 			}
-			return nil
-		}
-		if entry.Type()&os.ModeSymlink != 0 {
 			return nil
 		}
 		files = append(files, rel)
@@ -210,14 +213,39 @@ func contextFiles(repoRoot string, excludedDirs map[string]bool) ([]string, erro
 	return files, nil
 }
 
+// fileDigest hashes what the image ends up containing for this path: the executable bit
+// and then either the link target or the content. A symlink is hashed by where it points
+// rather than followed, so a retarget moves the digest and a loop cannot hang the walk.
 func fileDigest(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+
+	sum := sha256.New()
+	// The exec bit travels into the image, so a chmod +x is a change to what was built
+	// even when every byte is identical.
+	executable := 0
+	if info.Mode().Perm()&0o111 != 0 {
+		executable = 1
+	}
+	_, _ = fmt.Fprintf(sum, "exec:%d\n", executable)
+
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, linkErr := os.Readlink(path)
+		if linkErr != nil {
+			return "", linkErr
+		}
+		_, _ = fmt.Fprintf(sum, "symlink:%s", target)
+		return hex.EncodeToString(sum.Sum(nil)), nil
+	}
+
 	file, err := os.Open(path) // #nosec G304 -- path comes from walking the repo's own build context
 	if err != nil {
 		return "", err
 	}
 	defer func() { _ = file.Close() }()
 
-	sum := sha256.New()
 	if _, err := io.Copy(sum, file); err != nil {
 		return "", err
 	}

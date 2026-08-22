@@ -119,11 +119,23 @@ this run is asking for, and the lane reuses it; an image whose inputs changed an
 different tag, misses, and is rebuilt. Reuse is therefore never "a tag exists, skip it":
 the tag cannot exist unless it was built from exactly these bytes.
 
-The digest is over content, not timestamps, so a checkout or a `touch` does not force a
-rebuild and an edit reverted byte-for-byte returns to the original tag. `.dockerignore`
-decides what counts as context, and `.alp/` is excluded there for the same reason as any
-other working state: it is rewritten every few minutes and would otherwise invalidate the
-image — and Docker's own `COPY` layer — on every write.
+The digest is over content, mode and symlink targets — not timestamps — so a checkout or a
+`touch` does not force a rebuild, an edit reverted byte-for-byte returns to the original
+tag, and a `chmod +x` or a retargeted link does not slip through unnoticed.
+
+`.dockerignore` decides what counts as context, and the digest reads it the way docker
+does: patterns match the context-root-relative path, so `node_modules/` excludes the root
+one and **not** `npm/node_modules` — each nested tree needs its own line. That is why the
+file lists `dashboard/node_modules/`, `npm/node_modules/` and `plugin/node_modules/`
+separately. Keeping those trees out is worth doing for its own sake: they are not build
+inputs for the Go binary, and every file in the context is a file docker hashes for its
+own `COPY` layer. `.alp/` is excluded for the same reason — it is rewritten every few
+minutes and would otherwise invalidate the image on every write.
+
+The digest deliberately errs towards rebuilding: anything the `.dockerignore` reader
+cannot decide exactly stays IN. Hashing a file docker ignores costs one rebuild that the
+run announces; missing a file docker sends is a stale image passing a run it should have
+failed.
 
 Every run states its decision per image before the checks run, so a stale-image suspicion
 is answerable from the log rather than by deleting tags:
@@ -137,11 +149,12 @@ Pass `--rebuild` to build regardless — that is what CI should use when it want
 build. `PINCHTAB_DOCKER_SMOKE_RELEASE_IMAGE` and `PINCHTAB_DOCKER_SMOKE_CHROME_IMAGE`
 still override an image outright, and such an image is never built.
 
-**What the lane costs.** Measured locally on an arm host: the host Docker checks are ~79s
-when both images have to be built and ~6s when both are reused, and a full `./dev e2e
-smoke` on reused images is ~83s wall for 43 tests, the balance being the compose stack and
-the smoke scenarios. The Chrome-for-Testing image is pinned `--platform linux/amd64` and
-so builds under emulation on arm, which is what made the rebuild worth avoiding.
+**What the lane costs.** Measured locally on an arm host: the host Docker checks are ~5-6s
+when both images are reused, against 70-125s when both have to be built — the spread on a
+build depends on how much of docker's own layer cache survived the change. A full `./dev
+e2e smoke` on reused images is 75-85s wall for 43 tests, the balance being the compose
+stack and the smoke scenarios. The Chrome-for-Testing image is pinned `--platform linux/amd64`
+and so builds under emulation on arm, which is what made the rebuild worth avoiding.
 
 ## Environment Variables
 

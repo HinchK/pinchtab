@@ -32,9 +32,15 @@ tests/
 docs/
 !docs/examples/
 
-# Development
+# Development.
+# Each nested tree needs its own line: docker matches .dockerignore patterns against the
+# context-root-relative path, so `node_modules/` excludes the root one and nothing else.
 node_modules/
 dashboard/node_modules/
+npm/node_modules/
+npm/dist/
+plugin/node_modules/
+plugin/dist/
 *.log
 
 # Build caches
