@@ -1,6 +1,11 @@
 package observe
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+
+	"gopkg.in/yaml.v3"
+)
 
 // All THREE states are annotated, not just the checked one: absent means the control
 // has no checkedness and false means it is off, so rendering only [checked] would make
@@ -19,73 +24,90 @@ var checkedCompactAnnotations = map[CheckedState]string{
 	CheckedMixed: " [/]",
 }
 
-func FormatSnapshotText(nodes []A11yNode) string {
+// nodeStyle is everything that differs between the text and compact layouts. The field
+// ORDER and the quoting are not in here because they do not differ — they live once, in
+// appendNode. A style that could reorder fields would be a second layout model, which is
+// the thing this file used to have three of.
+type nodeStyle struct {
+	indent   string
+	refSep   string
+	focused  string
+	disabled string
+	hidden   string
+	checked  map[CheckedState]string
+}
+
+var textNodeStyle = nodeStyle{
+	indent:   "  ",
+	refSep:   " ",
+	focused:  " [focused]",
+	disabled: " [disabled]",
+	hidden:   " [hidden]",
+	checked:  checkedAnnotations,
+}
+
+var compactNodeStyle = nodeStyle{
+	refSep:   ":",
+	focused:  " *",
+	disabled: " -",
+	hidden:   " [hidden]",
+	checked:  checkedCompactAnnotations,
+}
+
+// appendNode writes one node exactly as the caller's format emits it. It is the single
+// source of truth for what a node costs, because the truncator charges the caller for
+// what this writes rather than for a second hand-maintained model of it.
+func appendNode(b *strings.Builder, n A11yNode, style nodeStyle, marker string) {
+	for i := 0; i < n.Depth; i++ {
+		b.WriteString(style.indent)
+	}
+	b.WriteString(n.Ref)
+	b.WriteString(style.refSep)
+	b.WriteString(n.Role)
+	if n.Name != "" {
+		b.WriteString(` "`)
+		b.WriteString(n.Name)
+		b.WriteByte('"')
+	}
+	if n.Value != "" {
+		b.WriteString(` val="`)
+		b.WriteString(n.Value)
+		b.WriteByte('"')
+	}
+	if n.Focused {
+		b.WriteString(style.focused)
+	}
+	if annotation, ok := style.checked[n.Checked]; ok {
+		b.WriteString(annotation)
+	}
+	if n.Disabled {
+		b.WriteString(style.disabled)
+	}
+	if n.Hidden {
+		b.WriteString(style.hidden)
+	}
+	b.WriteString(marker)
+	b.WriteByte('\n')
+}
+
+func formatNodes(nodes []A11yNode, style nodeStyle, marker func(A11yNode) string) string {
 	var b strings.Builder
 	for _, n := range nodes {
-		for i := 0; i < n.Depth; i++ {
-			b.WriteString("  ")
+		suffix := ""
+		if marker != nil {
+			suffix = marker(n)
 		}
-		b.WriteString(n.Ref)
-		b.WriteByte(' ')
-		b.WriteString(n.Role)
-		if n.Name != "" {
-			b.WriteString(` "`)
-			b.WriteString(n.Name)
-			b.WriteByte('"')
-		}
-		if n.Value != "" {
-			b.WriteString(` val="`)
-			b.WriteString(n.Value)
-			b.WriteByte('"')
-		}
-		if n.Focused {
-			b.WriteString(" [focused]")
-		}
-		if annotation, ok := checkedAnnotations[n.Checked]; ok {
-			b.WriteString(annotation)
-		}
-		if n.Disabled {
-			b.WriteString(" [disabled]")
-		}
-		if n.Hidden {
-			b.WriteString(" [hidden]")
-		}
-		b.WriteByte('\n')
+		appendNode(&b, n, style, suffix)
 	}
 	return b.String()
 }
 
+func FormatSnapshotText(nodes []A11yNode) string {
+	return formatNodes(nodes, textNodeStyle, nil)
+}
+
 func FormatSnapshotCompact(nodes []A11yNode) string {
-	var b strings.Builder
-	for _, n := range nodes {
-		b.WriteString(n.Ref)
-		b.WriteByte(':')
-		b.WriteString(n.Role)
-		if n.Name != "" {
-			b.WriteString(` "`)
-			b.WriteString(n.Name)
-			b.WriteByte('"')
-		}
-		if n.Value != "" {
-			b.WriteString(` val="`)
-			b.WriteString(n.Value)
-			b.WriteByte('"')
-		}
-		if n.Focused {
-			b.WriteString(" *")
-		}
-		if annotation, ok := checkedCompactAnnotations[n.Checked]; ok {
-			b.WriteString(annotation)
-		}
-		if n.Disabled {
-			b.WriteString(" -")
-		}
-		if n.Hidden {
-			b.WriteString(" [hidden]")
-		}
-		b.WriteByte('\n')
-	}
-	return b.String()
+	return formatNodes(nodes, compactNodeStyle, nil)
 }
 
 // FormatSnapshotCompactDiff outputs all current nodes in compact format with
@@ -102,39 +124,16 @@ func FormatSnapshotCompactDiff(nodes []A11yNode, added, changed, removed []A11yN
 	}
 
 	var b strings.Builder
-	for _, n := range nodes {
-		b.WriteString(n.Ref)
-		b.WriteByte(':')
-		b.WriteString(n.Role)
-		if n.Name != "" {
-			b.WriteString(` "`)
-			b.WriteString(n.Name)
-			b.WriteByte('"')
+	b.WriteString(formatNodes(nodes, compactNodeStyle, func(n A11yNode) string {
+		switch {
+		case addedRefs[n.Ref]:
+			return " [+]"
+		case changedRefs[n.Ref]:
+			return " [~]"
+		default:
+			return ""
 		}
-		if n.Value != "" {
-			b.WriteString(` val="`)
-			b.WriteString(n.Value)
-			b.WriteByte('"')
-		}
-		if n.Focused {
-			b.WriteString(" *")
-		}
-		if annotation, ok := checkedCompactAnnotations[n.Checked]; ok {
-			b.WriteString(annotation)
-		}
-		if n.Disabled {
-			b.WriteString(" -")
-		}
-		if n.Hidden {
-			b.WriteString(" [hidden]")
-		}
-		if addedRefs[n.Ref] {
-			b.WriteString(" [+]")
-		} else if changedRefs[n.Ref] {
-			b.WriteString(" [~]")
-		}
-		b.WriteByte('\n')
-	}
+	}))
 
 	if len(removed) > 0 {
 		b.WriteString("# removed:")
@@ -148,26 +147,63 @@ func FormatSnapshotCompactDiff(nodes []A11yNode, added, changed, removed []A11yN
 	return b.String()
 }
 
+// estimateTokens is the one place bytes become tokens. Four bytes per token is the
+// approximation the whole budget rests on, so it lives here rather than being spelled
+// out per format — a format that divides by its own constant is a second model of the
+// same thing, which is how the old estimator drifted.
+func estimateTokens(bytes int) int {
+	return bytes / 4
+}
+
+// nodeCost reports what one node costs the caller in the format it asked for. Every
+// branch MEASURES: the text layouts by rendering through appendNode, the structured ones
+// by marshalling the node with the same encoder the handler uses. Nothing here models a
+// layout, so nothing here can drift away from one.
+func nodeCost(format string) func(A11yNode) int {
+	switch format {
+	case "compact":
+		return renderedNodeCost(compactNodeStyle)
+	case "text":
+		return renderedNodeCost(textNodeStyle)
+	case "yaml":
+		return func(n A11yNode) int {
+			out, err := yaml.Marshal([]A11yNode{n})
+			if err != nil {
+				return 0
+			}
+			return len(out)
+		}
+	default:
+		return func(n A11yNode) int {
+			out, err := json.Marshal(n)
+			if err != nil {
+				return 0
+			}
+			// +1 for the comma or closing bracket this node brings with it once it is
+			// an element of the nodes array rather than a value on its own.
+			return len(out) + 1
+		}
+	}
+}
+
+func renderedNodeCost(style nodeStyle) func(A11yNode) int {
+	var b strings.Builder
+	return func(n A11yNode) int {
+		b.Reset()
+		appendNode(&b, n, style, "")
+		return b.Len()
+	}
+}
+
+// TruncateToTokens keeps the longest prefix of nodes whose rendered output fits in
+// maxTokens. The budget is a ceiling, never a target to overshoot: it stops at the last
+// node that fits, so the only shortfall possible is the one node that did not.
 func TruncateToTokens(nodes []A11yNode, maxTokens int, format string) ([]A11yNode, bool) {
-	tokensUsed := 0
+	cost := nodeCost(format)
+	bytesUsed := 0
 	for i, n := range nodes {
-		var nodeTokens int
-		switch format {
-		case "compact":
-			size := len(n.Ref) + 1 + len(n.Role) + len(n.Name) + len(n.Value) + 8 + len(checkedCompactAnnotations[n.Checked])
-			nodeTokens = size / 4
-		case "text":
-			size := n.Depth*2 + len(n.Ref) + 1 + len(n.Role) + len(n.Name) + len(n.Value) + 8 + len(checkedAnnotations[n.Checked])
-			nodeTokens = size / 4
-		default:
-			size := len(n.Ref) + len(n.Role) + len(n.Name) + len(n.Value) + 60
-			nodeTokens = size / 3
-		}
-		if nodeTokens < 1 {
-			nodeTokens = 1
-		}
-		tokensUsed += nodeTokens
-		if tokensUsed > maxTokens {
+		bytesUsed += cost(n)
+		if estimateTokens(bytesUsed) > maxTokens {
 			return nodes[:i], true
 		}
 	}

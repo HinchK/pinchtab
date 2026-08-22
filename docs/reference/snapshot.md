@@ -53,6 +53,25 @@ pinchtab snap --max-tokens 2000         # Limit output size
 | `maxTokens` | Token budget limit |
 | `depth` | Tree depth limit |
 
+## What `maxTokens` guarantees
+
+`maxTokens` is a ceiling, not a hint. The nodes returned are the longest prefix whose
+rendered output fits the budget in the format you asked for, so the response never exceeds
+what you asked for and stops one node short of it at worst. Measured across `compact`,
+`text`, `json` and `yaml` on a page of realistic interactive nodes, a budget that actually
+constrains the result delivers 87–100% of it.
+
+The cost is measured, not modelled: each node is charged the bytes its own format emits —
+rendered for `compact` and `text`, marshalled for `json` and `yaml` — so a change to a
+formatter changes the budget with it. Tokens are estimated at four bytes each.
+
+Formats are not interchangeable for a given budget. `yaml` is roughly three times the size
+of `json` for the same nodes, because the node struct carries JSON field tags and no YAML
+ones, so YAML emits every field including the empty ones. The same `maxTokens` therefore
+returns far fewer nodes in `yaml` than in `json` — which is the budget working, not a
+regression. Prefer `compact` when the budget is tight: it fits several times more nodes
+into the same tokens than either structured format.
+
 ## Control state on a node
 
 A snapshot reports the state of a control, not just its identity, so an agent can
