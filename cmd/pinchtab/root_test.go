@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestFetchHealthSnapshotClassifiesOnlyValidDashboardHealthAsRunning(t *testing.T) {
@@ -196,6 +197,50 @@ func TestFetchHealthSnapshotDoesNotSendBearerToken(t *testing.T) {
 	}
 	if gotAuth != "" {
 		t.Fatalf("Authorization = %q, want empty", gotAuth)
+	}
+}
+
+func TestPrintAgentHintsStaysBoundedAgainstASilentListener(t *testing.T) {
+	listener, err := net.Listen("tcp", "localhost:0")
+	if err != nil {
+		t.Fatalf("Listen() error = %v", err)
+	}
+	defer func() { _ = listener.Close() }()
+
+	held := make(chan struct{})
+	defer close(held)
+	go func() {
+		for {
+			conn, acceptErr := listener.Accept()
+			if acceptErr != nil {
+				return
+			}
+			go func() {
+				<-held
+				_ = conn.Close()
+			}()
+		}
+	}()
+
+	_, port, err := net.SplitHostPort(listener.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort() error = %v", err)
+	}
+	cfg := testRuntimeConfig()
+	cfg.Port = port
+
+	const ceiling = 10 * time.Second
+	start := time.Now()
+	output := captureStdout(t, func() {
+		printAgentHints(cfg)
+	})
+	elapsed := time.Since(start)
+
+	if elapsed >= ceiling {
+		t.Fatalf("bare banner spent %v on a port that accepts the connection and never answers; the probe must stay bounded or `pinchtab` hangs on a firewalled port, which is the whole reason the banner used to refuse to probe", elapsed)
+	}
+	if !strings.Contains(output, string(healthSnapshotStopped)) {
+		t.Fatalf("expected %q after the probe gave up, got\n%s", healthSnapshotStopped, output)
 	}
 }
 
