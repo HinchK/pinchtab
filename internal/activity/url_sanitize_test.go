@@ -68,7 +68,7 @@ func TestBothRedactorsAgreeExceptWhereTheCapBites(t *testing.T) {
 }
 
 func TestActivityFeedDropsRelativePathsThatMerelyContainASchemeSeparator(t *testing.T) {
-	for _, raw := range []string{"/path://x", "./rel://x", "../up://x"} {
+	for _, raw := range []string{"/path://x", "./rel://x", "../up://x", ".//x://y", "/a/b://c/d"} {
 		if got := sanitizeActivityURL(raw); got != "" {
 			t.Errorf("sanitizeActivityURL(%q) = %q, want %q; these used to be recorded verbatim because the validity guard was skipped on the Sanitize success path", raw, got, "")
 		}
