@@ -297,7 +297,8 @@ func (r *Runner) runSmokeLane(l lane) int {
 	if code != 0 {
 		return code
 	}
-	dockerSteps := r.selectedDockerSmokeSteps()
+	docker := r.selectedDockerSmokePlan()
+	dockerSteps := docker.steps
 	if len(plans) == 0 && len(dockerSteps) == 0 {
 		return r.reportNoSuitesMatched(l)
 	}
@@ -318,7 +319,7 @@ func (r *Runner) runSmokeLane(l lane) int {
 	}
 
 	if len(dockerSteps) > 0 {
-		if code := r.runDockerSmokeSteps(dockerSteps); code != 0 {
+		if code := r.runDockerSmokeSteps(docker); code != 0 {
 			codes[dockerSmokeSuite().Name] = code
 		}
 		_, _ = fmt.Fprintln(r.stdout, "")
@@ -327,14 +328,18 @@ func (r *Runner) runSmokeLane(l lane) int {
 	return r.reportLaneOutcome(l, codes, otherFailure)
 }
 
-func (r *Runner) runDockerSmokeSteps(steps []dockerSmokeStep) int {
+func (r *Runner) runDockerSmokeSteps(plan dockerSmokePlan) int {
 	def := dockerSmokeSuite()
 	r.printSuiteStart(def)
+	for _, image := range plan.images {
+		_, _ = fmt.Fprintf(r.stdout, "  image %-32s %s\n", image.Ref(), image.Reason)
+	}
+	_, _ = fmt.Fprintln(r.stdout, "")
 	r.prepareSuiteResults(def)
 	started := time.Now()
 
 	exitCode := 0
-	for _, step := range steps {
+	for _, step := range plan.steps {
 		stepStarted := time.Now()
 		code := r.runLoggedCommand("running "+step.Name, def.Output, step.Command)
 		status := "passed"
@@ -363,14 +368,40 @@ func (r *Runner) runDockerSmokeSteps(steps []dockerSmokeStep) int {
 	return exitCode
 }
 
-func (r *Runner) selectedDockerSmokeSteps() []dockerSmokeStep {
-	return selectDockerSmokeSteps(r.dockerSmokeSteps(), r.args.Filter)
+// dockerSmokePlan is the docker smoke lane's steps together with the image decisions that
+// produced them, so the run can state per image whether it built or reused and why.
+type dockerSmokePlan struct {
+	steps  []dockerSmokeStep
+	images []smokeImage
 }
 
-func (r *Runner) dockerSmokeSteps() []dockerSmokeStep {
-	releaseImage, chromeImage, customReleaseImage, customChromeImage := r.dockerSmokeImages()
+var (
+	releaseSmokeImageSpec = smokeImageSpec{
+		Repo:       "pinchtab-release-smoke",
+		Dockerfile: "Dockerfile",
+		EnvVar:     "PINCHTAB_DOCKER_SMOKE_RELEASE_IMAGE",
+	}
+	chromeSmokeImageSpec = smokeImageSpec{
+		Repo:       "pinchtab-chrome-cft-smoke",
+		Dockerfile: "tests/tools/docker/chrome-cft-smoke.Dockerfile",
+		Platform:   "linux/amd64",
+		EnvVar:     "PINCHTAB_DOCKER_SMOKE_CHROME_IMAGE",
+	}
+)
+
+func (r *Runner) selectedDockerSmokePlan() dockerSmokePlan {
+	plan := r.dockerSmokePlan()
+	plan.steps = selectDockerSmokeSteps(plan.steps, r.args.Filter)
+	return plan
+}
+
+func (r *Runner) dockerSmokePlan() dockerSmokePlan {
+	release := r.resolveSmokeImage(releaseSmokeImageSpec, r.localImageExists)
+	chrome := r.resolveSmokeImage(chromeSmokeImageSpec, r.localImageExists)
+	releaseImage, chromeImage := release.Ref(), chrome.Ref()
+
 	steps := []dockerSmokeStep{}
-	if !customReleaseImage {
+	if release.Build {
 		steps = append(steps, dockerSmokeStep{
 			Name:                 "docker: build release image",
 			Tags:                 []string{"docker", "build", "release", "image"},
@@ -378,11 +409,11 @@ func (r *Runner) dockerSmokeSteps() []dockerSmokeStep {
 			ProvidesReleaseImage: true,
 		})
 	}
-	if !customChromeImage {
+	if chrome.Build {
 		steps = append(steps, dockerSmokeStep{
 			Name:                "docker: build Chrome for Testing image",
 			Tags:                []string{"docker", "build", "chrome", "cft", "image"},
-			Command:             []string{"docker", "build", "--load", "--platform", "linux/amd64", "-f", "tests/tools/docker/chrome-cft-smoke.Dockerfile", "-t", chromeImage, "."},
+			Command:             []string{"docker", "build", "--load", "--platform", chromeSmokeImageSpec.Platform, "-f", chromeSmokeImageSpec.Dockerfile, "-t", chromeImage, "."},
 			ProvidesChromeImage: true,
 		})
 	}
@@ -412,33 +443,7 @@ func (r *Runner) dockerSmokeSteps() []dockerSmokeStep {
 			RequiresReleaseImage: true,
 		},
 	)
-	return steps
-}
-
-func (r *Runner) dockerSmokeImages() (releaseImage, chromeImage string, customReleaseImage, customChromeImage bool) {
-	suffix := strings.TrimSpace(os.Getenv("PINCHTAB_DOCKER_SMOKE_TAG_SUFFIX"))
-	if suffix == "" {
-		if r.args.DryRun {
-			suffix = "dry-run"
-		} else {
-			suffix = fmt.Sprintf("%d", time.Now().UnixNano())
-		}
-	}
-
-	releaseImage = strings.TrimSpace(os.Getenv("PINCHTAB_DOCKER_SMOKE_RELEASE_IMAGE"))
-	if releaseImage == "" {
-		releaseImage = "pinchtab-release-smoke:" + suffix
-	} else {
-		customReleaseImage = true
-	}
-
-	chromeImage = strings.TrimSpace(os.Getenv("PINCHTAB_DOCKER_SMOKE_CHROME_IMAGE"))
-	if chromeImage == "" {
-		chromeImage = "pinchtab-chrome-cft-smoke:" + suffix
-	} else {
-		customChromeImage = true
-	}
-	return releaseImage, chromeImage, customReleaseImage, customChromeImage
+	return dockerSmokePlan{steps: steps, images: []smokeImage{release, chrome}}
 }
 
 func selectDockerSmokeSteps(steps []dockerSmokeStep, filter string) []dockerSmokeStep {

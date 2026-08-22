@@ -19,6 +19,7 @@ type Args struct {
 	Provider  string
 	Providers []string // resolved list; len>1 means matrix mode
 	Slowest   int
+	Rebuild   bool
 	DryRun    bool
 }
 
@@ -54,6 +55,10 @@ Options:
   --slowest N            Report only: print the N slowest tests and the
                          per-scenario totals from results/timings-<suite>.json.
                          Runs nothing and needs no Docker.
+  --rebuild              Rebuild the docker smoke images even when their build
+                         inputs are unchanged. The lane otherwise reuses an
+                         image already built from the same Dockerfile and
+                         context, which is what makes a repeat run cheap.
   --dry-run              Print the compose plan without running it
   --help, -h             Show this help
 `
@@ -198,6 +203,8 @@ func ParseArgs(argv []string) (Args, error) {
 				return args, fmt.Errorf("--slowest must be a positive whole number (got %q)", v)
 			}
 			args.Slowest = n
+		case "--rebuild":
+			args.Rebuild = true
 		case "--dry-run":
 			args.DryRun = true
 		default:

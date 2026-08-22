@@ -17,6 +17,10 @@ tests/
 .pinchtab/
 .openclaw/
 
+# Agent task board: working state, rewritten every few minutes. Not a build input,
+# and leaving it in the context invalidates the COPY layer on every board write.
+.alp/
+
 # macOS
 .DS_Store
 

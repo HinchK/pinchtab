@@ -110,6 +110,39 @@ Runs `api-extended`, `cli-extended`, `infra-extended`, and `plugin` in sequence.
 
 Smoke is its own tier: it runs `*-smoke.sh` scenarios plus host-level Docker smoke checks, and it does not include basic or extended scenarios. Use the filtered smoke suites when you only need one smoke lane.
 
+#### Docker image reuse
+
+The two images the host Docker checks need are tagged by a digest of what they are built
+from — the Dockerfile, the platform it is pinned to, and the content of every file in the
+build context. So an image whose inputs are unchanged is already on the host under the tag
+this run is asking for, and the lane reuses it; an image whose inputs changed answers a
+different tag, misses, and is rebuilt. Reuse is therefore never "a tag exists, skip it":
+the tag cannot exist unless it was built from exactly these bytes.
+
+The digest is over content, not timestamps, so a checkout or a `touch` does not force a
+rebuild and an edit reverted byte-for-byte returns to the original tag. `.dockerignore`
+decides what counts as context, and `.alp/` is excluded there for the same reason as any
+other working state: it is rewritten every few minutes and would otherwise invalidate the
+image — and Docker's own `COPY` layer — on every write.
+
+Every run states its decision per image before the checks run, so a stale-image suspicion
+is answerable from the log rather than by deleting tags:
+
+```
+  image pinchtab-release-smoke:9df635add9f96cea    reusing: build inputs unchanged since this image was built
+  image pinchtab-chrome-cft-smoke:c20b4da906e78fdf building: no local image for these build inputs
+```
+
+Pass `--rebuild` to build regardless — that is what CI should use when it wants a cold
+build. `PINCHTAB_DOCKER_SMOKE_RELEASE_IMAGE` and `PINCHTAB_DOCKER_SMOKE_CHROME_IMAGE`
+still override an image outright, and such an image is never built.
+
+**What the lane costs.** Measured locally on an arm host: the host Docker checks are ~79s
+when both images have to be built and ~6s when both are reused, and a full `./dev e2e
+smoke` on reused images is ~83s wall for 43 tests, the balance being the compose stack and
+the smoke scenarios. The Chrome-for-Testing image is pinned `--platform linux/amd64` and
+so builds under emulation on arm, which is what made the rebuild worth avoiding.
+
 ## Environment Variables
 
 | Variable | Default | Description |
