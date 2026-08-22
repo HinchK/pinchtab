@@ -50,6 +50,8 @@ func (tm *TabManager) StartBrowserGuards() {
 		tm.mu.Lock()
 		tm.guardActive = true
 		tm.mu.Unlock()
+
+		tm.reconcileTabBudget()
 	})
 }
 

@@ -1,5 +1,12 @@
 {
   "scenarios": {
+    "api/tab-budget-basic.sh": {
+      "tags": [
+        "tabs",
+        "budget",
+        "pr"
+      ]
+    },
     "api/actions-basic.sh": {
       "tags": [
         "actions",
