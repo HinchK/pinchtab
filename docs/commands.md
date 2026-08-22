@@ -388,6 +388,7 @@ pinchtab config                         # Interactive config overview/editor
 pinchtab config init                    # Create a default config file
 pinchtab config show                    # Print effective runtime config
 pinchtab config token                   # Copy server.token to the clipboard without printing it
+pinchtab config token --stdout          # Print server.token to stdout (headless hosts, $(...) capture)
 pinchtab config path                    # Print config file path
 pinchtab config validate                # Validate the current config file
 pinchtab config get <path>              # Read one file-config value

@@ -49,7 +49,7 @@ func nextStepsForState(state healthSnapshotState) ([]cli.CommandHint, int) {
 		return cli.NextStepsRunningHints, 64
 	case healthSnapshotProtected:
 		return []cli.CommandHint{
-			{Command: "pinchtab config token", Comment: "# copy configured API token"},
+			{Command: "pinchtab config token --stdout", Comment: "# print the API token (capture with $(...))"},
 			{Command: "pinchtab health --json", Comment: "# retry health with the current token"},
 			{Command: "pinchtab config show", Comment: "# inspect configured port and token"},
 		}, 44

@@ -71,15 +71,20 @@ The Security section also includes `security.trustLoopbackProxy` as `Trust Loopb
 
 ### `pinchtab config token`
 
-Copies the configured `server.token` to the system clipboard without printing it
-to stdout.
+Copies the configured `server.token` to the system clipboard. Nothing is written
+to stdout, so a shell capture returns empty rather than a message.
 
 ```bash
-pinchtab config token
+pinchtab config token             # copy to clipboard; status goes to stderr
+TOKEN=$(pinchtab config token --stdout)   # print the token and nothing else
 ```
 
-If clipboard access is unavailable, the command reports that safely and still
-does not print the token.
+`--stdout` is the supported way to read the token on a host with no clipboard
+tool. Without it the token is never printed.
+
+If clipboard access is unavailable the command exits non-zero and names both
+`--stdout` and the config file path on stderr, so a script sees the failure
+instead of a success that copied nothing.
 
 ### `pinchtab config path`
 
