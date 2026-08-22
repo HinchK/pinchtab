@@ -1,11 +1,28 @@
 package daemon
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestNewManagerRejectsUnsupportedOS(t *testing.T) {
 	_, err := newManager(environment{osName: "windows"}, &fakeCommandRunner{})
-	if err == nil {
-		t.Fatal("expected unsupported OS error")
+	if !errors.Is(err, ErrUnsupportedOS) {
+		t.Fatalf("newManager on unsupported OS = %v, want ErrUnsupportedOS", err)
+	}
+}
+
+func TestInstallationStatusUnsupportedOSSurfacesErrUnsupportedOS(t *testing.T) {
+	original := runtimeGOOS
+	defer func() { runtimeGOOS = original }()
+	runtimeGOOS = "windows"
+
+	installed, err := InstallationStatus()
+	if !errors.Is(err, ErrUnsupportedOS) {
+		t.Fatalf("InstallationStatus on unsupported OS = %v, want ErrUnsupportedOS", err)
+	}
+	if installed {
+		t.Fatal("daemon cannot be installed on an unsupported OS")
 	}
 }
 

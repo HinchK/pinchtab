@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -117,6 +118,120 @@ func TestEnsureServer_UnreachableStillAutoStarts(t *testing.T) {
 	if probes < 2 {
 		t.Errorf("health probes = %d, want the post-start readiness poll too", probes)
 	}
+}
+
+func TestEnsureServerWithDaemonRecoveryOwnsInstalledDaemonLifecycle(t *testing.T) {
+	t.Run("installed healthy", func(t *testing.T) {
+		ownershipCalled := false
+		daemonStarted := false
+		detachedStarted := false
+		err := ensureServerWithDaemonRecovery(
+			"http://127.0.0.1:9867", "", "nav", true,
+			func() error { detachedStarted = true; return nil },
+			func(string, string) server.HealthProbe {
+				return server.HealthProbe{Reachable: true, StatusCode: http.StatusOK}
+			},
+			func() (bool, error) { ownershipCalled = true; return true, nil },
+			func() (string, error) { daemonStarted = true; return "started", nil },
+			time.Second,
+		)
+		if err != nil {
+			t.Fatalf("ensureServerWithDaemonRecovery() error = %v", err)
+		}
+		if ownershipCalled || daemonStarted || detachedStarted {
+			t.Fatalf("healthy installed daemon should be left alone: ownership=%t daemon=%t detached=%t", ownershipCalled, daemonStarted, detachedStarted)
+		}
+	})
+
+	t.Run("installed unloaded starts through manager", func(t *testing.T) {
+		daemonStarted := false
+		detachedStarted := false
+		probes := 0
+		err := ensureServerWithDaemonRecovery(
+			"http://127.0.0.1:9867", "", "nav", true,
+			func() error { detachedStarted = true; return nil },
+			func(string, string) server.HealthProbe {
+				probes++
+				if daemonStarted {
+					return server.HealthProbe{Reachable: true, StatusCode: http.StatusOK}
+				}
+				return server.HealthProbe{}
+			},
+			func() (bool, error) { return true, nil },
+			func() (string, error) { daemonStarted = true; return "Pinchtab daemon started.", nil },
+			time.Second,
+		)
+		if err != nil {
+			t.Fatalf("ensureServerWithDaemonRecovery() error = %v", err)
+		}
+		if !daemonStarted || detachedStarted || probes < 2 {
+			t.Fatalf("expected bounded daemon recovery only: daemon=%t detached=%t probes=%d", daemonStarted, detachedStarted, probes)
+		}
+	})
+
+	t.Run("installed wedged listener refuses detached fallback", func(t *testing.T) {
+		daemonStarted := false
+		detachedStarted := false
+		err := ensureServerWithDaemonRecovery(
+			"http://127.0.0.1:9867", "", "nav", true,
+			func() error { detachedStarted = true; return nil },
+			func(string, string) server.HealthProbe {
+				return unhealthyProbe(`{"reason":"browser stuck","status":"error"}`)
+			},
+			func() (bool, error) { return true, nil },
+			func() (string, error) { daemonStarted = true; return "started", nil },
+			time.Second,
+		)
+		if err == nil || !strings.Contains(err.Error(), "installed PinchTab daemon owns lifecycle") || !strings.Contains(err.Error(), "port owner") {
+			t.Fatalf("wedged installed daemon error = %v", err)
+		}
+		if daemonStarted || detachedStarted {
+			t.Fatalf("wedged listener must not be restarted or replaced implicitly: daemon=%t detached=%t", daemonStarted, detachedStarted)
+		}
+	})
+
+	t.Run("not installed auto-starts detached", func(t *testing.T) {
+		daemonStarted := false
+		detachedStarted := false
+		err := ensureServerWithDaemonRecovery(
+			"http://127.0.0.1:9867", "", "nav", true,
+			func() error { detachedStarted = true; return nil },
+			func(string, string) server.HealthProbe {
+				if detachedStarted {
+					return server.HealthProbe{Reachable: true, StatusCode: http.StatusOK}
+				}
+				return server.HealthProbe{}
+			},
+			func() (bool, error) { return false, nil },
+			func() (string, error) { daemonStarted = true; return "started", nil },
+			time.Second,
+		)
+		if err != nil {
+			t.Fatalf("ensureServerWithDaemonRecovery() error = %v", err)
+		}
+		if !detachedStarted || daemonStarted {
+			t.Fatalf("no installed daemon must cold-start a detached server: detached=%t daemon=%t", detachedStarted, daemonStarted)
+		}
+	})
+
+	t.Run("unknown ownership refuses detached fallback", func(t *testing.T) {
+		daemonStarted := false
+		detachedStarted := false
+		err := ensureServerWithDaemonRecovery(
+			"http://127.0.0.1:9867", "", "nav", true,
+			func() error { detachedStarted = true; return nil },
+			func(string, string) server.HealthProbe { return server.HealthProbe{} },
+			func() (bool, error) { return false, errors.New("service path unreadable") },
+			func() (string, error) { daemonStarted = true; return "started", nil },
+			time.Second,
+		)
+		if err == nil || !strings.Contains(err.Error(), "cannot determine background-service ownership") {
+			t.Fatalf("unknown ownership error = %v", err)
+		}
+		if daemonStarted || detachedStarted {
+			t.Fatalf("unknown ownership must not start anything: daemon=%t detached=%t", daemonStarted, detachedStarted)
+		}
+	})
 }
 
 func TestEnsureServer_ReadinessWaitTreatsUnhealthyAsNotReadyYet(t *testing.T) {

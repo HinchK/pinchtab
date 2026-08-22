@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -70,8 +71,33 @@ var serverRestartCmd = &cobra.Command{
 	},
 }
 
-func runServerRestart(cfg *config.RuntimeConfig) error {
+func detachedDaemonOwnership() (bool, error) {
 	installed, err := daemonInstallationStatus()
+	if err != nil {
+		if errors.Is(err, daemon.ErrUnsupportedOS) {
+			return false, nil
+		}
+		return false, err
+	}
+	return installed, nil
+}
+
+func requireDetachedServerOwnership(action string, addressChanged bool) error {
+	if addressChanged {
+		return nil
+	}
+	installed, err := detachedDaemonOwnership()
+	if err != nil {
+		return fmt.Errorf("cannot determine background-service ownership; refusing %s: %w", action, err)
+	}
+	if installed {
+		return fmt.Errorf("background service is installed; use `pinchtab daemon start` so one service manager owns the server, or pass --bind/--port with a different address to run a separate detached server")
+	}
+	return nil
+}
+
+func runServerRestart(cfg *config.RuntimeConfig) error {
+	installed, err := detachedDaemonOwnership()
 	if err != nil {
 		return fmt.Errorf("cannot determine background-service ownership; refusing restart: %w", err)
 	}
@@ -85,7 +111,7 @@ func runServerRestart(cfg *config.RuntimeConfig) error {
 		}
 	}
 	fmt.Println("Starting server...")
-	return runServerBackground(cfg, serverBackgroundOptions{})
+	return runServerBackground(cfg, serverBackgroundOptions{}, false)
 }
 
 func stateDirForConfig(cfg *config.RuntimeConfig) string {
@@ -137,7 +163,11 @@ func spawnDetachedChild(binary string, args []string, out *os.File) (int, error)
 	return pid, nil
 }
 
-func runServerBackground(cfg *config.RuntimeConfig, opts serverBackgroundOptions) error {
+func runServerBackground(cfg *config.RuntimeConfig, opts serverBackgroundOptions, addressChanged bool) error {
+	if err := requireDetachedServerOwnership("background start", addressChanged); err != nil {
+		return err
+	}
+
 	stateDir := stateDirForConfig(cfg)
 	if info, ok := readServerPID(stateDir); ok {
 		if processAlive(info.PID) {

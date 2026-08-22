@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,8 +12,121 @@ import (
 	"testing"
 
 	"github.com/pinchtab/pinchtab/internal/config"
+	"github.com/pinchtab/pinchtab/internal/daemon"
 	"github.com/pinchtab/pinchtab/internal/server"
 )
+
+func TestDetachedDaemonOwnershipTreatsUnsupportedOSAsNotInstalled(t *testing.T) {
+	original := daemonInstallationStatus
+	defer func() { daemonInstallationStatus = original }()
+
+	daemonInstallationStatus = func() (bool, error) {
+		return false, fmt.Errorf("resolve manager: %w", daemon.ErrUnsupportedOS)
+	}
+	installed, err := detachedDaemonOwnership()
+	if err != nil {
+		t.Fatalf("unsupported OS must not be an ownership error, got %v", err)
+	}
+	if installed {
+		t.Fatal("a daemon cannot own the server on an OS that cannot host one")
+	}
+
+	daemonInstallationStatus = func() (bool, error) {
+		return false, errors.New("service path unreadable")
+	}
+	if _, err := detachedDaemonOwnership(); err == nil {
+		t.Fatal("a genuine ownership error must still propagate")
+	}
+}
+
+func TestDetachedAddressChanged(t *testing.T) {
+	cases := []struct {
+		name       string
+		bind, port string
+		flagBind   string
+		flagPort   string
+		want       bool
+	}{
+		{"no flags", "127.0.0.1", "9867", "", "", false},
+		{"port equals default", "127.0.0.1", "9867", "", "9867", false},
+		{"bind equals default", "127.0.0.1", "9867", "127.0.0.1", "", false},
+		{"blank flags", "127.0.0.1", "9867", "  ", "  ", false},
+		{"port differs", "127.0.0.1", "9867", "", "5000", true},
+		{"bind differs", "127.0.0.1", "9867", "0.0.0.0", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := &config.RuntimeConfig{Bind: tc.bind, Port: tc.port}
+			if got := detachedAddressChanged(cfg, tc.flagBind, tc.flagPort); got != tc.want {
+				t.Fatalf("detachedAddressChanged() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequireDetachedServerOwnershipAllowsChangedAddress(t *testing.T) {
+	original := daemonInstallationStatus
+	defer func() { daemonInstallationStatus = original }()
+	daemonInstallationStatus = func() (bool, error) { return true, nil }
+
+	if err := requireDetachedServerOwnership("background start", true); err != nil {
+		t.Fatalf("a genuinely different address must bypass the ownership gate, got %v", err)
+	}
+	err := requireDetachedServerOwnership("background start", false)
+	if err == nil || !strings.Contains(err.Error(), "pinchtab daemon start") {
+		t.Fatalf("the daemon-owned address must still defer to the installed daemon, got %v", err)
+	}
+}
+
+func TestRequireDetachedServerOwnershipAllowsUnsupportedOS(t *testing.T) {
+	original := daemonInstallationStatus
+	defer func() { daemonInstallationStatus = original }()
+	daemonInstallationStatus = func() (bool, error) {
+		return false, fmt.Errorf("resolve manager: %w", daemon.ErrUnsupportedOS)
+	}
+
+	if err := requireDetachedServerOwnership("automatic start", false); err != nil {
+		t.Fatalf("auto-start on an OS without daemon support must be allowed, got %v", err)
+	}
+}
+
+func TestDetachedServerStartsRefuseInstalledOrUnknownServiceOwnership(t *testing.T) {
+	original := daemonInstallationStatus
+	defer func() { daemonInstallationStatus = original }()
+
+	tests := []struct {
+		name      string
+		installed bool
+		err       error
+		start     func() error
+		want      string
+	}{
+		{
+			name: "background installed", installed: true,
+			start: func() error { return runServerBackground(&config.RuntimeConfig{}, serverBackgroundOptions{}, false) },
+			want:  "pinchtab daemon start",
+		},
+		{
+			name: "automatic installed", installed: true,
+			start: autoStartServer,
+			want:  "pinchtab daemon start",
+		},
+		{
+			name: "automatic unknown", err: errors.New("service path unreadable"),
+			start: autoStartServer,
+			want:  "refusing automatic start",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			daemonInstallationStatus = func() (bool, error) { return tt.installed, tt.err }
+			err := tt.start()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("detached start error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
 
 func TestServerRestartRefusesInstalledOrUnknownServiceOwnership(t *testing.T) {
 	original := daemonInstallationStatus

@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,6 +15,10 @@ const (
 	pinchtabDaemonUnitName = "pinchtab.service"
 	pinchtabLaunchdLabel   = "com.pinchtab.pinchtab"
 )
+
+var ErrUnsupportedOS = errors.New("pinchtab daemon is supported on macOS and Linux only")
+
+var runtimeGOOS = runtime.GOOS
 
 type Manager interface {
 	Preflight() error
@@ -111,7 +116,7 @@ func currentEnvironment() (environment, error) {
 	return environment{
 		execPath:      execPath,
 		homeDir:       homeDir,
-		osName:        runtime.GOOS,
+		osName:        runtimeGOOS,
 		userID:        currentUser.Uid,
 		xdgConfigHome: os.Getenv("XDG_CONFIG_HOME"),
 	}, nil
@@ -124,7 +129,7 @@ func newManager(env environment, runner commandRunner) (Manager, error) {
 	case "darwin":
 		return &launchdManager{env: env, runner: runner}, nil
 	default:
-		return nil, fmt.Errorf("pinchtab daemon is supported on macOS and Linux; current OS is %s", env.osName)
+		return nil, fmt.Errorf("%w; current OS is %s", ErrUnsupportedOS, env.osName)
 	}
 }
 
