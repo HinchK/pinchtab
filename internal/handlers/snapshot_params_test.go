@@ -1,14 +1,24 @@
 package handlers
 
 import (
+	"context"
+	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pinchtab/pinchtab/internal/bridge"
+	"github.com/pinchtab/pinchtab/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 func parseQuery(t *testing.T, raw string) (SnapshotCostControls, error) {
@@ -241,4 +251,229 @@ func equalStrings(got, want []string) bool {
 		}
 	}
 	return true
+}
+
+type snapshotStubBridge struct {
+	*mockBridge
+}
+
+func (b *snapshotStubBridge) Snapshot(context.Context, string, string, bridge.ContentParams) (*bridge.SnapshotResult, error) {
+	return &bridge.SnapshotResult{
+		Nodes: []bridge.A11yNode{{Role: "button", Name: "Buy"}},
+		URL:   "http://127.0.0.1:1/fixture",
+		Title: "Fixture",
+	}, nil
+}
+
+func (b *snapshotStubBridge) GetRefCache(string) *bridge.RefCache {
+	return &bridge.RefCache{Nodes: []bridge.A11yNode{{Role: "link", Name: "Home"}}}
+}
+
+func snapshotBodyFor(t *testing.T, query string) string {
+	t.Helper()
+	h := New(&snapshotStubBridge{mockBridge: &mockBridge{}}, &config.RuntimeConfig{
+		ActionTimeout:     5 * time.Second,
+		DefaultBrowser:    config.BrowserGhostChrome,
+		BrowsersAvailable: []string{config.BrowserGhostChrome},
+		StateDir:          t.TempDir(),
+	}, nil, nil, nil)
+	req := httptest.NewRequest("GET", "/snapshot?"+query, nil)
+	w := httptest.NewRecorder()
+	h.HandleSnapshot(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("snapshot?%s: status %d body=%s", query, w.Code, w.Body.String())
+	}
+	return w.Body.String()
+}
+
+func jsonEnvelope(t *testing.T, body string) []string {
+	t.Helper()
+	return ignoredFromEnvelope(t, body, func(b []byte, v any) error { return json.Unmarshal(b, v) })
+}
+
+func yamlEnvelope(t *testing.T, body string) []string {
+	t.Helper()
+	return ignoredFromEnvelope(t, body, func(b []byte, v any) error { return yaml.Unmarshal(b, v) })
+}
+
+func ignoredFromEnvelope(t *testing.T, body string, unmarshal func([]byte, any) error) []string {
+	t.Helper()
+	var envelope struct {
+		IgnoredParams []string `json:"ignoredParams" yaml:"ignoredParams"`
+	}
+	if err := unmarshal([]byte(body), &envelope); err != nil {
+		t.Fatalf("cannot read the response envelope: %v\n%s", err, body)
+	}
+	return envelope.IgnoredParams
+}
+
+func ignoredFromComment(t *testing.T, body string) []string {
+	t.Helper()
+	for _, line := range strings.Split(body, "\n") {
+		if rest, found := strings.CutPrefix(line, "# ignored params: "); found {
+			return strings.Split(rest, ", ")
+		}
+	}
+	t.Fatalf("no ignored-params comment in the response:\n%s", body)
+	return nil
+}
+
+func TestTheDisclosureReachesTheCaller(t *testing.T) {
+	const mistyped = "tabId=tab1&compact=true&maxtokens=50"
+	want := []string{"compact", "maxtokens"}
+
+	for _, tc := range []struct {
+		name    string
+		format  string
+		extra   string
+		witness string
+		extract func(*testing.T, string) []string
+	}{
+		{format: "json", witness: "vocabularyToken", extract: jsonEnvelope},
+		{format: "yaml", witness: "nodes:", extract: yamlEnvelope},
+		{format: "compact", witness: "| 1 nodes\n", extract: ignoredFromComment},
+		{format: "text", witness: "# Fixture\n#", extract: ignoredFromComment},
+		{name: "json diff", format: "json", extra: "&diff=true", witness: "counts", extract: jsonEnvelope},
+		{name: "compact diff", format: "compact", extra: "&diff=true", witness: "| +", extract: ignoredFromComment},
+		{name: "file output", format: "json", extra: "&output=file", witness: "timestamp", extract: jsonEnvelope},
+	} {
+		name := tc.name
+		if name == "" {
+			name = tc.format
+		}
+		t.Run(name, func(t *testing.T) {
+			body := snapshotBodyFor(t, mistyped+"&format="+tc.format+tc.extra)
+			if !strings.Contains(body, tc.witness) {
+				t.Fatalf("this case no longer reaches the %s branch (nothing matched %q), so whatever it asserts is about some other response:\n%s", name, tc.witness, body)
+			}
+			if got := tc.extract(t, body); !equalStrings(got, want) {
+				t.Errorf("the %s response discloses %v, want %v — a caller whose cost control did nothing is told nothing", name, got, want)
+			}
+		})
+	}
+}
+
+func TestAResponseWithoutIgnoredParamsCarriesNoDisclosure(t *testing.T) {
+	for _, format := range []string{"json", "yaml", "compact", "text"} {
+		t.Run(format, func(t *testing.T) {
+			body := snapshotBodyFor(t, "tabId=tab1&filter=interactive&format="+format)
+			if strings.Contains(body, "ignoredParams") || strings.Contains(body, "ignored params") {
+				t.Errorf("a clean query is told something was ignored:\n%s", body)
+			}
+		})
+	}
+}
+
+const snapshotHandlerFile = "snapshot.go"
+
+var disclosureHelpers = map[string]bool{"attachIgnoredParams": true, "writeIgnoredParamsComment": true}
+
+func successResponseBlocks(fn *ast.FuncDecl) []ast.Node {
+	var stack, blocks []ast.Node
+	seen := map[ast.Node]bool{}
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if n == nil {
+			stack = stack[:len(stack)-1]
+			return false
+		}
+		if call, ok := n.(*ast.CallExpr); ok && writesSuccess(call) {
+			if block := innermostBlock(stack); block != nil && !seen[block] {
+				seen[block] = true
+				blocks = append(blocks, block)
+			}
+		}
+		stack = append(stack, n)
+		return true
+	})
+	return blocks
+}
+
+func writesSuccess(call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	switch sel.Sel.Name {
+	case "JSON":
+		return len(call.Args) > 1 && isStatusOK(call.Args[1])
+	case "WriteHeader":
+		return len(call.Args) == 1 && isStatusOK(call.Args[0])
+	}
+	return false
+}
+
+func isStatusOK(arg ast.Expr) bool {
+	switch v := arg.(type) {
+	case *ast.BasicLit:
+		return v.Value == "200"
+	case *ast.SelectorExpr:
+		return v.Sel.Name == "StatusOK"
+	}
+	return false
+}
+
+func innermostBlock(stack []ast.Node) ast.Node {
+	for i := len(stack) - 1; i >= 0; i-- {
+		switch stack[i].(type) {
+		case *ast.BlockStmt, *ast.CaseClause:
+			return stack[i]
+		}
+	}
+	return nil
+}
+
+func disclosesIgnoredParams(block ast.Node) bool {
+	found := false
+	ast.Inspect(block, func(n ast.Node) bool {
+		if n == nil || found {
+			return false
+		}
+		if n != block && opensANestedBranch(n) {
+			return false
+		}
+		if call, ok := n.(*ast.CallExpr); ok {
+			if name, ok := call.Fun.(*ast.Ident); ok && disclosureHelpers[name.Name] {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+func opensANestedBranch(n ast.Node) bool {
+	switch n.(type) {
+	case *ast.BlockStmt, *ast.CaseClause, *ast.CommClause:
+		return true
+	}
+	return false
+}
+
+func TestEveryResponseBranchDisclosesIgnoredParams(t *testing.T) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, snapshotHandlerFile, nil, 0)
+	if err != nil {
+		t.Fatalf("cannot parse %s, so this guard checks nothing: %v", snapshotHandlerFile, err)
+	}
+
+	var handler *ast.FuncDecl
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "HandleSnapshot" {
+			handler = fn
+		}
+	}
+	if handler == nil {
+		t.Fatalf("HandleSnapshot is no longer in %s; re-point this guard rather than deleting it", snapshotHandlerFile)
+	}
+
+	blocks := successResponseBlocks(handler)
+	if len(blocks) < 7 {
+		t.Fatalf("found %d response branches in HandleSnapshot; there are seven, so the scan is matching the wrong thing — lower this floor only for a branch deliberately removed", len(blocks))
+	}
+	for _, block := range blocks {
+		if !disclosesIgnoredParams(block) {
+			t.Errorf("%s: this response branch calls neither attachIgnoredParams nor writeIgnoredParamsComment, so a caller served by it is never told which of its parameters did nothing; the helpers make the disclosure easy to add, and only this scan makes it hard to forget",
+				fset.Position(block.Pos()))
+		}
+	}
 }
