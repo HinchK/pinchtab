@@ -34,18 +34,21 @@ assert_json_contains "$RESULT" '.pages[0].url' "index.html" "homepage first in p
 end_test
 
 # ─────────────────────────────────────────────────────────────────
-start_test "sampling is reproducible across runs"
+# Stability is pinned against the checked-in expectation rather than against a
+# second crawl: the plan is a pure function of the sitemap (SamplePages keeps
+# every ungrouped page in sitemap order, then the lexically-first sampleSize
+# members of each template group), so naming the pages the sampler must choose
+# also catches a selection that is stable but wrong — which comparing two runs
+# of the same build never can.
+start_test "sampling picks the documented pages on every run"
 
-FIRST_SET=$(echo "$RESULT" | jq -S '[.pages[].url] | sort')
+SAMPLED=$(echo "$RESULT" | jq -c '[.pages[].url | split("/") | last] | sort')
+EXPECTED='["a11y-issues.html","broken-assets.html","clean.html","console-errors.html","cookie-echo.html","forms.html","index.html","p1.html","p2.html"]'
 
-pt_post /audit -d "$SAMPLING_BODY"
-assert_ok "second sampled audit"
-SECOND_SET=$(echo "$RESULT" | jq -S '[.pages[].url] | sort')
-
-if [ "$FIRST_SET" = "$SECOND_SET" ]; then
-  pass_assert "identical page URL set across runs"
+if [ "$SAMPLED" = "$EXPECTED" ]; then
+  pass_assert "sampled page set is the 7 non-group pages plus the lexically-first 2 products"
 else
-  fail_assert "URL sets differ: $FIRST_SET vs $SECOND_SET"
+  fail_assert "sampled page set drifted: $SAMPLED, want $EXPECTED"
 fi
 
 end_test
