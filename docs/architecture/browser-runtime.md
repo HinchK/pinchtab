@@ -7,8 +7,8 @@ Related: [browser-abstraction.md](browser-abstraction.md), [routing-contract.md]
 
 Handlers have zero chromedp/cdproto imports. All browser operations go
 through BridgeAPI (~40 methods). CDP usage is contained in the bridge
-layer and the cdptk shared toolkit. Each browser provider owns its
-post-launch runtime behavior via the `RuntimeInstance` interface.
+layer and the cdptk shared toolkit. Post-launch behavior belongs to the
+Bridge; providers shape it declaratively through `Capabilities()`.
 
 ## Layer diagram
 
@@ -39,8 +39,6 @@ post-launch runtime behavior via the `RuntimeInstance` interface.
 │  Owns: lifecycle, tab routing, locks, auto-close,       │
 │        network monitoring, CDP connection               │
 │                                                         │
-│  Holds a RuntimeInstance for provider-specific behavior. │
-│                                                         │
 │  Visual:     CaptureScreenshot, StartScreencast         │
 │  Evaluate:   Evaluate, CallFunctionOnNode,              │
 │              EvaluateInFrame                             │
@@ -63,22 +61,7 @@ post-launch runtime behavior via the `RuntimeInstance` interface.
 │  BridgeAPI signatures use domain types, not CDP types.   │
 │  CDP types never appear in BridgeAPI signatures.         │
 └──────────────────────────┬──────────────────────────────┘
-                           │ RuntimeInstance + chromedp (internal)
-                           ▼
-┌─────────────────────────────────────────────────────────┐
-│  RuntimeInstance (per-provider runtime)                  │
-│                                                         │
-│  20-method interface in internal/browsers/.              │
-│  Each provider owns HOW it controls the browser.        │
-│  CDP is an implementation detail, not a contract.       │
-│                                                         │
-│  Chrome instance  → uses cdptk (shared toolkit)         │
-│  Cloak instance   → embeds Chrome, forces polling       │
-│                     screencast (no Page.startScreencast) │
-│  Ghost-chrome     → embeds Chrome (pure delegation)     │
-│  Future: Firefox  → WebDriver BiDi (no CDP at all)      │
-└──────────────────────────┬──────────────────────────────┘
-                           │
+                           │ chromedp (internal)
                            ▼
 ┌─────────────────────────────────────────────────────────┐
 │  internal/cdptk/ (shared CDP toolkit)                   │
@@ -91,30 +74,28 @@ post-launch runtime behavior via the `RuntimeInstance` interface.
 │  cdptk.ScreencastRepaintLoop(ctx) (start/stop)          │
 │  cdptk.AnnotatedScreenshot(ctx, ...) → []byte           │
 │                                                         │
-│  Used by RuntimeInstance impls. Never by handlers.      │
+│  Used by the bridge. Never by handlers.                 │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ## Browser interface (pre-launch)
 
-The `Browser` interface handles pre-launch concerns: ID, DisplayName,
+The `Browser` interface is pre-launch only: ID, DisplayName,
 BuildLaunchArgs, CanHandle, DiscoverBinary, DoctorChecks, GeoAlignment,
-Capabilities, ValidateTarget. It also provides `NewRuntimeInstance()` to
-create the post-launch runtime.
-
-Each provider package exports both:
+Capabilities, ValidateTarget, SupportsRemoteCDP, ClassifyLaunchError.
 
 ```go
 // internal/browsers/chrome/chrome.go
 type Browser struct{}           // implements browsers.Browser (pre-launch)
-
-// internal/browsers/chrome/instance.go
-type Instance struct{}          // implements browsers.RuntimeInstance (post-launch)
 ```
 
-The Bridge calls `browser.NewRuntimeInstance(browserCtx, headless)`
-during `EnsureBrowser()` and holds the returned `RuntimeInstance` for the
-session lifetime.
+There is no per-provider post-launch runtime type. A provider that needs
+different runtime behavior declares a capability and the Bridge branches on
+it — see [Capability-based routing](#capability-based-routing). An earlier
+design gave each provider its own runtime implementation of the same ~20
+operations the Bridge already implemented; the second copy drifted from the
+live one and was deleted. Reach for a capability before reaching for a
+parallel implementation.
 
 ## TabHandle
 
@@ -162,7 +143,7 @@ browser's capability set.
 |---|---|---|
 | bridge/ | Page, DOM, Runtime, Network, Fetch, Emulation, Input, Target | All browser operations delegated from handlers |
 | cdptk/ | Page, DOM, Runtime | Shared pure-function CDP wrappers |
-| browsers/chrome/ | Page, DOM, Runtime, Network, Fetch, Emulation | RuntimeInstance implementation |
+| browsers/chrome/ | Runtime (via `chromedp.Evaluate`) | Launch-probe diagnostics only; no post-launch operations |
 | handlers/ | None | All operations via BridgeAPI |
 
 ## Non-goals
