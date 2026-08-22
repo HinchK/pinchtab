@@ -33,16 +33,6 @@ type ScreencastStream struct {
 	closer func()
 }
 
-// NewScreencastStream creates a stream that owns its done channel; Close is the
-// only closer of done.
-func NewScreencastStream(frames <-chan []byte, closer func()) *ScreencastStream {
-	return &ScreencastStream{
-		Frames: frames,
-		done:   make(chan struct{}),
-		closer: closer,
-	}
-}
-
 // NewScreencastStreamWithDone creates a stream over a caller-supplied done
 // channel, for producers that close done themselves when the source ends (e.g.
 // the bridge screencast loop). Close still guards against a double close.

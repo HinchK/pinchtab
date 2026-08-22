@@ -9,7 +9,6 @@ import (
 
 	"github.com/chromedp/chromedp"
 	bridgeruntime "github.com/pinchtab/pinchtab/internal/bridge/runtime"
-	"github.com/pinchtab/pinchtab/internal/browsers"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/ids"
 	"github.com/pinchtab/pinchtab/internal/stealth"
@@ -58,9 +57,6 @@ type Bridge struct {
 	handoffs             map[string]TabHandoffState
 	pointerMu            sync.RWMutex
 	pointerByTab         map[string]pointerState
-
-	// Initialized during EnsureBrowser. Nil before launch.
-	Runtime browsers.RuntimeInstance
 
 	initMu      sync.Mutex
 	initialized bool

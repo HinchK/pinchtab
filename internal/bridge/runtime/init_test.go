@@ -274,9 +274,6 @@ func (noCDPBrowser) ClassifyLaunchError(_ browsers.LaunchFailure) browsers.Launc
 func (noCDPBrowser) CanHandle(_ browsers.RequestIntent) browsers.HandleDecision {
 	return browsers.HandleDecision{Decision: browsers.DecisionHandle}
 }
-func (noCDPBrowser) NewRuntimeInstance(_ context.Context, _ bool) browsers.RuntimeInstance {
-	return nil
-}
 
 var registerNoCDPOnce sync.Once
 

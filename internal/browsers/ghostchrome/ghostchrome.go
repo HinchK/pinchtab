@@ -127,10 +127,6 @@ func (b Browser) CanHandle(intent browsers.RequestIntent) browsers.HandleDecisio
 	return ghostCanHandle(intent)
 }
 
-func (Browser) NewRuntimeInstance(browserCtx context.Context, headless bool) browsers.RuntimeInstance {
-	return NewInstance(browserCtx, headless)
-}
-
 // All methods use value receivers (consistent with chrome/cloak), so the value
 // type satisfies the interface; the pointer registered below does too.
 var _ browsers.Browser = Browser{}

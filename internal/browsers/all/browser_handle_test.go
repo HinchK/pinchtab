@@ -1,7 +1,6 @@
 package all_test
 
 import (
-	"context"
 	"sync"
 	"testing"
 
@@ -30,7 +29,6 @@ func (handleStub) ClassifyLaunchError(_ browsers.LaunchFailure) browsers.LaunchE
 func (handleStub) CanHandle(_ browsers.RequestIntent) browsers.HandleDecision {
 	return browsers.HandleDecision{Decision: browsers.DecisionHandle}
 }
-func (handleStub) NewRuntimeInstance(_ context.Context, _ bool) browsers.RuntimeInstance { return nil }
 
 type skipStub struct{}
 
@@ -53,7 +51,6 @@ func (skipStub) ClassifyLaunchError(_ browsers.LaunchFailure) browsers.LaunchErr
 func (skipStub) CanHandle(_ browsers.RequestIntent) browsers.HandleDecision {
 	return browsers.HandleDecision{Decision: browsers.DecisionSkip, Reason: "not supported"}
 }
-func (skipStub) NewRuntimeInstance(_ context.Context, _ bool) browsers.RuntimeInstance { return nil }
 
 type failStub struct{}
 
@@ -76,7 +73,6 @@ func (failStub) ClassifyLaunchError(_ browsers.LaunchFailure) browsers.LaunchErr
 func (failStub) CanHandle(_ browsers.RequestIntent) browsers.HandleDecision {
 	return browsers.HandleDecision{Decision: browsers.DecisionFail, Reason: "fatal: missing dependency"}
 }
-func (failStub) NewRuntimeInstance(_ context.Context, _ bool) browsers.RuntimeInstance { return nil }
 
 var (
 	registerHandleOnce sync.Once

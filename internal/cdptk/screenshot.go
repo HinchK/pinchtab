@@ -114,11 +114,10 @@ func ClipForNode(ctx context.Context, nodeID int64, css1x bool) (*ScreenshotClip
 }
 
 // CaptureFromSurface decides the Page.captureScreenshot fromSurface flag. It is the one
-// owner of that rule: it had two implementations that could not import each other, and
-// they had already drifted once — the bridge path was fixed while the RuntimeInstance
-// path kept fromSurface=false and went on applying a clip CDP discarded, so scoped and
-// beyond-viewport captures returned the full viewport with their annotation boxes mapped
-// into the clip's coordinate space.
+// owner of that rule: it once had two implementations that could not import each other,
+// and they drifted — one path was fixed while the other kept fromSurface=false and went
+// on applying a clip CDP discarded, so scoped and beyond-viewport captures returned the
+// full viewport with their annotation boxes mapped into the clip's coordinate space.
 //
 // fromSurface=false reads the renderer's current view directly instead of waiting for a
 // fresh compositor surface frame. On idle pages in headed browsers (e.g. Cloak) the
