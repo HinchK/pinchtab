@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -26,11 +25,9 @@ import (
 //
 // @Param tabId string query Tab ID (required)
 // @Param filter string query Filter type: "interactive" for clickable/inputs only, "all" for everything (optional, default: "all")
-// @Param interactive bool query Alias for filter=interactive (optional)
-// @Param compact bool query Compact output (shorter ref names) (optional, default: false)
 // @Param depth int query Max nesting depth (optional, default: -1 for full tree)
-// @Param text bool query Include text content (optional, default: true)
-// @Param format string query Output format: "json" or "yaml" (optional, default: "json")
+// @Param maxTokens int query Token budget for the response (optional, positive)
+// @Param format string query Output format: "json", "compact", "text" or "yaml" (optional, default: "json")
 // @Param diff bool query Include diff with previous snapshot (optional, default: false)
 // @Param output string query Write to file instead of response (optional)
 //
@@ -48,7 +45,7 @@ import (
 //
 // @Example curl compact:
 //
-//	curl "http://localhost:9867/snapshot?tabId=abc123&filter=interactive&compact=true"
+//	curl "http://localhost:9867/snapshot?tabId=abc123&filter=interactive&format=compact"
 //
 // @Example cli:
 //
@@ -59,8 +56,32 @@ import (
 //	import requests
 //	r = requests.get("http://localhost:9867/snapshot", params={"tabId": "abc123", "filter": "interactive"})
 //	tree = r.json()
+//
+// attachIgnoredParams reports the query parameters the server did not read. A caller that
+// mistypes a flag otherwise gets a plausible-looking answer to a question it did not ask —
+// which is exactly how `compact=true` survived in the CLI for as long as it did.
+func attachIgnoredParams(data map[string]any, ignored []string) map[string]any {
+	if len(ignored) > 0 {
+		data["ignoredParams"] = ignored
+	}
+	return data
+}
+
+// writeIgnoredParamsComment is the same disclosure for the plain-text formats, in the
+// comment shape those responses already use for hints.
+func writeIgnoredParamsComment(w http.ResponseWriter, ignored []string) {
+	if len(ignored) > 0 {
+		_, _ = fmt.Fprintf(w, "# ignored params: %s\n", strings.Join(ignored, ", "))
+	}
+}
+
 func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
-	filter := r.URL.Query().Get("filter")
+	controls, err := ParseSnapshotCostControls(r.URL.Query())
+	if err != nil {
+		httpx.Error(w, 400, err)
+		return
+	}
+	filter := controls.Filter
 
 	tabID := r.URL.Query().Get("tabId")
 	effectiveCfg, snapChromeRoute, ok := h.resolveReadRouting(w, r, tabID, "snapshot", browsers.ShapeStaticSnapshot)
@@ -73,25 +94,13 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	doDiff := r.URL.Query().Get("diff") == "true"
-	format := r.URL.Query().Get("format")
+	format := controls.Format
 	output := r.URL.Query().Get("output")
 	outputPath := r.URL.Query().Get("path")
 	selector := r.URL.Query().Get("selector")
-	maxTokensStr := r.URL.Query().Get("maxTokens")
 	reqNoAnim := r.URL.Query().Get("noAnimations") == "true"
-	maxDepthStr := r.URL.Query().Get("depth")
-	maxDepth := -1
-	if maxDepthStr != "" {
-		if d, err := strconv.Atoi(maxDepthStr); err == nil {
-			maxDepth = d
-		}
-	}
-	maxTokens := -1
-	if maxTokensStr != "" {
-		if t, err := strconv.Atoi(maxTokensStr); err == nil && t > 0 {
-			maxTokens = t
-		}
-	}
+	maxDepth := controls.MaxDepth
+	maxTokens := controls.MaxTokens
 
 	resolvedTabID, tCtx, cancel, ok := h.resolveReadContext(w, r, tabID, effectiveCfg.ActionTimeout)
 	if !ok {
@@ -341,12 +350,12 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		httpx.JSON(w, 200, map[string]any{
+		httpx.JSON(w, 200, attachIgnoredParams(map[string]any{
 			"path":      filePath,
 			"size":      len(content),
 			"format":    format,
 			"timestamp": timestamp,
-		})
+		}, controls.Ignored))
 		return
 	}
 
@@ -363,6 +372,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 				_, _ = fmt.Fprintf(w, " (truncated to ~%d tokens)", maxTokens)
 			}
 			_, _ = w.Write([]byte("\n"))
+			writeIgnoredParamsComment(w, controls.Ignored)
 			content := bridge.FormatSnapshotCompactDiff(flat, added, changed, removed)
 			if wrapContent {
 				content = h.IDPIGuard.WrapContent(content, url)
@@ -371,7 +381,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		httpx.JSON(w, 200, scopeInfo.attach(map[string]any{
+		httpx.JSON(w, 200, attachIgnoredParams(scopeInfo.attach(map[string]any{
 			"url":     url,
 			"title":   title,
 			"route":   snapChromeRoute,
@@ -385,7 +395,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 				"removed": len(removed),
 				"total":   len(flat),
 			},
-		}))
+		}), controls.Ignored))
 		return
 	}
 
@@ -401,6 +411,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		if scopedEmptyHint != "" {
 			_, _ = fmt.Fprintf(w, "# hint: %s\n", scopedEmptyHint)
 		}
+		writeIgnoredParamsComment(w, controls.Ignored)
 		content := bridge.FormatSnapshotCompact(flat)
 		if wrapContent {
 			content = h.IDPIGuard.WrapContent(content, url)
@@ -413,6 +424,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		if scopedEmptyHint != "" {
 			_, _ = fmt.Fprintf(w, "# hint: %s\n", scopedEmptyHint)
 		}
+		writeIgnoredParamsComment(w, controls.Ignored)
 		_, _ = w.Write([]byte("\n"))
 		content := bridge.FormatSnapshotText(flat)
 		if wrapContent {
@@ -429,6 +441,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		if scopedEmptyHint != "" {
 			data["hint"] = scopedEmptyHint
 		}
+		attachIgnoredParams(data, controls.Ignored)
 		yamlContent, err := yaml.Marshal(data)
 		if err != nil {
 			httpx.Error(w, 500, fmt.Errorf("marshal yaml: %w", err))
@@ -453,6 +466,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		if scopedEmptyHint != "" {
 			resp["hint"] = scopedEmptyHint
 		}
+		attachIgnoredParams(resp, controls.Ignored)
 		if idpiResult.Threat {
 			resp["idpiWarning"] = idpiResult.Reason
 		}

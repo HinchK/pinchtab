@@ -165,6 +165,25 @@ POST /tabs/{id}/evaluate
 
 `GET /action` decodes a subset of the action fields and refuses, with `400` naming the field, any parameter it cannot express rather than silently dropping it — so a modifier chord, a drag, `waitNav` or `humanize` must be sent as `POST /action` with a JSON body. A parameter the action request does not declare at all is refused the same way, with a `did you mean` hint for a near miss, so `?modifers=8` or `?Modifiers=8` no longer dispatches a plain click and answers `200`. The accepted set is the action request's own fields plus the parameters only the GET form carries, which today is `timeout` — a per-request action timeout in seconds, clamped to 0–60, that the POST form sends in its body instead. Cache-busters and stray parameters must be dropped from the URL.
 
+`GET /snapshot` validates its cost controls the same way but resolves the unknown-parameter
+question differently, and the difference is deliberate. A bad VALUE is refused with a `400`
+naming the accepted set: `format` is `json`, `compact`, `text` or `yaml`; `filter` is `all`
+or `interactive`; `maxTokens` is a positive whole number; `depth` is a whole number `>= -1`.
+`format` and `filter` are compared case- and whitespace-insensitively, so `INTERACTIVE` and
+`" interactive "` select the interactive subset — each previously fell through to the whole
+tree, because the comparison was an exact string match, and every one of these controls used
+to fail toward the *more expensive* answer without telling the caller.
+
+An unknown parameter NAME is reported rather than refused: `ignoredParams` on JSON and YAML
+responses, an `# ignored params: ...` line on `compact` and `text` ones. `/action` can
+refuse because its parameter set is the action request's own fields, and a caller sending
+something else has genuinely asked for a behaviour that will not happen. `/snapshot` is a
+read that newer clients call with parameters older servers have not learned yet, so
+refusing would break version skew in the direction it normally occurs, while the disclosure
+still ends the silence — which is what mattered, since the `quick` CLI command sent
+`compact=true` for a long time, a parameter `/snapshot` has never read, and received the
+JSON snapshot instead of the compact one it was written to request.
+
 `GET /visible` (and `pinchtab visible <ref>`) answers CSS rendered-ness — `display`, `visibility`, `opacity`, and a laid-out box with non-zero size. Scroll position is not an input: an element far below the fold, or scrolled past, still reports `visible: true`. On-screen-ness is the response's `onScreen` field, which shares the capture snapshot's viewport-intersection predicate (see [reference/capture.md](reference/capture.md)); `onScreen` is omitted when the element could not be measured — absent means unknown, never "no".
 
 Action kinds currently include:
