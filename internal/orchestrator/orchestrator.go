@@ -4,11 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"io"
 	"log/slog"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -164,41 +161,6 @@ func NewOrchestratorWithRunner(baseDir string, runner HostRunner) *Orchestrator 
 	orch.initInstanceManager()
 
 	return orch
-}
-
-// resolveStableBinary discovers the running executable, installs it into the
-// sibling bin/ directory as the stable launch binary, and returns the path to
-// launch instances with — falling back to the installed stable copy if the
-// running path is gone. All steps are best-effort: filesystem failures are
-// logged, not fatal. This isolates construction's disk side effects.
-func resolveStableBinary(baseDir string) string {
-	binDir := filepath.Join(filepath.Dir(baseDir), "bin")
-	stableBin := filepath.Join(binDir, "pinchtab")
-	exe, _ := os.Executable()
-	binary := exe
-	if binary == "" {
-		binary = os.Args[0]
-	}
-
-	if err := os.MkdirAll(binDir, 0755); err != nil {
-		slog.Warn("failed to create bin directory", "path", binDir, "err", err)
-	}
-
-	if exe != "" {
-		if err := installStableBinary(exe, stableBin); err != nil {
-			slog.Warn("failed to install pinchtab binary", "path", stableBin, "err", err)
-		} else {
-			slog.Debug("installed pinchtab binary", "path", stableBin)
-		}
-	}
-
-	if _, err := os.Stat(binary); err != nil {
-		if _, stableErr := os.Stat(stableBin); stableErr == nil {
-			binary = stableBin
-		}
-	}
-
-	return binary
 }
 
 // registerInstanceCleanupHook drops identity → instance bindings and any cached
@@ -363,21 +325,4 @@ func (o *Orchestrator) AllowsNetworkIntercept() bool {
 
 func (o *Orchestrator) SetPortRange(start, end int) {
 	o.portAllocator = NewPortAllocator(start, end)
-}
-
-func installStableBinary(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = in.Close() }()
-
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = out.Close() }()
-
-	_, err = io.Copy(out, in)
-	return err
 }
