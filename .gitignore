@@ -15,6 +15,7 @@
 # package-lock.json is committed for reproducible installs via npm ci
 *.js
 !npm/scripts/*.js
+!npm/eslint.config.js
 *.pyc
 *.test
 .DS_Store

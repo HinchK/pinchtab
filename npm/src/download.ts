@@ -153,7 +153,8 @@ async function downloadChecksums(version: string): Promise<Map<string, string>> 
   } catch (err) {
     throw new Error(
       `Failed to download checksums: ${(err as Error).message}. ` +
-        `Ensure v${version} is released on GitHub with checksums.txt`
+        `Ensure v${version} is released on GitHub with checksums.txt`,
+      { cause: err }
     );
   }
 }
