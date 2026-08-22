@@ -236,6 +236,23 @@ func spawnDetachedChild(binary string, args []string, out *os.File) (int, error)
 	return pid, nil
 }
 
+// spawnDetachedServer starts a detached server whose stdout/stderr land in the state
+// dir's server.log. Every detached spawn path goes through here: the banner names that
+// file as the live sink from the --background-child flag in the recorded argv alone, so
+// a second spawn site that passed its own writer (or none) would make the banner vouch
+// for a file nothing writes — which is the dead end this card exists to remove.
+func spawnDetachedServer(stateDir, binary string, args []string) (int, error) {
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		return 0, fmt.Errorf("create state dir: %w", err)
+	}
+	logF, err := os.OpenFile(serverLogFilePath(stateDir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return 0, fmt.Errorf("open log file: %w", err)
+	}
+	defer func() { _ = logF.Close() }()
+	return spawnDetachedChild(binary, args, logF)
+}
+
 func runServerBackground(cfg *config.RuntimeConfig, opts serverBackgroundOptions, addressChanged bool) error {
 	if err := requireDetachedServerOwnership("background start", addressChanged); err != nil {
 		return err
@@ -263,21 +280,11 @@ func runServerBackground(cfg *config.RuntimeConfig, opts serverBackgroundOptions
 		return err
 	}
 
-	if err := os.MkdirAll(stateDir, 0o755); err != nil {
-		return fmt.Errorf("create state dir: %w", err)
-	}
-	logF, err := os.OpenFile(serverLogFilePath(stateDir), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
-	}
-
 	args := backgroundServerArgs(marker, opts)
-	pid, err := spawnDetachedChild(binary, args, logF)
+	pid, err := spawnDetachedServer(stateDir, binary, args)
 	if err != nil {
-		_ = logF.Close()
 		return err
 	}
-	_ = logF.Close()
 
 	if err := recordServerPID(stateDir, pid, binary, args, baseURL, marker); err != nil {
 		return fmt.Errorf("write pid file: %w", err)

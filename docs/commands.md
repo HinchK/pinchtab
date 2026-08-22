@@ -29,11 +29,13 @@ file, then `-v`, then the default `info`. `-v` always adds the full startup bann
 and it raises the level to debug only when neither of the other two is set.
 
 Where those lines land depends on how the server was started, which is why `pinchtab`
-with no arguments prints a `logs` row naming the live destination: `<stateDir>/server.log`
-for `pinchtab server -b`, `~/.pinchtab/logs/daemon.err.log` for a daemon-installed
-service, and the terminal for a foreground run. A `server.log` left behind by an earlier
-detached run is called out as not being written by the current server, so it cannot be
-mistaken for a live one.
+with no arguments prints a `logs` row naming the live destination. There are four ways a
+server starts, and three destinations: `<stateDir>/server.log` for `pinchtab server -b`
+**and for the server a bare `pinchtab nav` or `pinchtab mcp` auto-starts** — both spawn
+detached and both append to that same file — `~/.pinchtab/logs/daemon.err.log` for a
+daemon-installed service, and the terminal for a foreground run. A `server.log` left
+behind by an earlier detached run is called out as not being written by the current
+server, so it cannot be mistaken for a live one.
 
 A request that fails logs its cause there UNREDACTED — absolute paths intact — under the
 same `requestId` the access log records, so a 5xx can be joined to the reason it happened:
@@ -54,7 +56,8 @@ escape hatch when you want the record without the polling.
 
 A daemon-installed server and the server a bare `pinchtab nav` auto-starts both run
 `pinchtab server` with no flags, so `server.logLevel` is the only way to set their
-threshold (`pinchtab config set server.logLevel warn`).
+threshold (`pinchtab config set server.logLevel warn`). That also means a 4xx cause is
+not written at the default `info` level; raise the level when you need one.
 
 Everything in this paragraph applies to `pinchtab bridge` as well: it reads the same
 `server.logLevel`, accepts the same `--log-level`, and resolves them with the same

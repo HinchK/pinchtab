@@ -151,7 +151,7 @@ func autoStartServer() error {
 	}
 
 	args := autoStartServerArgs(marker)
-	pid, err := spawnDetachedChild(binary, args, nil)
+	pid, err := spawnDetachedServer(stateDir, binary, args)
 	if err != nil {
 		return err
 	}
