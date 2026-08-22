@@ -451,10 +451,23 @@ func TestBuildSelectorJS_HiddenText(t *testing.T) {
 	}
 }
 
-func TestBuildURLMatchJS(t *testing.T) {
-	js := buildURLMatchJS("**/dashboard")
-	if js == "" {
-		t.Error("expected non-empty JS for URL match")
+func TestMatchURLPattern(t *testing.T) {
+	cases := []struct {
+		pattern string
+		url     string
+		want    bool
+	}{
+		{"http://127.0.0.1:8998/page2.html", "http://127.0.0.1:8998/page2.html", true},
+		{"*page2.html", "http://127.0.0.1:8998/page2.html", true},
+		{"*.html", "http://127.0.0.1:8998/page2.html", true},
+		{"**/dashboard", "http://app.example.com/x/dashboard", true},
+		{"http://127.0.0.1:8998/page2.html", "http://127.0.0.1:8998/page1.html", false},
+		{"*page2.html", "http://127.0.0.1:8998/page3.html", false},
+	}
+	for _, c := range cases {
+		if got := matchURLPattern(c.pattern, c.url); got != c.want {
+			t.Errorf("matchURLPattern(%q, %q) = %v, want %v", c.pattern, c.url, got, c.want)
+		}
 	}
 }
 

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/pinchtab/pinchtab/internal/activity"
@@ -198,7 +200,6 @@ func (h *Handlers) handleWaitCore(w http.ResponseWriter, r *http.Request, req wa
 		js = fmt.Sprintf(`!document.body || !document.body.innerText.includes(%s)`, jsonStr(req.NotText))
 		matchLabel = "!" + req.NotText
 	case "url":
-		js = buildURLMatchJS(req.URL)
 		matchLabel = req.URL
 	case "load":
 		canonical, ok := canonicalLoadState(req.Load)
@@ -222,6 +223,13 @@ func (h *Handlers) handleWaitCore(w http.ResponseWriter, r *http.Request, req wa
 	}
 
 	err = pollUntil(tCtx, pollInterval, func() (bool, error) {
+		if mode == "url" {
+			var href string
+			if evalErr := h.Bridge.Evaluate(tCtx, "window.location.href", &href, bridge.EvalOpts{}); evalErr != nil {
+				return false, nil
+			}
+			return matchURLPattern(req.URL, href), nil
+		}
 		var result bool
 		evalErr := h.Bridge.Evaluate(tCtx, js, &result, bridge.EvalOpts{})
 		return evalErr == nil && result, nil
@@ -340,20 +348,32 @@ func buildSelectorJS(sel, state string) (string, string) {
 	return js, sel
 }
 
-// buildURLMatchJS builds a JS expression that checks if the current URL matches a glob pattern.
-func buildURLMatchJS(pattern string) string {
-	// Convert glob to regex: ** → .*, * → [^/]*, ? → .
-	return fmt.Sprintf(`(function(){
-		var p = %s;
-		var u = window.location.href;
-		// Convert glob to regex
-		var re = p.replace(/[.+^${}()|[\\]\\\\]/g, '\\\\$&')
-		           .replace(/\\*\\*/g, '<<<DOUBLESTAR>>>')
-		           .replace(/\\*/g, '[^/]*')
-		           .replace(/<<<DOUBLESTAR>>>/g, '.*')
-		           .replace(/\\?/g, '.');
-		return new RegExp(re).test(u);
-	})()`, jsonStr(pattern))
+func matchURLPattern(pattern, url string) bool {
+	var b strings.Builder
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		switch c {
+		case '*':
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				b.WriteString(".*")
+				i++
+				continue
+			}
+			b.WriteString("[^/]*")
+		case '?':
+			b.WriteByte('.')
+		case '.', '+', '^', '$', '{', '}', '(', ')', '|', '[', ']', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	re, err := regexp.Compile(b.String())
+	if err != nil {
+		return false
+	}
+	return re.MatchString(url)
 }
 
 func jsonStr(s string) string {
