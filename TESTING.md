@@ -177,6 +177,20 @@ The Go e2e runner captures suite output, prints the final suite summary, and wri
 - `summary-plugin-smoke.txt` / `report-plugin-smoke.md`
 - `summary-docker-smoke.txt` / `report-docker-smoke.md`
 
+Each suite also writes `timings-<suite>.json` beside its markdown report: one record per test with its scenario, name, duration in ms and status, plus per-scenario and suite totals. The records come from the same `E2E_RESULT` stream the markdown report is built from, so the two always agree on test count and total.
+
+Every record carries the suite, the stack (`singleCompose` or `multiCompose`) and the browser, because a comparison that mixes those is measuring contention rather than the change under test.
+
+Read a run back without re-running it:
+
+```bash
+go run ./tests/tools/runner e2e --suite api-extended --slowest 10
+```
+
+That prints the ten slowest tests and the per-scenario totals from the JSON. It starts nothing and does not need Docker.
+
+Gate suite-speed claims on the per-scenario and per-suite totals, not on per-test durations: measured run-to-run swing is around 16%, so aggregates over 20+ tests are the only stable signal. Tests under 100ms should be left out of any ratio entirely — a 10ms to 20ms move reads as +100% and means nothing. The threshold travels with the data as `comparisonFloorMs`.
+
 The runner clears the target suite files before each run so stale results do not survive into the next suite. It also saves the captured suite output as `output-*.log`, captures compose service logs on failure, and writes GitHub Actions outputs and step summaries when running in CI.
 
 ## Writing New E2E Tests

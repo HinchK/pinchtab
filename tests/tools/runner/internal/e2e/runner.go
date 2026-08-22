@@ -55,6 +55,7 @@ type suiteDef struct {
 	Smoke       bool
 	Summary     string
 	Report      string
+	Timings     string
 	LogPrefix   string
 	Output      string
 	LogServices []string

@@ -81,6 +81,7 @@ func (d suiteDescriptor) build() suiteDef {
 		Smoke:       d.Smoke,
 		Summary:     resultsPath("summary", d.Name, "txt"),
 		Report:      resultsPath("report", d.Name, "md"),
+		Timings:     resultsPath("timings", d.Name, "json"),
 		Output:      resultsPath("output", d.Name, "log"),
 		LogPrefix:   "logs-" + d.Name,
 		LogServices: d.LogServices,
@@ -291,7 +292,7 @@ func (r *Runner) prepareSuiteResults(def suiteDef) {
 		_, _ = fmt.Fprintf(r.stdout, "# prepare results for %s\n", def.Name)
 		return
 	}
-	for _, path := range []string{def.Summary, def.Report, def.Output} {
+	for _, path := range []string{def.Summary, def.Report, def.Timings, def.Output} {
 		_ = os.Remove(filepath.Join(r.repoRoot, path))
 	}
 	for _, path := range []string{
@@ -347,7 +348,7 @@ func execCommand(command []string, dir string) *exec.Cmd {
 }
 
 func (r *Runner) showFailureArtifacts(def suiteDef, duration time.Duration) {
-	paths := []string{def.Summary, def.Report, def.Output}
+	paths := []string{def.Summary, def.Report, def.Timings, def.Output}
 	for _, path := range paths {
 		if fileExists(filepath.Join(r.repoRoot, path)) {
 			_, _ = fmt.Fprintf(r.stdout, "  artifact: %s\n", path)
@@ -398,6 +399,8 @@ func (r *Runner) writeSuiteReports(def suiteDef, duration time.Duration, exitCod
 	if err := os.WriteFile(filepath.Join(r.repoRoot, def.Report), []byte(report), 0o644); err != nil {
 		_, _ = fmt.Fprintf(r.stderr, "e2e: failed to write %s: %v\n", def.Report, err)
 	}
+
+	r.writeSuiteTimings(def, data, timestamp)
 	return data
 }
 

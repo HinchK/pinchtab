@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -17,6 +18,7 @@ type Args struct {
 	Logs      string
 	Provider  string
 	Providers []string // resolved list; len>1 means matrix mode
+	Slowest   int
 	DryRun    bool
 }
 
@@ -43,6 +45,9 @@ Options:
                          comma-separated names to run a browser matrix. Cloak
                          builds pinchtab-cloakbrowser:test unless SKIP_BUILD=1.
                          ghost-chrome uses Chrome with static routing.
+  --slowest N            Report only: print the N slowest tests and the
+                         per-scenario totals from results/timings-<suite>.json.
+                         Runs nothing and needs no Docker.
   --dry-run              Print the compose plan without running it
   --help, -h             Show this help
 `
@@ -57,6 +62,14 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "e2e: %v\n\n", err)
 		WriteUsage(stderr)
 		return 1
+	}
+
+	if args.Slowest > 0 {
+		if err := runSlowest(args.Suite, args.Slowest, resolveRepoRoot(), stdout); err != nil {
+			_, _ = fmt.Fprintf(stderr, "e2e: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	if len(args.Providers) > 1 {
@@ -169,6 +182,16 @@ func ParseArgs(argv []string) (Args, error) {
 				return args, err
 			}
 			args.Provider = v
+		case "--slowest":
+			v, err := next(&i, arg)
+			if err != nil {
+				return args, err
+			}
+			n, convErr := strconv.Atoi(strings.TrimSpace(v))
+			if convErr != nil || n <= 0 {
+				return args, fmt.Errorf("--slowest must be a positive whole number (got %q)", v)
+			}
+			args.Slowest = n
 		case "--dry-run":
 			args.DryRun = true
 		default:
