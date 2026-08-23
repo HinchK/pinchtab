@@ -34,7 +34,7 @@ func (h *Handlers) HandleScreencast(w http.ResponseWriter, r *http.Request) {
 		httpx.Problem(w, http.StatusNotFound, "tab_not_found", "tab not found", false, nil)
 		return
 	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	if _, ok := h.applyTabGuards(w, r, ctx, resolvedTabID, guardDomainPolicy); !ok {
 		return
 	}
 

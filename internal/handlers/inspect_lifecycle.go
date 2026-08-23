@@ -91,12 +91,8 @@ func (h *Handlers) inspectElement(w http.ResponseWriter, r *http.Request, tabID 
 		return
 	}
 
-	ctx, resolvedTabID, err := h.tabContextWithHeader(w, r, tabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, resolvedTabID, ok := h.guardedTabContextWithHeader(w, r, tabID, guardDomainPolicy)
+	if !ok {
 		return
 	}
 	defer h.armAutoCloseIfEnabled(resolvedTabID)

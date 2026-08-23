@@ -21,6 +21,54 @@ type tabPolicyStateSetter interface {
 	SetTabPolicyState(tabID string, state bridge.TabPolicyState)
 }
 
+type tabGuards uint8
+
+const (
+	guardNone tabGuards = 1 << iota
+	guardDialogBlocked
+	guardDomainPolicy
+	guardHandoffPause
+)
+
+func (h *Handlers) applyTabGuards(w http.ResponseWriter, r *http.Request, ctx context.Context, tabID string, guards tabGuards) (string, bool) {
+	if guards&guardDialogBlocked != 0 && h.refuseIfDialogBlocked(w, tabID) {
+		return "", false
+	}
+	var currentURL string
+	if guards&guardDomainPolicy != 0 {
+		url, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, tabID)
+		if !ok {
+			return "", false
+		}
+		currentURL = url
+	}
+	if guards&guardHandoffPause != 0 && !h.enforceTabNotPausedForHandoffOrRespond(w, tabID) {
+		return "", false
+	}
+	return currentURL, true
+}
+
+func (h *Handlers) guardTabContext(w http.ResponseWriter, r *http.Request, ctx context.Context, tabID string, err error, guards tabGuards) (context.Context, string, bool) {
+	if err != nil {
+		WriteTabContextError(w, err, http.StatusNotFound)
+		return nil, "", false
+	}
+	if _, ok := h.applyTabGuards(w, r, ctx, tabID, guards); !ok {
+		return nil, "", false
+	}
+	return ctx, tabID, true
+}
+
+func (h *Handlers) guardedTabContext(w http.ResponseWriter, r *http.Request, tabID string, guards tabGuards) (context.Context, string, bool) {
+	ctx, resolvedTabID, err := h.tabContext(r, tabID)
+	return h.guardTabContext(w, r, ctx, resolvedTabID, err, guards)
+}
+
+func (h *Handlers) guardedTabContextWithHeader(w http.ResponseWriter, r *http.Request, tabID string, guards tabGuards) (context.Context, string, bool) {
+	ctx, resolvedTabID, err := h.tabContextWithHeader(w, r, tabID)
+	return h.guardTabContext(w, r, ctx, resolvedTabID, err, guards)
+}
+
 func (h *Handlers) currentTabDomainPolicyEnabled() bool {
 	return h != nil &&
 		h.Config != nil &&

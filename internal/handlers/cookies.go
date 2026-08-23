@@ -30,12 +30,8 @@ func (h *Handlers) HandleGetCookies(w http.ResponseWriter, r *http.Request) {
 	url := r.URL.Query().Get("url")
 	name := r.URL.Query().Get("name")
 
-	ctx, resolvedTabID, err := h.tabContext(r, tabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, _, ok := h.guardedTabContext(w, r, tabID, guardDomainPolicy)
+	if !ok {
 		return
 	}
 
@@ -197,12 +193,8 @@ func (h *Handlers) HandleSetCookies(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, resolvedTabID, err := h.tabContext(r, req.TabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, _, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy)
+	if !ok {
 		return
 	}
 

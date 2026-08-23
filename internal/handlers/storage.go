@@ -47,12 +47,8 @@ func (h *Handlers) ensureStateExportEnabled(w http.ResponseWriter) bool {
 // infix ("get"/"set"/"delete"); activityAction is the recordActivity action;
 // logType/logKey are the structured-log values.
 func (h *Handlers) runStorageOp(w http.ResponseWriter, r *http.Request, tabID, script, opLabel, activityAction, logType, logKey string) {
-	ctx, resolvedTabID, err := h.tabContext(r, tabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, tabID, guardDomainPolicy)
+	if !ok {
 		return
 	}
 

@@ -53,19 +53,8 @@ func (h *Handlers) ensureBrowserReady(w http.ResponseWriter) bool {
 	return true
 }
 
-// resolveNetworkTab resolves the tabId query param to a tab context and enforces
-// the current-tab domain policy, writing the 404/policy response on failure.
 func (h *Handlers) resolveNetworkTab(w http.ResponseWriter, r *http.Request) (context.Context, string, bool) {
-	tabID := r.URL.Query().Get("tabId")
-	tabCtx, resolvedTabID, err := h.tabContext(r, tabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return nil, "", false
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, tabCtx, resolvedTabID); !ok {
-		return nil, "", false
-	}
-	return tabCtx, resolvedTabID, true
+	return h.guardedTabContext(w, r, r.URL.Query().Get("tabId"), guardDomainPolicy)
 }
 
 // ensureCaptureBuffer returns the tab's network buffer, lazily starting capture

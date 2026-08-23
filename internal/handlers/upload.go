@@ -194,10 +194,7 @@ func (h *Handlers) HandleUpload(w http.ResponseWriter, r *http.Request) {
 		httpx.ErrorCode(w, http.StatusLocked, "tab_locked", err.Error(), false, nil)
 		return
 	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
-		return
-	}
-	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedTabID) {
+	if _, ok := h.applyTabGuards(w, r, ctx, resolvedTabID, guardDomainPolicy|guardHandoffPause); !ok {
 		return
 	}
 

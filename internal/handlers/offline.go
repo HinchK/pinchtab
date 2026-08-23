@@ -65,12 +65,8 @@ func (h *Handlers) setOffline(w http.ResponseWriter, r *http.Request, req offlin
 		req.UploadThroughput = -1
 	}
 
-	ctx, resolvedTabID, err := h.tabContext(r, req.TabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy)
+	if !ok {
 		return
 	}
 

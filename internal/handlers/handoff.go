@@ -68,12 +68,11 @@ func (h *Handlers) enforceTabNotPausedForHandoff(tabID string) error {
 	return fmt.Errorf("tab %s is paused for human handoff", tabID)
 }
 
-// enforceTabNotPausedForHandoffOrRespond is the single writer of the RESPONSE-LEVEL
-// paused-tab refusal: an endpoint that answers with one status calls it, so a client
-// sees the same 409, code and remedy hint whichever it hit. POST /actions and POST /macro
-// answer 200 with a result list instead, so they carry the same condition per item through
-// handoffPausedActionResult — the two writers are siblings, same code and hint, different
-// envelope. Reports ok=false once the 409 has been written.
+// enforceTabNotPausedForHandoffOrRespond writes the RESPONSE-LEVEL paused-tab
+// refusal and is reached only through guardHandoffPause. POST /actions and POST
+// /macro answer 200 with a result list instead, so they carry the same condition
+// per step through handoffPausedActionResult — same code and hint, different
+// envelope. That per-step form is why the guard set cannot express them.
 func (h *Handlers) enforceTabNotPausedForHandoffOrRespond(w http.ResponseWriter, tabID string) bool {
 	err := h.enforceTabNotPausedForHandoff(tabID)
 	if err == nil {
@@ -154,7 +153,7 @@ func (h *Handlers) HandleTabHandoff(w http.ResponseWriter, r *http.Request) {
 		httpx.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
 		return
 	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	if _, ok := h.applyTabGuards(w, r, ctx, resolvedTabID, guardDomainPolicy); !ok {
 		return
 	}
 
@@ -214,7 +213,7 @@ func (h *Handlers) HandleTabResume(w http.ResponseWriter, r *http.Request) {
 		httpx.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
 		return
 	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	if _, ok := h.applyTabGuards(w, r, ctx, resolvedTabID, guardDomainPolicy); !ok {
 		return
 	}
 
