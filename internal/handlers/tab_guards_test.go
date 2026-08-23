@@ -44,6 +44,13 @@ type guardProbeBridge struct {
 	mockBridge
 	paused     bool
 	currentURL string
+	dialogs    *bridge.DialogManager
+}
+
+func pendingDialogManager() *bridge.DialogManager {
+	dm := bridge.NewDialogManager()
+	dm.SetPending("tab1", &bridge.DialogState{Type: "confirm", Message: "probe"})
+	return dm
 }
 
 func (b *guardProbeBridge) SetTabHandoff(string, string, time.Duration) error { return nil }
@@ -65,10 +72,11 @@ func (b *guardProbeBridge) TabHandoffState(string) (bridge.TabHandoffState, bool
 
 func (b *guardProbeBridge) CurrentURL(context.Context) (string, error) { return b.currentURL, nil }
 
-// GetDialogManager is nil here so guardDialogBlocked resolves to "no dialog"
-// without CDP work: it runs first in the chain, and a probe that fails inside it
-// would never reach the guard under test.
-func (b *guardProbeBridge) GetDialogManager() *bridge.DialogManager { return nil }
+// GetDialogManager reports no dialog manager unless the probe seeds one, so
+// guardDialogBlocked resolves to "no dialog" without CDP work: it runs first in
+// the chain, and a probe that fails inside it would never reach the guard under
+// test.
+func (b *guardProbeBridge) GetDialogManager() *bridge.DialogManager { return b.dialogs }
 
 // guardProbe carries what a route needs to reach its guards. Guards run after
 // each handler's own validation, so a route that rejects {} never gets far
@@ -297,5 +305,34 @@ func TestDeclaredDomainGuardMatchesTheRefusal(t *testing.T) {
 	}
 	if checked == 0 || refusals == 0 {
 		t.Fatalf("checked %d routes and saw %d domain refusals; with none observed this test cannot tell a guard from its absence", checked, refusals)
+	}
+}
+
+// TestDeclaredDialogGuardMatchesTheRefusal closes the third flag in the guard
+// vocabulary: a route that declares guardDialogBlocked must refuse while a
+// dialog is pending on the tab, and no route that omits it may.
+func TestDeclaredDialogGuardMatchesTheRefusal(t *testing.T) {
+	checked, refusals := 0, 0
+	for _, row := range guardedBindings(t) {
+		t.Run(row.ep.Route(), func(t *testing.T) {
+			b := &guardProbeBridge{currentURL: "https://allowed.example/", dialogs: pendingDialogManager()}
+			code, status, answered := probeRoute(t, b, allCapabilities(t, t.TempDir()), row.ep)
+			refused := code == dialogBlockedCode
+			declared := row.b.guards&guardDialogBlocked != 0
+
+			switch {
+			case declared && !refused:
+				t.Errorf("declares guardDialogBlocked but a dialog-blocked tab answered %d %q; either the declaration is wrong or the route needs a guardProbes entry that reaches its guards", status, code)
+			case !declared && refused && answered:
+				t.Errorf("refuses a dialog-blocked tab without declaring guardDialogBlocked, so its catalog line understates what it enforces")
+			}
+			checked++
+			if refused {
+				refusals++
+			}
+		})
+	}
+	if checked == 0 || refusals == 0 {
+		t.Fatalf("checked %d routes and saw %d dialog refusals; with none observed this test cannot tell a guard from its absence", checked, refusals)
 	}
 }
