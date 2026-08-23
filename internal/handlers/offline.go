@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -23,9 +22,8 @@ type offlineRequest struct {
 // HandleSetOffline enables or disables network offline emulation via CDP.
 // POST /emulation/offline
 func (h *Handlers) HandleSetOffline(w http.ResponseWriter, r *http.Request) {
-	var req offlineRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
+	req, ok := decodeJSONBody[offlineRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -35,20 +33,12 @@ func (h *Handlers) HandleSetOffline(w http.ResponseWriter, r *http.Request) {
 // HandleTabSetOffline enables or disables network offline emulation for a specific tab.
 // POST /tabs/{id}/emulation/offline
 func (h *Handlers) HandleTabSetOffline(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	if tabID == "" {
-		httpx.Error(w, 400, fmt.Errorf("missing tab ID"))
+	req, ok := decodeJSONBody[offlineRequest](w, r)
+	if !ok {
 		return
 	}
-
-	var req offlineRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
-		return
-	}
-
-	if req.TabID != "" && req.TabID != tabID {
-		httpx.Error(w, 400, fmt.Errorf("tabId in body %q does not match URL path %q", req.TabID, tabID))
+	tabID, ok := h.requirePathTabIDMatch(w, r, req.TabID)
+	if !ok {
 		return
 	}
 	req.TabID = tabID

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -21,9 +20,8 @@ type geolocationRequest struct {
 // HandleSetGeolocation sets the browser geolocation via CDP emulation.
 // POST /emulation/geolocation
 func (h *Handlers) HandleSetGeolocation(w http.ResponseWriter, r *http.Request) {
-	var req geolocationRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
+	req, ok := decodeJSONBody[geolocationRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -33,20 +31,12 @@ func (h *Handlers) HandleSetGeolocation(w http.ResponseWriter, r *http.Request) 
 // HandleTabSetGeolocation sets the browser geolocation for a specific tab.
 // POST /tabs/{id}/emulation/geolocation
 func (h *Handlers) HandleTabSetGeolocation(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	if tabID == "" {
-		httpx.Error(w, 400, fmt.Errorf("missing tab ID"))
+	req, ok := decodeJSONBody[geolocationRequest](w, r)
+	if !ok {
 		return
 	}
-
-	var req geolocationRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
-		return
-	}
-
-	if req.TabID != "" && req.TabID != tabID {
-		httpx.Error(w, 400, fmt.Errorf("tabId in body %q does not match URL path %q", req.TabID, tabID))
+	tabID, ok := h.requirePathTabIDMatch(w, r, req.TabID)
+	if !ok {
 		return
 	}
 	req.TabID = tabID

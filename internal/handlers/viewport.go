@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -23,9 +22,8 @@ type viewportRequest struct {
 // HandleSetViewport sets the browser viewport dimensions via CDP emulation.
 // POST /emulation/viewport
 func (h *Handlers) HandleSetViewport(w http.ResponseWriter, r *http.Request) {
-	var req viewportRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
+	req, ok := decodeJSONBody[viewportRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -35,20 +33,12 @@ func (h *Handlers) HandleSetViewport(w http.ResponseWriter, r *http.Request) {
 // HandleTabSetViewport sets the browser viewport dimensions for a specific tab.
 // POST /tabs/{id}/emulation/viewport
 func (h *Handlers) HandleTabSetViewport(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	if tabID == "" {
-		httpx.Error(w, 400, fmt.Errorf("missing tab ID"))
+	req, ok := decodeJSONBody[viewportRequest](w, r)
+	if !ok {
 		return
 	}
-
-	var req viewportRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
-		return
-	}
-
-	if req.TabID != "" && req.TabID != tabID {
-		httpx.Error(w, 400, fmt.Errorf("tabId in body %q does not match URL path %q", req.TabID, tabID))
+	tabID, ok := h.requirePathTabIDMatch(w, r, req.TabID)
+	if !ok {
 		return
 	}
 	req.TabID = tabID

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -101,9 +100,8 @@ type credentialsRequest struct {
 // HandleSetCredentials sets HTTP auth credentials via the CDP Fetch domain.
 // POST /emulation/credentials
 func (h *Handlers) HandleSetCredentials(w http.ResponseWriter, r *http.Request) {
-	var req credentialsRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
+	req, ok := decodeJSONBody[credentialsRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -113,20 +111,12 @@ func (h *Handlers) HandleSetCredentials(w http.ResponseWriter, r *http.Request) 
 // HandleTabSetCredentials sets HTTP auth credentials for a specific tab.
 // POST /tabs/{id}/emulation/credentials
 func (h *Handlers) HandleTabSetCredentials(w http.ResponseWriter, r *http.Request) {
-	tabID := r.PathValue("id")
-	if tabID == "" {
-		httpx.Error(w, 400, fmt.Errorf("missing tab ID"))
+	req, ok := decodeJSONBody[credentialsRequest](w, r)
+	if !ok {
 		return
 	}
-
-	var req credentialsRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
-		return
-	}
-
-	if req.TabID != "" && req.TabID != tabID {
-		httpx.Error(w, 400, fmt.Errorf("tabId in body %q does not match URL path %q", req.TabID, tabID))
+	tabID, ok := h.requirePathTabIDMatch(w, r, req.TabID)
+	if !ok {
 		return
 	}
 	req.TabID = tabID

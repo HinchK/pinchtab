@@ -11,6 +11,19 @@ import (
 	"github.com/pinchtab/pinchtab/internal/httpx"
 )
 
+// decodeJSONBody decodes the request body into T under the shared maxBodySize
+// cap. ok=false means the 400 has already been written. An empty body is a
+// decode error here, not an empty T — the handlers that use it all require at
+// least one field.
+func decodeJSONBody[T any](w http.ResponseWriter, r *http.Request) (T, bool) {
+	var req T
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
+		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
+		return req, false
+	}
+	return req, true
+}
+
 // requirePathTabIDMatch validates the {id} path value (required) against an
 // optional body-provided tabId, returning the resolved path tabID. ok=false
 // means an error response was already written. For typed tab handlers that call
