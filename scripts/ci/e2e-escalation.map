@@ -20,3 +20,5 @@
 ^internal/handlers/(a11y_)?audit                           api-extended cli-extended
 ^internal/cli/actions/actions_audit                        api-extended cli-extended
 ^cmd/pinchtab/cmd_audit                                    api-extended cli-extended
+^internal/cli/actions/actions_compare                      cli-extended
+^cmd/pinchtab/cmd_compare                                  cli-extended

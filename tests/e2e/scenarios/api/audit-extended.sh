@@ -1,5 +1,5 @@
 #!/bin/bash
-# audit-basic.sh — POST /audit multi-page site audit runs.
+# audit-extended.sh — POST /audit multi-page site audit runs.
 
 GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/api.sh"

@@ -504,7 +504,7 @@
         "errors"
       ]
     },
-    "cli/compare-basic.sh": {
+    "cli/compare-extended.sh": {
       "tags": [
         "compare",
         "audit",

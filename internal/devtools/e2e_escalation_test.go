@@ -37,8 +37,13 @@ func TestEscalationFollowsProductPathsAndTestPaths(t *testing.T) {
 		},
 		{
 			name:    "audit implementation alongside a basic scenario",
-			changed: []string{"internal/audit/enrich.go", "tests/e2e/scenarios/api/audit-basic.sh"},
+			changed: []string{"internal/audit/enrich.go", "tests/e2e/scenarios/api/audit-page-basic.sh"},
 			want:    []string{"run_api_extended", "run_cli_extended"},
+		},
+		{
+			name:    "compare implementation, which no API suite covers",
+			changed: []string{"internal/cli/actions/actions_compare.go", "cmd/pinchtab/cmd_compare.go"},
+			want:    []string{"run_cli_extended"},
 		},
 		{
 			name:    "api extended scenario churn",
@@ -240,6 +245,11 @@ var enrolledAreas = []enrolledArea{
 		excluded: map[string]string{
 			"internal/authn/audit.go": "security audit logging — AuditLog writes slog entries, a different sense of the word, covered by no audit scenario",
 		},
+	},
+	{
+		name:   "compare",
+		match:  `(?i)compare`,
+		suites: []string{"run_cli_extended"},
 	},
 }
 

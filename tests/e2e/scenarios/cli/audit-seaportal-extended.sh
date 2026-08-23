@@ -1,5 +1,5 @@
 #!/bin/bash
-# audit-seaportal-basic.sh — pinchtab audit --seaportal-report ingestion.
+# audit-seaportal-extended.sh — pinchtab audit --seaportal-report ingestion.
 
 GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/cli.sh"

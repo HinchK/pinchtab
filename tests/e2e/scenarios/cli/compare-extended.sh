@@ -1,5 +1,5 @@
 #!/bin/bash
-# compare-basic.sh — pinchtab compare live-vs-staging happy path.
+# compare-extended.sh — pinchtab compare live-vs-staging happy path.
 
 GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/cli.sh"
