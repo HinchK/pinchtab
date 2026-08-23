@@ -64,7 +64,7 @@ func (h *Handlers) setGeolocation(w http.ResponseWriter, r *http.Request, req ge
 		req.Accuracy = 1.0
 	}
 
-	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy)
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy|guardHandoffPause)
 	if !ok {
 		return
 	}

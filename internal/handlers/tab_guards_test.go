@@ -47,6 +47,11 @@ type guardProbeBridge struct {
 	dialogs    *bridge.DialogManager
 }
 
+// probePausedAt is fixed so two refusals from different endpoints differ only
+// where they are genuinely allowed to; a live clock would put a different
+// pausedAt in each body and make the envelope comparison below untestable.
+var probePausedAt = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+
 func pendingDialogManager() *bridge.DialogManager {
 	dm := bridge.NewDialogManager()
 	dm.SetPending("tab1", &bridge.DialogState{Type: "confirm", Message: "probe"})
@@ -61,12 +66,11 @@ func (b *guardProbeBridge) TabHandoffState(string) (bridge.TabHandoffState, bool
 	if !b.paused {
 		return bridge.TabHandoffState{Status: "active"}, true
 	}
-	now := time.Now().UTC()
 	return bridge.TabHandoffState{
 		Status:        "paused_handoff",
 		Reason:        "manual_handoff",
-		PausedAt:      now,
-		LastUpdatedAt: now,
+		PausedAt:      probePausedAt,
+		LastUpdatedAt: probePausedAt,
 	}, true
 }
 
@@ -159,6 +163,16 @@ func allCapabilities(t *testing.T, tmpDir string) *config.RuntimeConfig {
 // way.
 func probeRoute(t *testing.T, b bridge.BridgeAPI, cfg *config.RuntimeConfig, ep routes.Endpoint) (code string, status int, answered bool) {
 	t.Helper()
+	w, answered := recordProbeRoute(t, b, cfg, ep)
+	var resp struct {
+		Code string `json:"code"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	return resp.Code, w.Code, answered
+}
+
+func recordProbeRoute(t *testing.T, b bridge.BridgeAPI, cfg *config.RuntimeConfig, ep routes.Endpoint) (*httptest.ResponseRecorder, bool) {
+	t.Helper()
 
 	h := New(b, cfg, nil, nil, nil)
 	mux := http.NewServeMux()
@@ -180,7 +194,7 @@ func probeRoute(t *testing.T, b bridge.BridgeAPI, cfg *config.RuntimeConfig, ep 
 	}
 
 	w := httptest.NewRecorder()
-	answered = true
+	answered := true
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -203,11 +217,7 @@ func probeRoute(t *testing.T, b bridge.BridgeAPI, cfg *config.RuntimeConfig, ep 
 		t.Fatalf("%s did not answer within the deadline", route)
 	}
 
-	var resp struct {
-		Code string `json:"code"`
-	}
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	return resp.Code, w.Code, answered
+	return w, answered
 }
 
 // guardedBindings pairs every catalog endpoint with the binding that declares
@@ -334,5 +344,142 @@ func TestDeclaredDialogGuardMatchesTheRefusal(t *testing.T) {
 	}
 	if checked == 0 || refusals == 0 {
 		t.Fatalf("checked %d routes and saw %d dialog refusals; with none observed this test cannot tell a guard from its absence", checked, refusals)
+	}
+}
+
+// newlyGuardedMutators are the endpoints the mutating-tab ruling moved onto the
+// handoff-pause guard. Kept as an explicit list rather than derived from the
+// catalog so the ruling itself is reviewable here: a route leaving this list
+// is a policy decision someone has to delete a line to make.
+var newlyGuardedMutators = []string{
+	"POST /emulation/viewport",
+	"POST /emulation/geolocation",
+	"POST /emulation/offline",
+	"POST /emulation/headers",
+	"POST /emulation/credentials",
+	"POST /emulation/media",
+	"POST /cookies",
+	"POST /storage",
+	"DELETE /storage",
+	"POST /fingerprint/rotate",
+	"POST /network/route",
+	"DELETE /network/route",
+	"POST /state/load",
+	"GET /download",
+}
+
+// handoffRefusalReference is an endpoint that carried the handoff-pause guard
+// before the ruling, so every newly-guarded endpoint can be compared against a
+// refusal the product already shipped rather than against a literal restated in
+// this file.
+const handoffRefusalReference = "POST /evaluate"
+
+func endpointByRoute(t *testing.T, route string) routes.Endpoint {
+	t.Helper()
+	for _, ep := range routes.Core() {
+		if ep.Route() == route {
+			return ep
+		}
+	}
+	t.Fatalf("no catalog endpoint for %q", route)
+	return routes.Endpoint{}
+}
+
+// TestNewlyGuardedMutatorsRefuseAPausedTabIdentically is the ruling's evidence:
+// each endpoint moved onto the guard answers a paused tab with byte-identical
+// status and body to an endpoint that was already guarded. Comparing whole
+// envelopes rather than just the code is what makes "same error shape" a claim
+// the test can actually break on — a divergent hint, remedy or status fails.
+func TestNewlyGuardedMutatorsRefuseAPausedTabIdentically(t *testing.T) {
+	paused := func() *guardProbeBridge {
+		return &guardProbeBridge{paused: true, currentURL: "https://allowed.example/"}
+	}
+
+	refW, _ := recordProbeRoute(t, paused(), allCapabilities(t, t.TempDir()), endpointByRoute(t, handoffRefusalReference))
+	assertHandoffRefusal(t, refW)
+	wantStatus, wantBody := refW.Code, refW.Body.String()
+
+	for _, route := range newlyGuardedMutators {
+		t.Run(route, func(t *testing.T) {
+			w, _ := recordProbeRoute(t, paused(), allCapabilities(t, t.TempDir()), endpointByRoute(t, route))
+
+			assertHandoffRefusal(t, w)
+			if w.Code != wantStatus || w.Body.String() != wantBody {
+				t.Fatalf("refusal differs from %s\n got %d %s\nwant %d %s",
+					handoffRefusalReference, w.Code, w.Body.String(), wantStatus, wantBody)
+			}
+		})
+	}
+
+	if len(newlyGuardedMutators) == 0 {
+		t.Fatal("the ruled list is empty, so this test proves nothing")
+	}
+}
+
+// TestReadProbesInRuledFamiliesStayUnguarded is the other half of the ruling:
+// the read-only siblings inside the families it names keep serving a paused tab.
+// Without it, widening a shared helper's guard set would silently block reads
+// and nothing would notice.
+func TestReadProbesInRuledFamiliesStayUnguarded(t *testing.T) {
+	readProbes := []string{
+		"GET /cookies",
+		"GET /storage",
+		"GET /state",
+		"POST /state/save",
+		"GET /network",
+		"GET /network/stream",
+		"GET /network/export",
+		"GET /network/{requestId}",
+	}
+
+	for _, route := range readProbes {
+		t.Run(route, func(t *testing.T) {
+			b := &guardProbeBridge{paused: true, currentURL: "https://allowed.example/"}
+			code, status, _ := probeRoute(t, b, allCapabilities(t, t.TempDir()), endpointByRoute(t, route))
+
+			if code == handoffPausedCode {
+				t.Fatalf("read probe now refuses a paused tab (%d %s); the ruling exempts reads and the catalog line says so", status, code)
+			}
+		})
+	}
+}
+
+// TestRootStorageMethodDispatchSplitsTheGuard covers the one place this ruling
+// could not express itself as a catalog line alone: GET, POST and DELETE
+// /storage are three declarations served by one root handler over one shared
+// body, so the guard set has to travel with the operation. The reads must still
+// serve a paused tab while the writes refuse it — a widened shared helper would
+// silently block reads and every per-route probe above would still pass, since
+// they drive the tab form.
+func TestRootStorageMethodDispatchSplitsTheGuard(t *testing.T) {
+	cases := []struct {
+		method     string
+		body       string
+		wantRefuse bool
+	}{
+		{http.MethodGet, "", false},
+		{http.MethodPost, `{"type":"local","key":"probe","value":"1"}`, true},
+		{http.MethodDelete, `{"type":"local","key":"probe"}`, true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.method, func(t *testing.T) {
+			h := New(&guardProbeBridge{paused: true, currentURL: "https://allowed.example/"}, allCapabilities(t, t.TempDir()), nil, nil, nil)
+
+			req := httptest.NewRequest(tc.method, "/storage?tabId=tab1&type=local&key=probe", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			h.HandleStorage(w, req)
+
+			var resp struct {
+				Code string `json:"code"`
+			}
+			_ = json.Unmarshal(w.Body.Bytes(), &resp)
+			refused := resp.Code == handoffPausedCode
+
+			if refused != tc.wantRefuse {
+				t.Fatalf("%s /storage on a paused tab: refused=%v want %v (%d %s)", tc.method, refused, tc.wantRefuse, w.Code, w.Body.String())
+			}
+		})
 	}
 }

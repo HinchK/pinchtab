@@ -193,7 +193,7 @@ func (h *Handlers) HandleSetCookies(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ctx, _, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy)
+	ctx, _, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy|guardHandoffPause)
 	if !ok {
 		return
 	}

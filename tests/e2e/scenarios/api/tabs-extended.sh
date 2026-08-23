@@ -369,6 +369,20 @@ pt_post /action -d "{\"kind\":\"click\",\"selector\":\"#increment\",\"tabId\":\"
 assert_http_status 409 "action blocked during handoff"
 assert_contains "$RESULT" "tab_paused_handoff" "error code is tab_paused_handoff"
 
+# Mutating emulation endpoints answer the same refusal: an agent must not resize
+# or relocate a tab a human is mid-handoff on.
+pt_post "/tabs/${BLOCK_TAB}/emulation/viewport" -d '{"width":640,"height":480}'
+assert_http_status 409 "viewport blocked during handoff"
+assert_contains "$RESULT" "tab_paused_handoff" "viewport refusal carries tab_paused_handoff"
+
+pt_post "/tabs/${BLOCK_TAB}/emulation/geolocation" -d '{"latitude":1,"longitude":2}'
+assert_http_status 409 "geolocation blocked during handoff"
+
+# Reads stay available: the ruling exempts probes so an operator can still see
+# what the paused tab is doing.
+pt_get "/tabs/${BLOCK_TAB}/storage?type=local"
+assert_ok "storage read still served during handoff"
+
 pt_post "/tabs/${BLOCK_TAB}/resume" -d '{}'
 assert_ok "resume tab"
 

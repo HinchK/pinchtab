@@ -45,9 +45,11 @@ func (h *Handlers) ensureStateExportEnabled(w http.ResponseWriter) bool {
 // timeout, decodes the JSON result, records activity + logs, and writes the
 // response. It writes any error response and returns. opLabel is the error/log
 // infix ("get"/"set"/"delete"); activityAction is the recordActivity action;
-// logType/logKey are the structured-log values.
-func (h *Handlers) runStorageOp(w http.ResponseWriter, r *http.Request, tabID, script, opLabel, activityAction, logType, logKey string) {
-	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, tabID, guardDomainPolicy)
+// logType/logKey are the structured-log values. guards comes from the caller
+// because the three ops share this body but not their guard set: the writes
+// carry handoff-pause, the read does not.
+func (h *Handlers) runStorageOp(w http.ResponseWriter, r *http.Request, tabID, script, opLabel, activityAction, logType, logKey string, guards tabGuards) {
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, tabID, guards)
 	if !ok {
 		return
 	}
@@ -94,7 +96,7 @@ func (h *Handlers) handleStorageGet(w http.ResponseWriter, r *http.Request) {
 	key := r.URL.Query().Get("key")
 
 	script := buildStorageGetScript(storageType, key)
-	h.runStorageOp(w, r, tabID, script, "get", "storage.read", storageType, key)
+	h.runStorageOp(w, r, tabID, script, "get", "storage.read", storageType, key, guardDomainPolicy)
 }
 
 type storageSetRequest struct {
@@ -145,7 +147,7 @@ func (h *Handlers) handleStorageSet(w http.ResponseWriter, r *http.Request) {
 		}
 	`, storageObj, string(keyJSON), string(valueJSON))
 
-	h.runStorageOp(w, r, req.TabID, script, "set", "storage.write", req.Type, req.Key)
+	h.runStorageOp(w, r, req.TabID, script, "set", "storage.write", req.Type, req.Key, guardDomainPolicy|guardHandoffPause)
 }
 
 // handleStorageDelete removes a storage item or clears storage.
@@ -189,7 +191,7 @@ func (h *Handlers) handleStorageDelete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	script := buildStorageDeleteScript(req.Type, req.Key)
-	h.runStorageOp(w, r, req.TabID, script, "delete", "storage.delete", req.Type, req.Key)
+	h.runStorageOp(w, r, req.TabID, script, "delete", "storage.delete", req.Type, req.Key, guardDomainPolicy|guardHandoffPause)
 }
 
 // buildStorageGetScript builds a JS expression that reads from localStorage

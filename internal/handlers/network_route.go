@@ -125,7 +125,7 @@ func (h *Handlers) handleNetworkRouteFor(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	if _, ok := h.applyTabGuards(w, r, tabCtx, resolvedID, guardDomainPolicy); !ok {
+	if _, ok := h.applyTabGuards(w, r, tabCtx, resolvedID, guardDomainPolicy|guardHandoffPause); !ok {
 		return
 	}
 
@@ -187,7 +187,7 @@ func (h *Handlers) handleNetworkUnrouteFor(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if _, ok := h.applyTabGuards(w, r, tabCtx, resolvedID, guardDomainPolicy); !ok {
+	if _, ok := h.applyTabGuards(w, r, tabCtx, resolvedID, guardDomainPolicy|guardHandoffPause); !ok {
 		return
 	}
 

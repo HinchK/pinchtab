@@ -36,7 +36,7 @@ func (h *Handlers) HandleFingerprintRotate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy)
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy|guardHandoffPause)
 	if !ok {
 		return
 	}

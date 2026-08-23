@@ -93,7 +93,7 @@ func (h *Handlers) HandleStateLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy)
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy|guardHandoffPause)
 	if !ok {
 		return
 	}
