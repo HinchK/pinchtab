@@ -432,7 +432,9 @@ func (b *Bridge) Snapshot(ctx context.Context, tabID string, filter string, para
 		maxDepth = -1
 	}
 	nodes, refs := BuildSnapshot(rawNodes, filter, maxDepth)
-	_ = EnrichA11yNodesWithDOMMetadata(ctx, nodes)
+	if !params.SkipMetadata {
+		_ = EnrichA11yNodesWithDOMMetadata(ctx, nodes)
+	}
 	targets := RefTargetsFromNodes(nodes)
 
 	var url string

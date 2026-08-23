@@ -18,6 +18,21 @@ import (
 // value here", nothing more — an empty sensitive field carries no value at all.
 const MaskedValue = "••••••••"
 
+const maskRune = '\u2022'
+
+func normalizeMaskedValue(v string) string {
+	trimmed := strings.TrimSpace(v)
+	if trimmed == "" {
+		return v
+	}
+	for _, r := range trimmed {
+		if r != maskRune {
+			return v
+		}
+	}
+	return MaskedValue
+}
+
 // IsSensitiveAutocomplete reports whether an autocomplete token marks a field
 // whose content must never be printed.
 func IsSensitiveAutocomplete(value string) bool {
@@ -478,7 +493,7 @@ func BuildSnapshot(nodes []RawAXNode, filter string, maxDepth int) ([]A11yNode, 
 		}
 
 		if v := n.Value.String(); v != "" {
-			entry.Value = v
+			entry.Value = normalizeMaskedValue(v)
 		}
 		if n.BackendDOMNodeID != 0 {
 			entry.NodeID = n.BackendDOMNodeID

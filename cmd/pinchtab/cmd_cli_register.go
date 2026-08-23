@@ -107,7 +107,8 @@ func configureBrowserFlags() {
 
 	snapCmd.Flags().BoolP("interactive", "i", true, "Filter interactive elements + headings (default true, use --interactive=false for all)")
 	snapCmd.Flags().BoolP("compact", "c", true, "Compact output format (default true, use --compact=false for JSON)")
-	snapCmd.Flags().Bool("full", false, "Full JSON output (shorthand for --interactive=false --compact=false)")
+	snapCmd.Flags().Bool("full", false, "Full JSON output (shorthand for --interactive=false --json)")
+	snapCmd.Flags().Bool("json", false, "JSON output, keeping the interactive filter (same as --compact=false)")
 	snapCmd.Flags().Bool("text", false, "Text output format")
 	snapCmd.Flags().BoolP("diff", "d", false, "Show diff from previous snapshot")
 	snapCmd.Flags().StringP("selector", "s", "", "CSS selector to scope snapshot")

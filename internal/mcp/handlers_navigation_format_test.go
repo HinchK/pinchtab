@@ -1,9 +1,12 @@
 package mcp
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/pinchtab/pinchtab/internal/handlers"
 )
 
@@ -37,5 +40,57 @@ func TestMCPNarrowsTheHandlerRatherThanDivergingFromIt(t *testing.T) {
 		if _, err := normalizeSnapshotFormat(handlerOnly); err == nil {
 			t.Errorf("MCP now accepts %q; if that is intended, the tool schema and this test both need updating", handlerOnly)
 		}
+	}
+}
+
+func snapshotQueryFor(t *testing.T, args map[string]any) (url.Values, *mcp.CallToolResult) {
+	t.Helper()
+	var captured url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.URL.Query()
+		_, _ = w.Write([]byte("# snapshot\n"))
+	}))
+	t.Cleanup(srv.Close)
+	result := callTool(t, "pinchtab_snapshot", args, srv)
+	return captured, result
+}
+
+func TestTheSnapshotToolAsksForCompactUnlessToldOtherwise(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{name: "no format argument at all", args: map[string]any{}, want: "compact"},
+		{name: "interactive only", args: map[string]any{"interactive": true}, want: "compact"},
+		{name: "compact asked for explicitly", args: map[string]any{"compact": true}, want: "compact"},
+		{name: "compact declined", args: map[string]any{"compact": false}, want: "json"},
+		{name: "format wins over the default", args: map[string]any{"format": "text"}, want: "text"},
+		{name: "format wins over compact", args: map[string]any{"format": "text", "compact": true}, want: "text"},
+		{name: "format normalised", args: map[string]any{"format": "  COMPACT "}, want: "compact"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			query, result := snapshotQueryFor(t, tc.args)
+			if result.IsError {
+				t.Fatalf("the tool refused %v: %s", tc.args, resultText(t, result))
+			}
+			if got := query.Get("format"); got != tc.want {
+				t.Errorf("the tool asked /snapshot for format=%q, want %q; the agent pays for the answer the server actually sends, not for the one the source reads like",
+					got, tc.want)
+			}
+			if _, err := handlers.ParseSnapshotCostControls(query); err != nil {
+				t.Errorf("the server rejects the query this tool sends: %v (query=%v)", err, query)
+			}
+		})
+	}
+}
+
+func TestTheSnapshotToolRefusesAFormatBeforeSendingIt(t *testing.T) {
+	query, result := snapshotQueryFor(t, map[string]any{"format": "xml"})
+	if !result.IsError {
+		t.Fatalf("format=xml was accepted; the caller gets an answer to a question it did not ask")
+	}
+	if query != nil {
+		t.Errorf("the tool reached the server anyway with %v", query)
 	}
 }

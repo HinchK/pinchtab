@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"encoding/base64"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,5 +83,64 @@ func TestSnapshotDistinguishesEmptyAndFilledPasswordInRealBrowser(t *testing.T) 
 		if flat[i].Value == "supersecret123" || flat[i].Text == "supersecret123" {
 			t.Fatalf("snapshot leaked the password: %+v", flat[i])
 		}
+	}
+}
+
+func TestAnUnenrichedSnapshotStillKeepsAPasswordOut(t *testing.T) {
+	chromePath := testbrowser.Path(t)
+
+	alloc, cancelAlloc := chromedp.NewExecAllocator(context.Background(), append(
+		chromedp.DefaultExecAllocatorOptions[:],
+		chromedp.ExecPath(chromePath),
+		chromedp.UserDataDir(testbrowser.ProfileDir(t)),
+		chromedp.Flag("headless", true),
+		chromedp.Flag("no-sandbox", true),
+	)...)
+	ctx, cancelBrowser := chromedp.NewContext(alloc)
+	ctx, cancelTimeout := context.WithTimeout(ctx, 30*time.Second)
+	t.Cleanup(func() {
+		cancelTimeout()
+		cancelBrowser()
+		cancelAlloc()
+	})
+
+	const secret = "supersecret123"
+	html := `<form>
+		<label for="offAutocomplete">Password</label>
+		<input id="offAutocomplete" type="password" autocomplete="off">
+		<label for="current">Current password</label>
+		<input id="current" type="password" autocomplete="current-password">
+		<button type="submit">Continue</button>
+	</form>`
+	if err := chromedp.Run(ctx,
+		chromedp.Navigate("data:text/html;base64,"+base64.StdEncoding.EncodeToString([]byte(html))),
+		chromedp.SendKeys("#offAutocomplete", secret, chromedp.ByID),
+		chromedp.SendKeys("#current", secret, chromedp.ByID),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	rawNodes, err := FetchAXTree(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	flat, _ := BuildSnapshot(rawNodes, "", -1)
+
+	textboxes := 0
+	for i := range flat {
+		if strings.Contains(flat[i].Value, secret) || strings.Contains(flat[i].Text, secret) {
+			t.Errorf("a snapshot built without DOM enrichment carries the password: %+v", flat[i])
+		}
+		if flat[i].Role != "textbox" {
+			continue
+		}
+		textboxes++
+		if flat[i].Value != bridgeobserve.MaskedValue {
+			t.Errorf("filled password field value = %q, want %q — the accessibility tree reports one bullet per character, so passing it through leaks the secret's length to whoever reads the snapshot",
+				flat[i].Value, bridgeobserve.MaskedValue)
+		}
+	}
+	if textboxes < 2 {
+		t.Fatalf("expected both password fields in the snapshot, found %d textboxes in %+v", textboxes, flat)
 	}
 }

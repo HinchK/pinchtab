@@ -75,6 +75,10 @@ func writeIgnoredParamsComment(w http.ResponseWriter, ignored []string) {
 	}
 }
 
+func snapshotFormatCarriesMetadata(format string) bool {
+	return format == "json" || format == "yaml"
+}
+
 func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	controls, err := ParseSnapshotCostControls(r.URL.Query())
 	if err != nil {
@@ -101,6 +105,7 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 	reqNoAnim := r.URL.Query().Get("noAnimations") == "true"
 	maxDepth := controls.MaxDepth
 	maxTokens := controls.MaxTokens
+	wireCarriesMetadata := snapshotFormatCarriesMetadata(format)
 
 	resolvedTabID, tCtx, cancel, ok := h.resolveReadContext(w, r, tabID, effectiveCfg.ActionTimeout)
 	if !ok {
@@ -165,13 +170,16 @@ func (h *Handlers) HandleSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 
 		flat, _ = bridge.BuildSnapshot(rawNodes, filter, maxDepth)
-		_ = bridge.EnrichA11yNodesWithDOMMetadata(tCtx, flat)
+		if wireCarriesMetadata {
+			_ = bridge.EnrichA11yNodesWithDOMMetadata(tCtx, flat)
+		}
 		url, _ = h.Bridge.CurrentURL(tCtx)
 		title, _ = h.Bridge.CurrentTitle(tCtx)
 	} else {
 		// Unscoped: delegate to Bridge (enables ghost-chrome routing via BridgeAdapter).
 		result, err := h.Bridge.Snapshot(tCtx, resolvedTabID, filter, bridge.ContentParams{
-			MaxDepth: maxDepth,
+			MaxDepth:     maxDepth,
+			SkipMetadata: !wireCarriesMetadata,
 		})
 		if err != nil {
 			httpx.Error(w, 500, fmt.Errorf("snapshot: %w", err))

@@ -47,7 +47,7 @@ func allTools() []mcp.Tool {
 			mcp.WithDescription("Get an accessibility tree snapshot of the current page. Use this sparingly: prefer pinchtab_find + action selectors for faster loops."),
 			tabIDParam(),
 			mcp.WithBoolean("interactive", mcp.Description("Only interactive elements (buttons, links, inputs)")),
-			mcp.WithBoolean("compact", mcp.Description("Compact format (most token-efficient)")),
+			mcp.WithBoolean("compact", mcp.Description("Compact format (default; false=JSON)")),
 			mcp.WithString("format", mcp.Description("Output format: 'compact' or 'text'")),
 			mcp.WithBoolean("diff", mcp.Description("Only changes since last snapshot")),
 			mcp.WithString("selector", mcp.Description("Unified selector to scope the snapshot (ref, CSS, XPath, text, find, role, label, placeholder, alt, title, testid, first/last/nth). Selectors resolve in the current frame scope; use pinchtab_frame for iframe content."+positionalWrapperGrammar)),
