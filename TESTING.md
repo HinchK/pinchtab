@@ -98,7 +98,7 @@ Smoke is the expensive lane — it builds images — so it runs nightly on the `
 | nightly | `schedule` in `ci-smoke.yml` | `smoke` |
 | manual | `workflow_dispatch` | whichever suite is chosen |
 
-`go test ./internal/devtools/` reads both workflows and fails if a suite the map can escalate has no automatic trigger, so a suite cannot quietly fall back to `workflow_dispatch` only.
+`go test ./internal/devtools/` reads both workflows and fails if a suite the map can escalate has no automatic trigger, so a suite cannot quietly fall back to `workflow_dispatch` only. It also fails when a trigger exists but cannot fire — a `schedule` holding no cron, or a `push` whose branch or path filters are narrower than the `pull_request` filters over the same paths the map claims.
 
 ### Basic Suites
 

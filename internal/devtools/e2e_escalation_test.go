@@ -105,11 +105,7 @@ func TestEveryEscalationRuleMatchesATrackedPath(t *testing.T) {
 	tracked := trackedPaths(t, root)
 
 	for _, rule := range escalationRules(t, root) {
-		pattern, err := regexp.Compile(rule)
-		if err != nil {
-			t.Errorf("rule %q is not a valid expression: %v", rule, err)
-			continue
-		}
+		pattern := rule.compile(t)
 		matched := false
 		for _, path := range tracked {
 			if pattern.MatchString(path) {
@@ -118,7 +114,7 @@ func TestEveryEscalationRuleMatchesATrackedPath(t *testing.T) {
 			}
 		}
 		if !matched {
-			t.Errorf("rule %q matches no tracked file, so the coverage it claims is not wired to anything; re-point it at the path that moved rather than leaving it", rule)
+			t.Errorf("rule %q matches no tracked file, so the coverage it claims is not wired to anything; re-point it at the path that moved rather than leaving it", rule.pattern)
 		}
 	}
 }
@@ -276,19 +272,41 @@ func runDetect(t *testing.T, root string, changed []string) []string {
 	return lines
 }
 
-func escalationRules(t *testing.T, root string) []string {
+type escalationRule struct {
+	pattern string
+	suites  []string
+}
+
+func escalationRules(t *testing.T, root string) []escalationRule {
 	t.Helper()
-	var rules []string
+	var rules []escalationRule
 	for _, line := range strings.Split(readRepoFile(t, root, escalationMap), "\n") {
-		if line == "" || strings.HasPrefix(line, "#") {
+		if strings.HasPrefix(line, "#") {
 			continue
 		}
-		rules = append(rules, strings.Fields(line)[0])
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		rules = append(rules, escalationRule{pattern: fields[0], suites: fields[1:]})
 	}
 	if len(rules) == 0 {
 		t.Fatalf("%s holds no rule", escalationMap)
 	}
 	return rules
+}
+
+func (r escalationRule) claimsASuite() bool {
+	return len(r.suites) > 0 && r.suites[0] != "-"
+}
+
+func (r escalationRule) compile(t *testing.T) *regexp.Regexp {
+	t.Helper()
+	pattern, err := regexp.Compile(r.pattern)
+	if err != nil {
+		t.Fatalf("rule %q in %s is not a valid expression: %v", r.pattern, escalationMap, err)
+	}
+	return pattern
 }
 
 func trackedPaths(t *testing.T, root string) []string {
@@ -396,4 +414,196 @@ func containsString(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func TestEveryAutomaticTriggerCanActuallyFire(t *testing.T) {
+	root := repoRoot(t)
+	probes := escalatablePaths(t, root)
+
+	for _, rel := range []string{escalationWorkflow, smokeWorkflow} {
+		workflow := parseWorkflow(t, root, rel)
+		reviewed, hasPullRequest := pullRequestFilter(t, rel, workflow)
+
+		for _, event := range automaticEvents(workflow) {
+			if crons, ok := scheduleCrons(workflow.On[event]); ok {
+				if len(crons) == 0 {
+					t.Errorf("%s declares a %s trigger holding no cron entry, so the lane it is meant to start never runs and every guard asserting the trigger exists passes on a name alone", rel, event)
+				}
+				continue
+			}
+
+			filter, ok := triggerFilterFor(workflow.On[event])
+			if !ok || !hasPullRequest {
+				continue
+			}
+
+			for _, branch := range reviewed.Branches {
+				if !matchesAnyGlob(filter.Branches, branch) {
+					t.Errorf("%s runs pull requests targeting %q but its %s trigger is limited to %v, so coverage retiered off the pull request lands on a branch nothing merges into", rel, branch, event, filter.Branches)
+				}
+			}
+
+			for _, path := range probes {
+				if triggerAcceptsPath(reviewed, path) && !triggerAcceptsPath(filter, path) {
+					t.Errorf("%s claims %s escalates a suite and the pull_request trigger in %s fires on it, yet the %s trigger filters it out (paths=%v paths-ignore=%v), so the merge lane is blind to a change the review lane tests", escalationMap, path, rel, event, filter.Paths, filter.PathsIgnore)
+				}
+			}
+		}
+	}
+}
+
+func TestTheTriggerPathMatcherFollowsGitHubGlobSemantics(t *testing.T) {
+	cases := []struct {
+		glob string
+		path string
+		want bool
+	}{
+		{"**.md", "README.md", true},
+		{"**.md", "docs/guides/contributing.md", true},
+		{"**.md", "cmd/pinchtab/main.go", false},
+		{"*.md", "README.md", true},
+		{"*.md", "docs/guides/contributing.md", false},
+		{"docs/**", "docs/guides/contributing.md", true},
+		{"docs/**", "docsite/index.html", false},
+		{"docs/**", "internal/docs/render.go", false},
+		{"LICENSE", "LICENSE", true},
+		{"LICENSE", "LICENSE.md", false},
+		{"skills/**", "skills/pinchtab/SKILL.md", true},
+		{"skills/**", "internal/skills/load.go", false},
+	}
+
+	for _, tc := range cases {
+		if got := matchesAnyGlob([]string{tc.glob}, tc.path); got != tc.want {
+			t.Errorf("glob %q against %q returned %t, want %t", tc.glob, tc.path, got, tc.want)
+		}
+	}
+
+	allowlist := triggerFilter{Paths: []string{"internal/**"}}
+	if triggerAcceptsPath(allowlist, "tests/e2e/scenarios/api/audit-extended.sh") {
+		t.Error("a paths allowlist that names only internal/** accepted a scenario file, so the allowlist arm of the matcher cannot reject anything")
+	}
+	if !triggerAcceptsPath(allowlist, "internal/audit/run.go") {
+		t.Error("a paths allowlist that names internal/** rejected a file under internal/, so the allowlist arm rejects everything")
+	}
+
+	ignore := triggerFilter{PathsIgnore: []string{"**.md"}}
+	if triggerAcceptsPath(ignore, "TESTING.md") {
+		t.Error("a paths-ignore of **.md accepted a markdown file, so the ignore arm of the matcher cannot reject anything")
+	}
+	if !triggerAcceptsPath(ignore, "internal/audit/run.go") {
+		t.Error("a paths-ignore of **.md rejected a Go file, so the ignore arm rejects everything")
+	}
+}
+
+type triggerFilter struct {
+	Branches    []string `yaml:"branches"`
+	Paths       []string `yaml:"paths"`
+	PathsIgnore []string `yaml:"paths-ignore"`
+}
+
+func triggerFilterFor(node any) (triggerFilter, bool) {
+	encoded, err := yaml.Marshal(node)
+	if err != nil {
+		return triggerFilter{}, false
+	}
+	var filter triggerFilter
+	if err := yaml.Unmarshal(encoded, &filter); err != nil {
+		return triggerFilter{}, false
+	}
+	return filter, true
+}
+
+func scheduleCrons(node any) ([]string, bool) {
+	entries, ok := node.([]any)
+	if !ok {
+		return nil, false
+	}
+	var crons []string
+	for _, entry := range entries {
+		mapping, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if cron, ok := mapping["cron"].(string); ok && strings.TrimSpace(cron) != "" {
+			crons = append(crons, cron)
+		}
+	}
+	return crons, true
+}
+
+func pullRequestFilter(t *testing.T, rel string, workflow ciWorkflow) (triggerFilter, bool) {
+	t.Helper()
+	node, declared := workflow.On["pull_request"]
+	if !declared {
+		return triggerFilter{}, false
+	}
+	filter, ok := triggerFilterFor(node)
+	if !ok {
+		t.Fatalf("%s declares a pull_request trigger this guard cannot decode, so the coverage the merge lane has to match is unknown", rel)
+	}
+	return filter, true
+}
+
+func triggerAcceptsPath(filter triggerFilter, path string) bool {
+	if len(filter.Paths) > 0 && !matchesAnyGlob(filter.Paths, path) {
+		return false
+	}
+	return !matchesAnyGlob(filter.PathsIgnore, path)
+}
+
+func matchesAnyGlob(globs []string, value string) bool {
+	for _, glob := range globs {
+		if regexp.MustCompile(globToPattern(glob)).MatchString(value) {
+			return true
+		}
+	}
+	return false
+}
+
+func globToPattern(glob string) string {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(glob); i++ {
+		switch glob[i] {
+		case '*':
+			if i+1 < len(glob) && glob[i+1] == '*' {
+				b.WriteString(".*")
+				i++
+			} else {
+				b.WriteString("[^/]*")
+			}
+		case '?':
+			b.WriteString("[^/]")
+		default:
+			b.WriteString(regexp.QuoteMeta(glob[i : i+1]))
+		}
+	}
+	b.WriteString("$")
+	return b.String()
+}
+
+func escalatablePaths(t *testing.T, root string) []string {
+	t.Helper()
+	tracked := trackedPaths(t, root)
+
+	var claiming []*regexp.Regexp
+	for _, rule := range escalationRules(t, root) {
+		if rule.claimsASuite() {
+			claiming = append(claiming, rule.compile(t))
+		}
+	}
+
+	var paths []string
+	for _, path := range tracked {
+		for _, pattern := range claiming {
+			if pattern.MatchString(path) {
+				paths = append(paths, path)
+				break
+			}
+		}
+	}
+	if len(paths) < len(claiming) {
+		t.Fatalf("%s names %d suite-claiming rules but they match only %d tracked files; the probe set has stopped representing the map and this guard would pass on a handful of paths", escalationMap, len(claiming), len(paths))
+	}
+	return paths
 }
