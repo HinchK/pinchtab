@@ -79,11 +79,26 @@ The map reads product paths as well as test paths:
 | audit implementation — `internal/audit/`, `pkg/pinchtabaudit/`, the audit handlers, `internal/cli/actions/actions_audit*`, `cmd/pinchtab/cmd_audit*` | `api-extended`, `cli-extended` |
 | compare implementation — `internal/cli/actions/actions_compare*`, `cmd/pinchtab/cmd_compare*` (`internal/audit/compare.go` is already audit) | `cli-extended` |
 
-Covering a new product area is one line in the map. `go test ./internal/devtools/` drives the script over synthetic file lists, so a mapping is verified by running it rather than by reading the YAML. Extended coverage the map does not claim still runs on `workflow_dispatch` only.
+Covering a new product area is one line in the map. `go test ./internal/devtools/` drives the script over synthetic file lists, so a mapping is verified by running it rather than by reading the YAML. Extended coverage the map does not claim is not lost — it runs after merge, on the lane below.
 
 Audit and compare are also declared there as *enrolled areas*: every tracked source file matching an area must escalate that area's suites, with a short exclusion list for files that only share the word (`internal/authn/audit.go` is security audit logging). So a new file in an enrolled family cannot quietly miss the map — which is how the CLI audit implementation went unenrolled while its cobra wrapper was covered. Enrolling another area is one entry in `enrolledAreas`.
 
 The multi-page audit runs — `api/audit-extended.sh`, `cli/audit-cli-extended.sh`, `cli/audit-seaportal-extended.sh`, `cli/compare-extended.sh` — sit in the extended tier rather than the basic one, so a pull request pays for them only when it touches audit or compare. The PR path keeps the single-page audit signal: `api/audit-page-basic.sh`, `api/a11y-audit-basic.sh`, `api/audit-fixtures-basic.sh`, `cli/audit-auth-basic.sh` and `cli/audit-report-basic.sh`.
+
+### What a merge and the nightly run
+
+Every push to `main` runs the three extended suites without consulting the map, so coverage a pull request skipped is exercised at merge rather than never. Extended suites include the matching `*-basic.sh` scenarios, so the merge lane does not repeat the basic suites.
+
+Smoke is the expensive lane — it builds images — so it runs nightly on the `schedule` trigger in `.github/workflows/ci-smoke.yml` rather than per merge, on top of the pull requests whose diff the map escalates to `smoke`.
+
+| Lane | Trigger | Suites |
+| --- | --- | --- |
+| pull request | `pull_request` on `main` | the three basic suites, plus whatever the escalation map claims |
+| merge | `push` on `main` | `api-extended`, `cli-extended`, `infra-extended` |
+| nightly | `schedule` in `ci-smoke.yml` | `smoke` |
+| manual | `workflow_dispatch` | whichever suite is chosen |
+
+`go test ./internal/devtools/` reads both workflows and fails if a suite the map can escalate has no automatic trigger, so a suite cannot quietly fall back to `workflow_dispatch` only.
 
 ### Basic Suites
 

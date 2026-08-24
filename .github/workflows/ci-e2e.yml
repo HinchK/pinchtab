@@ -13,6 +13,15 @@ on:
       - '.gitignore'
       - 'skills/**'
       - 'plugin/**'
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - 'skills/**'
+      - 'plugin/**'
   workflow_dispatch:
     inputs:
       suite:
@@ -49,11 +58,9 @@ jobs:
             ./scripts/ci/detect-e2e-suites.sh >> "$GITHUB_OUTPUT"
 
   api:
-    needs: [detect-changes]
     if: >-
-      always() &&
-      (needs.detect-changes.result == 'success' || needs.detect-changes.result == 'skipped') &&
-      (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'api')
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'api'))
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       ref: ${{ github.sha }}
@@ -61,22 +68,10 @@ jobs:
       summary_title: E2E API Tests
       timeout_minutes: 15
 
-  api-extended-pr:
-    needs: [detect-changes]
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.run_api_extended == 'true'
-    uses: ./.github/workflows/reusable-e2e.yml
-    with:
-      ref: ${{ github.sha }}
-      suite: api-extended
-      summary_title: E2E API Extended Tests (PR)
-      timeout_minutes: 20
-
   cli:
-    needs: [detect-changes]
     if: >-
-      always() &&
-      (needs.detect-changes.result == 'success' || needs.detect-changes.result == 'skipped') &&
-      (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'cli')
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'cli'))
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       ref: ${{ github.sha }}
@@ -84,22 +79,10 @@ jobs:
       summary_title: E2E CLI Tests
       timeout_minutes: 15
 
-  cli-extended-pr:
-    needs: [detect-changes]
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.run_cli_extended == 'true'
-    uses: ./.github/workflows/reusable-e2e.yml
-    with:
-      ref: ${{ github.sha }}
-      suite: cli-extended
-      summary_title: E2E CLI Extended Tests (PR)
-      timeout_minutes: 20
-
   infra:
-    needs: [detect-changes]
     if: >-
-      always() &&
-      (needs.detect-changes.result == 'success' || needs.detect-changes.result == 'skipped') &&
-      (github.event_name != 'workflow_dispatch' || inputs.suite == 'all' || inputs.suite == 'infra')
+      github.event_name == 'pull_request' ||
+      (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'infra'))
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       ref: ${{ github.sha }}
@@ -107,26 +90,14 @@ jobs:
       summary_title: E2E Infra Tests
       timeout_minutes: 15
 
-  infra-extended-pr:
-    needs: [detect-changes]
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.run_infra_extended == 'true'
-    uses: ./.github/workflows/reusable-e2e.yml
-    with:
-      ref: ${{ github.sha }}
-      suite: infra-extended
-      summary_title: E2E Infra Extended Tests (PR)
-      timeout_minutes: 25
-
-  smoke-pr:
-    needs: [detect-changes]
-    if: github.event_name == 'pull_request' && needs.detect-changes.outputs.run_smoke == 'true'
-    uses: ./.github/workflows/reusable-smoke.yml
-    with:
-      ref: ${{ github.sha }}
-
-  # Extended suites for manual dispatch
   api-extended:
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'api')
+    needs: [detect-changes]
+    if: >-
+      always() &&
+      (needs.detect-changes.result == 'success' || needs.detect-changes.result == 'skipped') &&
+      (github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && needs.detect-changes.outputs.run_api_extended == 'true') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'api')))
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       ref: ${{ github.sha }}
@@ -135,7 +106,13 @@ jobs:
       timeout_minutes: 20
 
   cli-extended:
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'cli')
+    needs: [detect-changes]
+    if: >-
+      always() &&
+      (needs.detect-changes.result == 'success' || needs.detect-changes.result == 'skipped') &&
+      (github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && needs.detect-changes.outputs.run_cli_extended == 'true') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'cli')))
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       ref: ${{ github.sha }}
@@ -144,7 +121,13 @@ jobs:
       timeout_minutes: 20
 
   infra-extended:
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'infra')
+    needs: [detect-changes]
+    if: >-
+      always() &&
+      (needs.detect-changes.result == 'success' || needs.detect-changes.result == 'skipped') &&
+      (github.event_name == 'push' ||
+      (github.event_name == 'pull_request' && needs.detect-changes.outputs.run_infra_extended == 'true') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'infra')))
     uses: ./.github/workflows/reusable-e2e.yml
     with:
       ref: ${{ github.sha }}
@@ -153,7 +136,12 @@ jobs:
       timeout_minutes: 25
 
   smoke:
-    if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'smoke')
+    needs: [detect-changes]
+    if: >-
+      always() &&
+      (needs.detect-changes.result == 'success' || needs.detect-changes.result == 'skipped') &&
+      ((github.event_name == 'pull_request' && needs.detect-changes.outputs.run_smoke == 'true') ||
+      (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'smoke')))
     uses: ./.github/workflows/reusable-smoke.yml
     with:
       ref: ${{ github.sha }}

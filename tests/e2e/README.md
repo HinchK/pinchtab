@@ -114,8 +114,8 @@ CI uses the Go runner directly:
 
 - `.github/workflows/reusable-e2e.yml` runs `go run ./tests/tools/runner e2e --suite <suite> --logs hide`
 - `.github/workflows/reusable-smoke.yml` runs `go run ./tests/tools/runner e2e --suite smoke --logs hide`
-- `.github/workflows/ci-e2e.yml` chooses PR, extended-on-touch, manual, and smoke jobs, then delegates execution to the reusable workflows
-- `.github/workflows/ci-smoke.yml` is the manual smoke entrypoint
+- `.github/workflows/ci-e2e.yml` chooses the PR, extended-on-touch, extended-on-merge, manual, and smoke jobs, then delegates execution to the reusable workflows
+- `.github/workflows/ci-smoke.yml` is the nightly smoke entrypoint, and the manual one
 
 Workflow YAML should stay thin: it decides when to run suites, while scenario selection, services, logs, reports, failure summaries, and GitHub Actions outputs stay in the Go layer.
 

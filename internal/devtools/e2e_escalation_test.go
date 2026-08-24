@@ -9,12 +9,15 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
 	escalationScript   = "scripts/ci/detect-e2e-suites.sh"
 	escalationMap      = "scripts/ci/e2e-escalation.map"
 	escalationWorkflow = ".github/workflows/ci-e2e.yml"
+	smokeWorkflow      = ".github/workflows/ci-smoke.yml"
 )
 
 func TestEscalationFollowsProductPathsAndTestPaths(t *testing.T) {
@@ -142,6 +145,84 @@ func TestTheWorkflowConsumesExactlyTheEmittedOutputs(t *testing.T) {
 			t.Errorf("%s gates a job on %s, which %s never emits, so the job never runs", escalationWorkflow, match[1], escalationScript)
 		}
 	}
+}
+
+func TestEveryEscalatableSuiteAlsoRunsWithoutADiffToClaimIt(t *testing.T) {
+	root := repoRoot(t)
+	automatic := suitesOnAutomaticTriggers(t, root)
+
+	for _, name := range detectSuiteNames(t, root) {
+		suite := strings.ReplaceAll(strings.TrimPrefix(name, "run_"), "_", "-")
+		if !automatic[suite] {
+			t.Errorf("the %s suite runs only when a diff escalates it or a human dispatches it, so a merge the map does not claim never exercises the coverage it holds; give it a job gated on github.event_name == '<event>' under an automatic trigger in %s or %s", suite, escalationWorkflow, smokeWorkflow)
+		}
+	}
+}
+
+type ciWorkflow struct {
+	On   map[string]any   `yaml:"on"`
+	Jobs map[string]ciJob `yaml:"jobs"`
+}
+
+type ciJob struct {
+	If   string `yaml:"if"`
+	Uses string `yaml:"uses"`
+	With struct {
+		Suite string `yaml:"suite"`
+	} `yaml:"with"`
+}
+
+func suitesOnAutomaticTriggers(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	automatic := map[string]bool{}
+	for _, rel := range []string{escalationWorkflow, smokeWorkflow} {
+		workflow := parseWorkflow(t, root, rel)
+		for _, event := range automaticEvents(workflow) {
+			for _, job := range workflow.Jobs {
+				if suite := jobSuite(job); suite != "" && jobRunsOnEvent(job, event) {
+					automatic[suite] = true
+				}
+			}
+		}
+	}
+	return automatic
+}
+
+func automaticEvents(workflow ciWorkflow) []string {
+	var events []string
+	for event := range workflow.On {
+		if event != "pull_request" && event != "workflow_dispatch" {
+			events = append(events, event)
+		}
+	}
+	sort.Strings(events)
+	return events
+}
+
+func jobSuite(job ciJob) string {
+	if job.With.Suite != "" {
+		return job.With.Suite
+	}
+	if strings.Contains(job.Uses, "reusable-smoke") {
+		return "smoke"
+	}
+	return ""
+}
+
+func jobRunsOnEvent(job ciJob, event string) bool {
+	return job.If == "" || strings.Contains(job.If, "github.event_name == '"+event+"'")
+}
+
+func parseWorkflow(t *testing.T, root, rel string) ciWorkflow {
+	t.Helper()
+	var workflow ciWorkflow
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, root, rel)), &workflow); err != nil {
+		t.Fatalf("cannot parse %s: %v", rel, err)
+	}
+	if len(workflow.On) == 0 || len(workflow.Jobs) == 0 {
+		t.Fatalf("%s declares %d triggers and %d jobs, so every trigger guard over it would pass vacuously", rel, len(workflow.On), len(workflow.Jobs))
+	}
+	return workflow
 }
 
 func detectSuites(t *testing.T, root string, changed []string) []string {
