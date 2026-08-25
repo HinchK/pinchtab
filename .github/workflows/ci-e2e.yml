@@ -12,8 +12,6 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - 'skills/**'
-      - 'plugins/**'
-      - '.grok-plugin/**'
   push:
     branches: [main]
     paths-ignore:
@@ -22,8 +20,6 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - 'skills/**'
-      - 'plugins/**'
-      - '.grok-plugin/**'
   workflow_dispatch:
     inputs:
       suite:
@@ -41,7 +37,7 @@ on:
 
 jobs:
   detect-changes:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-latest
     outputs:
       run_api_extended: ${{ steps.changes.outputs.run_api_extended }}
@@ -55,9 +51,16 @@ jobs:
       - name: Decide which suites this diff needs
         id: changes
         shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
         run: |
-          git diff --name-only origin/main...HEAD |
-            ./scripts/ci/detect-e2e-suites.sh >> "$GITHUB_OUTPUT"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git diff --name-only origin/main...HEAD
+          else
+            git diff --name-only "$BEFORE_SHA" "$CURRENT_SHA"
+          fi | ./scripts/ci/detect-e2e-suites.sh >> "$GITHUB_OUTPUT"
 
   api:
     if: >-
@@ -142,7 +145,7 @@ jobs:
     if: >-
       always() &&
       (needs.detect-changes.result == 'success' || needs.detect-changes.result == 'skipped') &&
-      ((github.event_name == 'pull_request' && needs.detect-changes.outputs.run_smoke == 'true') ||
+      (((github.event_name == 'pull_request' || github.event_name == 'push') && needs.detect-changes.outputs.run_smoke == 'true') ||
       (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'smoke')))
     uses: ./.github/workflows/reusable-smoke.yml
     with:

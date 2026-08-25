@@ -76,17 +76,17 @@ export async function executeBrowserAction(rawCfg: PluginConfig, rawParams: any,
 
     let result;
     if (params.newTab) {
-      const body: any = { action: "new", url: params.url };
-      if (profileConfig.instanceId) body.instanceId = profileConfig.instanceId;
-      result = await pinchtabFetch(cfg, "/tab", { body }, context);
+      if (profileConfig.instanceId) {
+        result = await pinchtabFetch(cfg, `/instances/${encodeURIComponent(profileConfig.instanceId)}/tabs/open`, { body: { url: params.url } }, context);
+      } else {
+        result = await pinchtabFetch(cfg, "/tab", { body: { action: "new", url: params.url } }, context);
+      }
     } else if (params.tabId) {
-      const body: any = { url: params.url };
-      if (profileConfig.instanceId) body.instanceId = profileConfig.instanceId;
-      result = await pinchtabFetch(cfg, `/tabs/${encodeURIComponent(params.tabId)}/navigate`, { body }, context);
+      result = await pinchtabFetch(cfg, `/tabs/${encodeURIComponent(params.tabId)}/navigate`, { body: { url: params.url } }, context);
+    } else if (profileConfig.instanceId) {
+      result = await pinchtabFetch(cfg, `/instances/${encodeURIComponent(profileConfig.instanceId)}/tabs/open`, { body: { url: params.url } }, context);
     } else {
-      const body: any = { url: params.url };
-      if (profileConfig.instanceId) body.instanceId = profileConfig.instanceId;
-      result = await pinchtabFetch(cfg, "/navigate", { body }, context);
+      result = await pinchtabFetch(cfg, "/navigate", { body: { url: params.url } }, context);
     }
     if (result?.tabId) setLastTabId(result.tabId, context);
     return textResult(result);
