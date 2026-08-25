@@ -6,10 +6,6 @@ on:
       version:
         description: 'Release version (e.g. 0.8.0, without v prefix)'
         required: true
-      ref:
-        description: 'Git ref to release. Defaults to main.'
-        required: false
-        default: 'main'
 
 env:
   GORELEASER_VERSION: v2.14.3
@@ -26,7 +22,7 @@ jobs:
     uses: ./.github/workflows/reusable-validate-release.yml
     with:
       version: ${{ inputs.version }}
-      ref: ${{ inputs.ref }}
+      ref: ${{ github.sha }}
 
   release-secret-checks:
     needs: validate
