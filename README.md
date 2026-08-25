@@ -170,13 +170,14 @@ Most users should not need to think about `pinchtab bridge` directly, and only n
 Agent plugins (binary still installed separately):
 
 ```bash
-# Grok Build
-grok plugin marketplace add pinchtab/pinchtab
+# Grok Build, after listing in the official xAI marketplace
 grok plugin install pinchtab --trust
 
 # OpenClaw
 openclaw plugins install @pinchtab/pinchtab
 ```
+
+Grok users can install from the PinchTab repository marketplace or directly from GitHub. See the [Grok plugin install and usage guide](plugins/grok/README.md).
 
 ### Key Features
 

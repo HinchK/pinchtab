@@ -93,20 +93,26 @@ Add to your Cursor MCP settings (`~/.cursor/mcp.json`):
 
 ### Grok Build
 
-Install the PinchTab plugin (skills + `pinchtab mcp`):
+After PinchTab is listed in the official xAI marketplace, install the plugin with:
+
+```bash
+grok plugin install pinchtab --trust
+```
+
+Until then, or to install from the PinchTab repository marketplace:
 
 ```bash
 grok plugin marketplace add pinchtab/pinchtab
 grok plugin install pinchtab --trust
 ```
 
-Or:
+You can also install the plugin directory directly from GitHub:
 
 ```bash
 grok plugin install pinchtab/pinchtab#plugins/grok --trust
 ```
 
-The plugin does not install the binary. Install PinchTab separately, start `pinchtab server`, then trust the plugin so MCP tools appear in `/mcps`. See [plugins/grok/README.md](../../plugins/grok/README.md).
+From the root of a local checkout, use `grok plugin install ./plugins/grok --trust`. The plugin does not install the binary. Install PinchTab separately, start `pinchtab server`, then trust the plugin so MCP tools appear in `/mcps`. See the [Grok plugin install and usage guide](../../plugins/grok/README.md) for first use, verification, domain authorization, and troubleshooting.
 
 To configure MCP without the plugin, add to `~/.grok/config.toml`:
 
