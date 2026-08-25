@@ -174,6 +174,15 @@ or `interactive`; `maxTokens` is a positive whole number; `depth` is a whole num
 tree, because the comparison was an exact string match, and every one of these controls used
 to fail toward the *more expensive* answer without telling the caller.
 
+`interactive` is the documented boolean alias for `filter`: `interactive=true` is
+`filter=interactive`, `interactive=false` is `filter=all`. It takes the values Go's
+`ParseBool` accepts (`true`/`false`, `1`/`0`, `t`/`f`), and anything else is a `400` rather
+than a fall-through to the whole tree. Sending both is fine while they agree; `filter=all`
+next to `interactive=true` is refused, because resolving that by a precedence rule the
+caller cannot see would mean one of the two parameters it sent did nothing. The alias was
+advertised on this endpoint for a long time without ever being read, so a raw HTTP caller
+that followed the docs bought the full tree and was told nothing.
+
 An unknown parameter NAME is reported rather than refused: `ignoredParams` on JSON and YAML
 responses, an `# ignored params: ...` line on `compact` and `text` ones. `/action` can
 refuse because its parameter set is the action request's own fields, and a caller sending
@@ -253,8 +262,8 @@ Selector lookup is limited to the current frame scope. The default scope is `mai
 
 Snapshot query parameters:
 
-- `interactive`
-- `compact`
+- `filter`
+- `interactive` (boolean alias for `filter`)
 - `diff`
 - `selector`
 - `maxTokens`

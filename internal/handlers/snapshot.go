@@ -25,6 +25,7 @@ import (
 //
 // @Param tabId string query Tab ID (required)
 // @Param filter string query Filter type: "interactive" for clickable/inputs only, "all" for everything (optional, default: "all")
+// @Param interactive bool query Alias for filter: true means filter=interactive, false means filter=all; a value contradicting an explicit filter is a 400 (optional)
 // @Param depth int query Max nesting depth (optional, default: -1 for full tree)
 // @Param maxTokens int query Token budget for the response (optional, positive)
 // @Param format string query Output format: "json", "compact", "text" or "yaml" (optional, default: "json")

@@ -46,7 +46,8 @@ pinchtab snap --max-tokens 2000         # Limit output size
 
 | Parameter | Description |
 |-----------|-------------|
-| `filter` | `interactive` for interactive + headings |
+| `filter` | `interactive` for interactive + headings, `all` (default) for the whole tree |
+| `interactive` | Boolean alias for `filter`: `true` is `filter=interactive`, `false` is `filter=all`. Contradicting an explicit `filter` is a 400 |
 | `format` | `compact`, `text`, `yaml`, or default JSON. The CLI and the MCP tool both ask for `compact`; the HTTP default is unchanged |
 | `diff` | `true` for diff mode |
 | `selector` | CSS selector to scope |

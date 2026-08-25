@@ -15,7 +15,10 @@ import (
 var snapshotFormats = []string{"json", "compact", "text", "yaml"}
 
 // snapshotFilters are the node subsets /snapshot can return. "all" and the empty string
-// both mean the whole tree; bridge.FilterInteractive is the only value that narrows it.
+// both mean the whole tree; bridge.FilterInteractive is the only value that narrows it. The
+// boolean `interactive` parameter is an alias: true selects bridge.FilterInteractive, false
+// the whole tree, and a value that contradicts an explicit `filter` is refused rather than
+// resolved by precedence the caller cannot see.
 var snapshotFilters = []string{"all", bridge.FilterInteractive}
 
 // snapshotKnownParams is every query parameter HandleSnapshot reads. A parameter absent
@@ -29,6 +32,7 @@ var snapshotKnownParams = map[string]bool{
 	// somewhere else still gets reported as ignored if this set only covers one file.
 	"browser":      true,
 	"filter":       true,
+	"interactive":  true,
 	"format":       true,
 	"depth":        true,
 	"maxTokens":    true,
@@ -72,14 +76,31 @@ func ParseSnapshotCostControls(q url.Values) (SnapshotCostControls, error) {
 		controls.Format = format
 	}
 
+	filterSet := false
 	filter := normalizeParam(q.Get("filter"))
 	if filter != "" {
 		if !acceptsValue(snapshotFilters, filter) {
 			return controls, fmt.Errorf("filter must be one of %s (got %q)", joinQuoted(snapshotFilters), q.Get("filter"))
 		}
+		filterSet = true
 		if filter == bridge.FilterInteractive {
 			controls.Filter = filter
 		}
+	}
+
+	if raw := normalizeParam(q.Get("interactive")); raw != "" {
+		want, err := strconv.ParseBool(raw)
+		if err != nil {
+			return controls, fmt.Errorf("interactive must be \"true\" or \"false\" (got %q)", q.Get("interactive"))
+		}
+		aliased := ""
+		if want {
+			aliased = bridge.FilterInteractive
+		}
+		if filterSet && aliased != controls.Filter {
+			return controls, fmt.Errorf("filter=%q and interactive=%q ask for different subsets; send one or the other", q.Get("filter"), q.Get("interactive"))
+		}
+		controls.Filter = aliased
 	}
 
 	if raw := strings.TrimSpace(q.Get("maxTokens")); raw != "" {

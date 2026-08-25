@@ -159,15 +159,99 @@ func TestFilterAllIsTheWholeTree(t *testing.T) {
 // the normal direction — a newer client sending a parameter an older server has not learned
 // — keeps working while a typo stops being invisible.
 func TestUnknownParamsAreReportedNotRejected(t *testing.T) {
-	got, err := parseQuery(t, "tabId=abc&compact=true&interactive=true&format=compact")
+	got, err := parseQuery(t, "tabId=abc&compact=true&interactve=true&format=compact")
 	if err != nil {
 		t.Fatalf("an unknown parameter was rejected; version skew would break: %v", err)
 	}
-	if want := []string{"compact", "interactive"}; !equalStrings(got.Ignored, want) {
+	if want := []string{"compact", "interactve"}; !equalStrings(got.Ignored, want) {
 		t.Errorf("ignored = %v, want %v — this is the disclosure that would have caught `compact=true` in the CLI", got.Ignored, want)
 	}
 	if got.Format != "compact" {
 		t.Errorf("format = %q, want the valid parameter still honoured", got.Format)
+	}
+}
+
+// `interactive` is documented on /snapshot as the boolean alias for filter=interactive, and
+// a shipped example still sends it. It was advertised without ever being read, so a raw HTTP
+// caller that followed the docs paid for the whole tree and was told nothing. The alias has
+// to be honoured on the wire, not merely disclosed as ignored.
+func TestInteractiveAliasSelectsTheInteractiveSubset(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{query: "tabId=abc&interactive=true", want: bridge.FilterInteractive},
+		{query: "tabId=abc&interactive=TRUE", want: bridge.FilterInteractive},
+		{query: "tabId=abc&interactive=+true+", want: bridge.FilterInteractive},
+		{query: "tabId=abc&interactive=1", want: bridge.FilterInteractive},
+		{query: "tabId=abc&interactive=false", want: ""},
+		{query: "tabId=abc&interactive=0", want: ""},
+		{query: "tabId=abc&interactive=", want: ""},
+		{query: "tabId=abc&filter=interactive&interactive=true", want: bridge.FilterInteractive},
+		{query: "tabId=abc&filter=all&interactive=false", want: ""},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			got, err := parseQuery(t, tc.query)
+			if err != nil {
+				t.Fatalf("the documented alias was rejected: %v", err)
+			}
+			if got.Filter != tc.want {
+				t.Errorf("filter = %q, want %q — the alias resolved to the wrong subset", got.Filter, tc.want)
+			}
+			if len(got.Ignored) != 0 {
+				t.Errorf("ignored = %v, but interactive is a parameter the server reads", got.Ignored)
+			}
+		})
+	}
+}
+
+// A bad alias value must fail the same way every other cost control does. Falling through to
+// the whole tree is the exact failure this parser exists to end: `interactive=yes` would
+// otherwise buy the expensive answer silently.
+func TestInteractiveAliasRefusesValuesItCannotRead(t *testing.T) {
+	for _, query := range []string{
+		"interactive=yes",
+		"interactive=on",
+		"interactive=interactive",
+		"interactive=2",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, err := parseQuery(t, query)
+			if err == nil {
+				t.Fatalf("%s was accepted; a caller that mistyped the alias silently gets the whole tree", query)
+			}
+			sent := strings.SplitN(query, "=", 2)[1]
+			if !strings.Contains(err.Error(), sent) {
+				t.Errorf("the rejection does not quote the offending value %q: %v", sent, err)
+			}
+			for _, want := range []string{"interactive", "true", "false"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the rejection does not name %q, so the caller cannot tell what to send instead: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// An alias only stays honest while it cannot disagree with the thing it aliases. Picking a
+// winner by precedence would mean one of the two parameters the caller sent did nothing,
+// which is the silence this endpoint stopped keeping.
+func TestFilterAndInteractiveMayNotContradictEachOther(t *testing.T) {
+	for _, query := range []string{
+		"filter=all&interactive=true",
+		"filter=interactive&interactive=false",
+	} {
+		t.Run(query, func(t *testing.T) {
+			_, err := parseQuery(t, query)
+			if err == nil {
+				t.Fatalf("%s was accepted, so one of the two parameters was silently discarded", query)
+			}
+			for _, want := range []string{"filter", "interactive"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the rejection does not name %q, so the caller cannot tell which pair conflicts: %v", want, err)
+				}
+			}
+		})
 	}
 }
 
@@ -176,7 +260,7 @@ func TestUnknownParamsAreReportedNotRejected(t *testing.T) {
 // HandleSnapshot, so a known-params set derived from one file alone gets it wrong and every
 // browser-routed call grows a false disclosure.
 func TestParamsTheRequestPathReadsAreNotReportedAsIgnored(t *testing.T) {
-	got, err := parseQuery(t, "tabId=abc&browser=chrome&filter=interactive&format=compact&depth=3&maxTokens=500&diff=true&noAnimations=true&selector=%23main&output=file&path=out.txt")
+	got, err := parseQuery(t, "tabId=abc&browser=chrome&filter=interactive&interactive=true&format=compact&depth=3&maxTokens=500&diff=true&noAnimations=true&selector=%23main&output=file&path=out.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,11 +269,13 @@ func TestParamsTheRequestPathReadsAreNotReportedAsIgnored(t *testing.T) {
 	}
 }
 
-var queryGetPattern = regexp.MustCompile(`Query\(\)\.Get\("([^"]+)"\)`)
+var queryGetPattern = regexp.MustCompile(`\.Get\("([^"]+)"\)`)
 
-// snapshotPathSources are the files whose Query().Get calls can run for a /snapshot
-// request. Listed rather than derived because the call graph decides membership.
-var snapshotPathSources = []string{"snapshot.go", "read_prelude.go"}
+// snapshotPathSources are the files whose query reads can run for a /snapshot request.
+// Listed rather than derived because the call graph decides membership. snapshot_params.go
+// is on it because that is where the cost controls moved: a scan of the handler alone would
+// no longer see `filter`, `format`, `depth`, `maxTokens` or the `interactive` alias at all.
+var snapshotPathSources = []string{"snapshot.go", "read_prelude.go", "snapshot_params.go"}
 
 // notOnTheSnapshotPath are parameters those files read from a function /snapshot never
 // calls. They belong OUT of snapshotKnownParams: /snapshot genuinely ignores them, so
@@ -206,6 +292,7 @@ var notOnTheSnapshotPath = map[string]string{
 func TestKnownParamsCoversEveryParamTheHandlerReads(t *testing.T) {
 	var missing []string
 	seen := 0
+	reported := map[string]bool{}
 	exemptionsUsed := map[string]bool{}
 	for _, name := range snapshotPathSources {
 		body, err := os.ReadFile(filepath.Join(".", name))
@@ -219,7 +306,8 @@ func TestKnownParamsCoversEveryParamTheHandlerReads(t *testing.T) {
 				exemptionsUsed[param] = true
 				continue
 			}
-			if !snapshotKnownParams[param] {
+			if !snapshotKnownParams[param] && !reported[name+param] {
+				reported[name+param] = true
 				missing = append(missing, name+": "+param)
 			}
 		}
@@ -255,9 +343,11 @@ func equalStrings(got, want []string) bool {
 
 type snapshotStubBridge struct {
 	*mockBridge
+	gotFilter string
 }
 
-func (b *snapshotStubBridge) Snapshot(context.Context, string, string, bridge.ContentParams) (*bridge.SnapshotResult, error) {
+func (b *snapshotStubBridge) Snapshot(_ context.Context, _ string, filter string, _ bridge.ContentParams) (*bridge.SnapshotResult, error) {
+	b.gotFilter = filter
 	return &bridge.SnapshotResult{
 		Nodes: []bridge.A11yNode{{Role: "button", Name: "Buy"}},
 		URL:   "http://127.0.0.1:1/fixture",
@@ -269,9 +359,10 @@ func (b *snapshotStubBridge) GetRefCache(string) *bridge.RefCache {
 	return &bridge.RefCache{Nodes: []bridge.A11yNode{{Role: "link", Name: "Home"}}}
 }
 
-func snapshotBodyFor(t *testing.T, query string) string {
+func serveSnapshot(t *testing.T, query string) (*httptest.ResponseRecorder, *snapshotStubBridge) {
 	t.Helper()
-	h := New(&snapshotStubBridge{mockBridge: &mockBridge{}}, &config.RuntimeConfig{
+	stub := &snapshotStubBridge{mockBridge: &mockBridge{}}
+	h := New(stub, &config.RuntimeConfig{
 		ActionTimeout:     5 * time.Second,
 		DefaultBrowser:    config.BrowserGhostChrome,
 		BrowsersAvailable: []string{config.BrowserGhostChrome},
@@ -280,10 +371,59 @@ func snapshotBodyFor(t *testing.T, query string) string {
 	req := httptest.NewRequest("GET", "/snapshot?"+query, nil)
 	w := httptest.NewRecorder()
 	h.HandleSnapshot(w, req)
+	return w, stub
+}
+
+func snapshotBodyFor(t *testing.T, query string) string {
+	t.Helper()
+	w, _ := serveSnapshot(t, query)
 	if w.Code != http.StatusOK {
 		t.Fatalf("snapshot?%s: status %d body=%s", query, w.Code, w.Body.String())
 	}
 	return w.Body.String()
+}
+
+// The parser resolving the alias is not the same claim as the request path carrying it: the
+// regression this guards is wire-level, so it is checked at the wire.
+func TestTheInteractiveAliasReachesTheBridgeAsAFilter(t *testing.T) {
+	for _, tc := range []struct {
+		query string
+		want  string
+	}{
+		{query: "tabId=tab1&interactive=true", want: bridge.FilterInteractive},
+		{query: "tabId=tab1&interactive=false", want: ""},
+		{query: "tabId=tab1&filter=interactive", want: bridge.FilterInteractive},
+		{query: "tabId=tab1", want: ""},
+	} {
+		t.Run(tc.query, func(t *testing.T) {
+			w, stub := serveSnapshot(t, tc.query)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d body=%s", w.Code, w.Body.String())
+			}
+			if stub.gotFilter != tc.want {
+				t.Errorf("the bridge was asked for filter %q, want %q — the caller pays for a tree it did not request", stub.gotFilter, tc.want)
+			}
+			if strings.Contains(w.Body.String(), "ignoredParams") {
+				t.Errorf("a parameter the request path honoured was disclosed as ignored:\n%s", w.Body.String())
+			}
+		})
+	}
+}
+
+// A refused cost control has to reach the caller as a 400 naming it, not as an expensive 200.
+func TestContradictoryFilterAndInteractiveAnswer400(t *testing.T) {
+	w, stub := serveSnapshot(t, "tabId=tab1&filter=all&interactive=true")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400: %s", w.Code, w.Body.String())
+	}
+	if stub.gotFilter != "" {
+		t.Errorf("the snapshot was captured anyway (filter %q); a refused request must not be charged", stub.gotFilter)
+	}
+	for _, want := range []string{"filter", "interactive"} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("the 400 body does not name %q: %s", want, w.Body.String())
+		}
+	}
 }
 
 func jsonEnvelope(t *testing.T, body string) []string {

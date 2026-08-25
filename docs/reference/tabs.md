@@ -134,7 +134,7 @@ pinchtab nav https://pinchtab.com --tab <tabId>
 ### Snapshot
 
 ```bash
-curl "http://localhost:9867/tabs/<tabId>/snapshot?interactive=true&compact=true"
+curl "http://localhost:9867/tabs/<tabId>/snapshot?filter=interactive&format=compact"
 # CLI Alternative
 pinchtab snap --tab <tabId> -i -c
 ```
