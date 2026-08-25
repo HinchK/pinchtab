@@ -23,6 +23,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+          package-manager-cache: false
 
       - name: Install plugin dependencies
         working-directory: plugins/openclaw
@@ -59,6 +60,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+          package-manager-cache: false
 
       - name: Check Grok plugin
         run: bash scripts/check-plugin.sh grok --check-skills
@@ -74,6 +76,7 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '22'
+          package-manager-cache: false
 
       - name: Install plugin dependencies
         working-directory: plugins/openclaw
