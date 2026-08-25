@@ -67,6 +67,33 @@ The MCP server communicates over stdio using JSON-RPC, which is the standard MCP
 }
 ```
 
+### Grok Build
+
+Install the PinchTab plugin (CLI skill + MCP):
+
+```bash
+grok plugin marketplace add pinchtab/pinchtab
+grok plugin install pinchtab --trust
+```
+
+Or from a checkout:
+
+```bash
+grok plugin install pinchtab/pinchtab#plugins/grok --trust
+```
+
+`--trust` is required before MCP starts. The plugin does not install the `pinchtab` binary — install PinchTab separately and run `pinchtab server` (or the local daemon).
+
+To wire MCP yourself instead of the plugin, add to `~/.grok/config.toml`:
+
+```toml
+[mcp_servers.pinchtab]
+command = "pinchtab"
+args = ["mcp"]
+```
+
+See [plugins/grok/README.md](../plugins/grok/README.md).
+
 ## Environment
 
 | Variable | Description |

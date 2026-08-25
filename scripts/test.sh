@@ -402,8 +402,8 @@ fi
 
 if [ "$SCOPE" = "all" ] || [ "$SCOPE" = "plugin" ]; then
   section "test:🔬:plugin"
-  cd plugin && npx tsx --test *.test.ts
-  cd ..
+  cd plugins/openclaw && npx tsx --test *.test.ts
+  cd ../..
   ok "test:🔬:plugin"
 fi
 

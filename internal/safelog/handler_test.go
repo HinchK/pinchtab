@@ -129,7 +129,7 @@ func TestParseLevel(t *testing.T) {
 //
 // The scope is derived: every package directory under cmd/, internal/ and pkg/, so a new
 // installer anywhere in this repo's own source reddens it. tests/, tools/, scripts/,
-// plugin/ and docs/examples/ are deliberately out of scope — a harness or example binary
+// plugins/ and docs/examples/ are deliberately out of scope — a harness or example binary
 // installing its own logger is legitimate, and walking them means walking node_modules.
 func TestOnlySafelogInstallsTheProcessLogger(t *testing.T) {
 	installers := []string{}

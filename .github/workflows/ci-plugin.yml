@@ -10,11 +10,17 @@ on:
   push:
     branches: [main]
     paths:
-      - 'plugin/**'
+      - 'plugins/**'
+      - 'skills/pinchtab/**'
+      - 'skills/pinchtab-mcp/**'
+      - '.grok-plugin/**'
       - '.github/workflows/*plugin*'
   pull_request:
     paths:
-      - 'plugin/**'
+      - 'plugins/**'
+      - 'skills/pinchtab/**'
+      - 'skills/pinchtab-mcp/**'
+      - '.grok-plugin/**'
       - '.github/workflows/*plugin*'
 
 permissions:

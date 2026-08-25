@@ -167,6 +167,17 @@ The primary user journey is:
 That is the default “replace the browser runtime” scenario.
 Most users should not need to think about `pinchtab bridge` directly, and only need `pinchtab` when they want the local interactive menu.
 
+Agent plugins (binary still installed separately):
+
+```bash
+# Grok Build
+grok plugin marketplace add pinchtab/pinchtab
+grok plugin install pinchtab --trust
+
+# OpenClaw
+openclaw plugins install @pinchtab/pinchtab
+```
+
 ### Key Features
 
 - **CLI or Curl** — Control via command-line or HTTP API

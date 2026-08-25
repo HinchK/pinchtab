@@ -5,7 +5,7 @@ Deterministic end-to-end harness for the Pinchtab OpenClaw plugin.
 What it does:
 - builds a local Pinchtab image from this repo
 - starts a local fixture server inside Docker
-- **simulates the plugin release flow**: runs `npm pack` against `plugin/` (which triggers the same `prepack` chain — clean → sync skills → `tsc` build → emit `dist/` — that runs during a real `npm publish`), then installs the resulting tarball into the OpenClaw container exactly as a downstream consumer would
+- **simulates the plugin release flow**: runs `npm pack` against `plugins/openclaw/` (which triggers the same `prepack` chain — clean → sync skills → `tsc` build → emit `dist/` — that runs during a real `npm publish`), then installs the resulting tarball into the OpenClaw container exactly as a downstream consumer would
 - disables the bundled OpenClaw browser plugin so `browser` resolves to Pinchtab's compatibility alias
 - runs several `openclaw agent` prompts against the fixture site
 - verifies the returned answers

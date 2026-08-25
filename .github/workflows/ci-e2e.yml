@@ -12,7 +12,8 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - 'skills/**'
-      - 'plugin/**'
+      - 'plugins/**'
+      - '.grok-plugin/**'
   push:
     branches: [main]
     paths-ignore:
@@ -21,7 +22,8 @@ on:
       - 'LICENSE'
       - '.gitignore'
       - 'skills/**'
-      - 'plugin/**'
+      - 'plugins/**'
+      - '.grok-plugin/**'
   workflow_dispatch:
     inputs:
       suite:

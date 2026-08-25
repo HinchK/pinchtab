@@ -13,6 +13,8 @@ Development and CI scripts for PinchTab.
 | `check-npm.sh` | npm package checks (lint, format, typecheck, tests, pack validation) |
 | `check-gosec.sh` | Security scan with gosec (reproduces CI security job) |
 | `check-docs-json.sh` | Validate `docs/index.json` structure |
+| `check-plugin.sh` | OpenClaw + Grok plugin checks (JSON, pack, skill sync) |
+| `pack-plugin.sh` | ClawHub tarball of `plugins/openclaw` |
 | `test.sh` | Go test runner with progress (unit, integration, system, or all) |
 | `pre-commit` | Git pre-commit hook (format + lint) |
 

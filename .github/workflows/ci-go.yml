@@ -10,7 +10,8 @@ on:
       - '!LICENSE'
       - '!.gitignore'
       - '!skills/**'
-      - '!plugin/**'
+      - '!plugins/**'
+      - '!.grok-plugin/**'
       - 'skills/pinchtab/SKILL.md'
       - 'skills/pinchtab-mcp/SKILL.md'
   pull_request:
@@ -22,7 +23,8 @@ on:
       - '!LICENSE'
       - '!.gitignore'
       - '!skills/**'
-      - '!plugin/**'
+      - '!plugins/**'
+      - '!.grok-plugin/**'
       - 'skills/pinchtab/SKILL.md'
       - 'skills/pinchtab-mcp/SKILL.md'
   workflow_dispatch:
