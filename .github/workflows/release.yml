@@ -62,8 +62,6 @@ jobs:
   plugin-checks:
     needs: validate
     uses: ./.github/workflows/reusable-plugin.yml
-    with:
-      ref: ${{ needs.validate.outputs.sha }}
 
   e2e-api-extended:
     needs: validate

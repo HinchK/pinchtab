@@ -24,5 +24,3 @@ permissions:
 jobs:
   plugin:
     uses: ./.github/workflows/reusable-plugin.yml
-    with:
-      ref: ${{ github.sha }}
