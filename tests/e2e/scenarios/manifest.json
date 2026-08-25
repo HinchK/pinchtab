@@ -448,6 +448,24 @@
         "pr"
       ]
     },
+    "api/browser-activity-extended.sh": {
+      "services": [
+        "pinchtab",
+        "pinchtab-bridge",
+        "fixtures"
+      ],
+      "ready": [
+        "E2E_SERVER",
+        "E2E_BRIDGE_URL|60|E2E_BRIDGE_TOKEN"
+      ],
+      "tags": [
+        "browser",
+        "activity",
+        "metadata",
+        "route",
+        "bridge"
+      ]
+    },
     "infra/browser-instance-basic.sh": {
       "tags": [
         "browser",
@@ -486,7 +504,7 @@
         "errors"
       ]
     },
-    "cli/compare-basic.sh": {
+    "cli/compare-extended.sh": {
       "tags": [
         "compare",
         "audit",

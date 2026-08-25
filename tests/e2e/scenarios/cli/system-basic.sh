@@ -24,19 +24,6 @@ end_test
 
 # Note: instance start is implicitly tested (server is running)
 
-config_setup() {
-  TMPDIR=$(mktemp -d)
-  CFG="$TMPDIR/config.json"
-}
-
-config_cleanup() {
-  rm -rf "$TMPDIR"
-}
-
-config_init() {
-  PINCHTAB_CONFIG="$CFG" HOME="$TMPDIR" pt_ok config init
-}
-
 assert_config_field() {
   local path="$1" expected="$2" desc="$3"
   local actual
@@ -205,32 +192,62 @@ config_cleanup
 end_test
 
 # ─────────────────────────────────────────────────────────────────
-start_test "config token copies token to clipboard"
+start_test "config token fails loudly with no clipboard"
 
 config_setup
 config_init
-# Set a token in the config
 PINCHTAB_CONFIG="$CFG" pt_ok config set server.token "test-token-12345"
 
-# Run config token - in Docker without clipboard it should succeed
-# but report clipboard unavailable
-PINCHTAB_CONFIG="$CFG" pt_ok config token
-
-# Should either report clipboard success or clipboard unavailable (both are OK)
-if echo "$PT_OUT" | grep -q "copied to clipboard"; then
-  echo -e "  ${GREEN}✓${NC} token copied to clipboard"
-  ((ASSERTIONS_PASSED++)) || true
-elif echo "$PT_OUT" | grep -q "Clipboard unavailable"; then
-  echo -e "  ${GREEN}✓${NC} clipboard unavailable handled gracefully"
-  ((ASSERTIONS_PASSED++)) || true
-else
-  echo -e "  ${RED}✗${NC} unexpected output: $PT_OUT"
-  ((ASSERTIONS_FAILED++)) || true
-fi
-
-# Verify token is NOT printed to stdout (security)
+PINCHTAB_CONFIG="$CFG" pt config token
+assert_exit_code 1 "exits non-zero when no clipboard tool exists"
 assert_output_not_contains "test-token-12345" "token not leaked to stdout"
 
+if echo "$PT_ERR" | grep -qi "clipboard unavailable"; then
+  pass_assert "stderr says the clipboard was unavailable"
+else
+  fail_assert "stderr says the clipboard was unavailable (stderr: $PT_ERR)"
+fi
+
+if echo "$PT_ERR" | grep -q -- "--stdout"; then
+  pass_assert "stderr names another way to reach the token"
+else
+  fail_assert "stderr names another way to reach the token (stderr: $PT_ERR)"
+fi
+
+config_cleanup
+end_test
+
+# ─────────────────────────────────────────────────────────────────
+start_test "config token copies token to an available clipboard"
+
+config_setup
+config_init
+PINCHTAB_CONFIG="$CFG" pt_ok config set server.token "test-token-12345"
+
+CLIP_DIR=$(mktemp -d)
+cat > "$CLIP_DIR/wl-copy" <<STUB
+#!/bin/sh
+cat > "$CLIP_DIR/copied"
+STUB
+chmod +x "$CLIP_DIR/wl-copy"
+
+PATH="$CLIP_DIR:$PATH" PINCHTAB_CONFIG="$CFG" pt config token
+assert_exit_code 0 "exits 0 when a clipboard tool exists"
+assert_output_not_contains "test-token-12345" "token not leaked to stdout"
+
+if echo "$PT_ERR" | grep -qi "copied to clipboard"; then
+  pass_assert "stderr confirms the copy"
+else
+  fail_assert "stderr confirms the copy (stderr: $PT_ERR)"
+fi
+
+if grep -q "test-token-12345" "$CLIP_DIR/copied" 2>/dev/null; then
+  pass_assert "the token reached the clipboard tool"
+else
+  fail_assert "the token reached the clipboard tool"
+fi
+
+rm -rf "$CLIP_DIR"
 config_cleanup
 end_test
 

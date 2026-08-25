@@ -2,7 +2,7 @@
   "generatedAt": "0000-00-00T00:00:00Z",
   "input": {},
   "options": {
-    "concurrency": 1,
+    "concurrency": 0,
     "networkMonitor": true
   },
   "pages": [

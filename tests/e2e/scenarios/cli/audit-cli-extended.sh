@@ -1,5 +1,5 @@
 #!/bin/bash
-# audit-cli-basic.sh — pinchtab audit CLI happy path.
+# audit-cli-extended.sh — pinchtab audit CLI happy path.
 
 GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/cli.sh"

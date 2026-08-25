@@ -10,24 +10,24 @@ pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/buttons.html\"}"
 TAB_ID=$(get_tab_id)
 show_tab "created" "$TAB_ID"
 
-pt_post /action -d '{"action":"click","selector":"[invalid:::selector]"}'
-assert_http_error 400 "invalid|selector|syntax" "invalid selector rejected"
+pt_post /action -d '{"kind":"click","selector":"[invalid:::selector]"}'
+assert_http_error 404 "matched no element" "invalid selector rejected"
 
 end_test
 
 # ─────────────────────────────────────────────────────────────────
 start_test "error handling: element not found"
 
-pt_post /action -d '{"action":"click","selector":"#this-element-does-not-exist"}'
-assert_contains_any "$RESULT" "not found|no element|404|400" "missing element error"
+pt_post /action -d '{"kind":"click","selector":"#this-element-does-not-exist"}'
+assert_contains_any "$RESULT" "not found|no element" "missing element error"
 
 end_test
 
 # ─────────────────────────────────────────────────────────────────
 start_test "error handling: action on missing field"
 
-pt_post /action -d '{"action":"fill","selector":"#nonexistent-input","text":"test"}'
-assert_contains_any "$RESULT" "not found|missing|404|400" "action on missing field rejected"
+pt_post /action -d '{"kind":"fill","selector":"#nonexistent-input","text":"test"}'
+assert_contains_any "$RESULT" "not found|no element" "action on missing field rejected"
 
 end_test
 

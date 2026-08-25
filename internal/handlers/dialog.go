@@ -33,13 +33,8 @@ func (h *Handlers) HandleDialog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, resolvedID, err := h.tabContext(r, req.TabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-
-	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedID) {
+	ctx, resolvedID, ok := h.guardedTabContext(w, r, req.TabID, guardHandoffPause)
+	if !ok {
 		return
 	}
 

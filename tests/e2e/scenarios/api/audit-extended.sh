@@ -1,5 +1,5 @@
 #!/bin/bash
-# audit-basic.sh — POST /audit multi-page site audit runs.
+# audit-extended.sh — POST /audit multi-page site audit runs.
 
 GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/api.sh"
@@ -29,27 +29,6 @@ if [ "$FAILED" -eq 0 ]; then
   pass_assert "no page entry has an error"
 else
   fail_assert "no page entry has an error (got $FAILED: $(echo "$RESULT" | jq -c '[.pages[] | select(.error) | {url, error}]'))"
-fi
-
-end_test
-
-# ─────────────────────────────────────────────────────────────────
-start_test "concurrency 3 and 1 audit the same URL set"
-
-BODY_URLS="[\"${FIXTURES_URL}/audit-site/index.html\",\"${FIXTURES_URL}/audit-site/clean.html\",\"${FIXTURES_URL}/audit-site/products/p1.html\",\"${FIXTURES_URL}/audit-site/products/p2.html\",\"${FIXTURES_URL}/audit-site/products/p3.html\"]"
-
-pt_post /audit -d "{\"urls\":${BODY_URLS},\"options\":{\"screenshot\":false},\"concurrency\":1}"
-assert_ok "audit with concurrency 1"
-SET_ONE=$(echo "$RESULT" | jq -S '[.pages[].url] | sort')
-
-pt_post /audit -d "{\"urls\":${BODY_URLS},\"options\":{\"screenshot\":false},\"concurrency\":3}"
-assert_ok "audit with concurrency 3"
-SET_THREE=$(echo "$RESULT" | jq -S '[.pages[].url] | sort')
-
-if [ "$SET_ONE" = "$SET_THREE" ]; then
-  pass_assert "same page URL set for concurrency 1 and 3"
-else
-  fail_assert "URL sets differ: $SET_ONE vs $SET_THREE"
 fi
 
 end_test

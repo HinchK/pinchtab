@@ -7,15 +7,6 @@ source "${GROUP_DIR}/../../helpers/cli.sh"
 # ─────────────────────────────────────────────────────────────────
 start_test "pinchtab dashboard --no-open prints URL"
 
-config_setup() {
-  TMPDIR=$(mktemp -d)
-  CFG="$TMPDIR/config.json"
-}
-
-config_cleanup() {
-  rm -rf "$TMPDIR"
-}
-
 config_setup
 cat > "$CFG" <<'EOF'
 {

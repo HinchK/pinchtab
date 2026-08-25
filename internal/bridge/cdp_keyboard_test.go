@@ -139,3 +139,17 @@ func TestDispatchNamedKey_KnownKeyOnCancelledCtx(t *testing.T) {
 		t.Error("expected error dispatching Enter on cancelled context")
 	}
 }
+
+func TestW3CKeyName(t *testing.T) {
+	cases := map[string]string{
+		"Return": "Enter",
+		"Enter":  "Enter",
+		"Shift":  "Shift",
+		"a":      "a",
+	}
+	for in, want := range cases {
+		if got := w3cKeyName(in); got != want {
+			t.Errorf("w3cKeyName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

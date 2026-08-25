@@ -118,4 +118,6 @@ assert_field_value "#new-password" "$SECRET" "new-password value persisted after
 
 end_test
 
-finish_suite
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  finish_suite
+fi

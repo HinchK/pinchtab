@@ -54,7 +54,7 @@ func (h *Handlers) HandleGetConsoleLogs(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, tabID); !ok {
+	if _, ok := h.applyTabGuards(w, r, ctx, tabID, guardDomainPolicy); !ok {
 		return
 	}
 
@@ -96,7 +96,7 @@ func (h *Handlers) HandleGetErrorLogs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, tabID); !ok {
+	if _, ok := h.applyTabGuards(w, r, ctx, tabID, guardDomainPolicy); !ok {
 		return
 	}
 

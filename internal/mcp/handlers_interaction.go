@@ -159,13 +159,6 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 			}
 			payload["text"] = text
 
-		case "press":
-			key, err := r.RequireString("key")
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			payload["key"] = key
-
 		case "select":
 			if _, refusal := resolveSelector(!hasNodeID); refusal != nil {
 				return refusal, nil
@@ -317,33 +310,35 @@ func handleAction(c *Client, kind string) func(context.Context, mcp.CallToolRequ
 	}
 }
 
-func handleKeyboardText(c *Client, kind string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		text, err := r.RequireString("text")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		payload := map[string]any{"kind": kind, "text": text}
-		if tabID := optString(r, "tabId"); tabID != "" {
-			payload["tabId"] = tabID
-		}
-		body, code, err := c.Post(ctx, routedPathWithBody(r, "/action", payload), payload)
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return resultFromBytes(body, code)
-	}
+type keyboardAction struct {
+	kind string
+	arg  string
 }
 
-func handleKeyboardKey(c *Client, kind string) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+var keyboardActions = map[string]keyboardAction{
+	"press":  {kind: "press", arg: "key"},
+	"down":   {kind: "keydown", arg: "key"},
+	"up":     {kind: "keyup", arg: "key"},
+	"type":   {kind: "keyboard-type", arg: "text"},
+	"insert": {kind: "keyboard-inserttext", arg: "text"},
+}
+
+func handleKeyboard(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		key, err := r.RequireString("key")
+		_, action, refusal := pickMode(r, "action", keyboardActions)
+		if refusal != nil {
+			return refusal, nil
+		}
+		value, err := r.RequireString(action.arg)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}
-		payload := map[string]any{"kind": kind, "key": key}
+		payload := map[string]any{"kind": action.kind, action.arg: value}
 		if tabID := optString(r, "tabId"); tabID != "" {
 			payload["tabId"] = tabID
+		}
+		if nodeID, ok := optInt(r, "nodeId"); ok && nodeID > 0 {
+			payload["nodeId"] = nodeID
 		}
 		body, code, err := c.Post(ctx, routedPathWithBody(r, "/action", payload), payload)
 		if err != nil {

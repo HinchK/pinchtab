@@ -54,7 +54,7 @@ func registerBrowserCommands() {
 func registerManagementCommands() {
 	setCommandGroup("management", instancesCmd, healthCmd, profilesCmd, activityCmd, instanceCmd)
 
-	instanceCmd.AddCommand(startInstanceCmd, instanceNavigateCmd, instanceStopCmd, instanceRestartCmd, instanceLogsCmd)
+	instanceCmd.AddCommand(instanceListCmd, startInstanceCmd, instanceNavigateCmd, instanceStopCmd, instanceRestartCmd, instanceLogsCmd)
 	activityCmd.AddCommand(activityTabCmd)
 	profilesCmd.AddCommand(profilesPruneCmd)
 
@@ -107,7 +107,8 @@ func configureBrowserFlags() {
 
 	snapCmd.Flags().BoolP("interactive", "i", true, "Filter interactive elements + headings (default true, use --interactive=false for all)")
 	snapCmd.Flags().BoolP("compact", "c", true, "Compact output format (default true, use --compact=false for JSON)")
-	snapCmd.Flags().Bool("full", false, "Full JSON output (shorthand for --interactive=false --compact=false)")
+	snapCmd.Flags().Bool("full", false, "Full JSON output (shorthand for --interactive=false --json)")
+	snapCmd.Flags().Bool("json", false, "JSON output, keeping the interactive filter (same as --compact=false)")
 	snapCmd.Flags().Bool("text", false, "Text output format")
 	snapCmd.Flags().BoolP("diff", "d", false, "Show diff from previous snapshot")
 	snapCmd.Flags().StringP("selector", "s", "", "CSS selector to scope snapshot")
@@ -425,7 +426,9 @@ func configureManagementFlags() {
 	activityCmd.PersistentFlags().Int("limit", 200, "Maximum number of events to return")
 	activityCmd.PersistentFlags().Int("age-sec", 0, "Only include events from the last N seconds")
 
-	instancesCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
+	// Both spellings share one implementation, and listInstances forwards the
+	// INVOKED command to the action, so the flag has to exist on each of them.
+	addJSONFlag(instancesCmd, instanceListCmd)
 	profilesCmd.Flags().Bool("json", false, "Output full JSON response instead of terse status")
 
 	profilesPruneCmd.Flags().Bool("confirm", false, "Actually remove the quarantined profiles (without it, nothing is deleted)")

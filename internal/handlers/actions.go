@@ -540,13 +540,7 @@ func (h *Handlers) HandleAction(w http.ResponseWriter, r *http.Request) {
 			httpx.ErrorCode(w, 423, "tab_locked", err.Error(), false, nil)
 			return
 		}
-		if h.refuseIfDialogBlocked(w, resolvedTabID) {
-			return
-		}
-		if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
-			return
-		}
-		if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedTabID) {
+		if _, ok := h.applyTabGuards(w, r, ctx, resolvedTabID, guardDialogBlocked|guardDomainPolicy|guardHandoffPause); !ok {
 			return
 		}
 		defer h.armAutoCloseIfEnabled(resolvedTabID)
@@ -835,7 +829,7 @@ func (h *Handlers) handleActionsBatch(w http.ResponseWriter, r *http.Request, re
 				continue
 			}
 		}
-		if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+		if _, ok := h.applyTabGuards(w, r, ctx, resolvedTabID, guardDomainPolicy); !ok {
 			return
 		}
 		if err := h.enforceTabNotPausedForHandoff(resolvedTabID); err != nil {
@@ -1055,7 +1049,7 @@ func (h *Handlers) HandleMacro(w http.ResponseWriter, r *http.Request) {
 		if step.TabID == "" {
 			step.TabID = resolvedTabID
 		}
-		if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+		if _, ok := h.applyTabGuards(w, r, ctx, resolvedTabID, guardDomainPolicy); !ok {
 			return
 		}
 		if err := h.enforceTabNotPausedForHandoff(resolvedTabID); err != nil {

@@ -58,14 +58,19 @@ func init() {
 	}
 	configSchemaCmd.Flags().Bool("print", false, "Print the bundled schema JSON instead of the schema URL")
 	configCmd.AddCommand(configSchemaCmd)
-	configCmd.AddCommand(&cobra.Command{
+	configTokenCmd := &cobra.Command{
 		Use:   "token",
 		Short: "Copy the API token to clipboard",
-		Long:  "Copies the configured server.token to the system clipboard. The token is never printed to stdout.",
+		Long: "Copies the configured server.token to the system clipboard. Nothing is printed to stdout " +
+			"unless you pass --stdout, which prints the token and nothing else so it can be captured " +
+			"with $(...) on a host with no clipboard tool.",
 		Run: func(cmd *cobra.Command, args []string) {
-			handleConfigTokenCopy()
+			toStdout, _ := cmd.Flags().GetBool("stdout")
+			handleConfigTokenCopy(toStdout)
 		},
-	})
+	}
+	configTokenCmd.Flags().Bool("stdout", false, "Print the token to stdout instead of copying it to the clipboard")
+	configCmd.AddCommand(configTokenCmd)
 	configCmd.AddCommand(&cobra.Command{
 		Use:   "get <path>",
 		Short: "Get a config value (e.g., server.port)",

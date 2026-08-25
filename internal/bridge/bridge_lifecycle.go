@@ -18,8 +18,6 @@ import (
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	bridgeruntime "github.com/pinchtab/pinchtab/internal/bridge/runtime"
-	"github.com/pinchtab/pinchtab/internal/browsers"
-	"github.com/pinchtab/pinchtab/internal/browsers/chrome"
 	"github.com/pinchtab/pinchtab/internal/config"
 	"github.com/pinchtab/pinchtab/internal/stealth"
 )
@@ -232,7 +230,6 @@ func (b *Bridge) EnsureBrowser(cfg *config.RuntimeConfig) error {
 		b.AllocCtx = nil
 		b.AllocCancel = nil
 		b.TabManager = nil
-		b.Runtime = nil
 		cfg.DisableInProcessGPU = true
 	}
 
@@ -242,7 +239,6 @@ func (b *Bridge) EnsureBrowser(cfg *config.RuntimeConfig) error {
 		}
 		b.BrowserCtx = nil
 		b.BrowserCancel = nil
-		b.Runtime = nil
 	}
 
 	// Remote-CDP: no profile lock, no launched process.
@@ -284,13 +280,6 @@ func (b *Bridge) EnsureBrowser(cfg *config.RuntimeConfig) error {
 	b.BrowserCancel = browserCancel
 	b.initialized = true
 	b.stealthLaunchMode = launchMode
-
-	browserID := config.NormalizeBrowser(cfg.DefaultBrowser)
-	if browser, ok := browsers.Get(browserID); ok {
-		b.Runtime = browser.NewRuntimeInstance(browserCtx, cfg.Headless)
-	} else {
-		b.Runtime = chrome.NewInstance(browserCtx, cfg.Headless)
-	}
 
 	if b.Config != nil && b.TabManager == nil {
 		b.reinitWiring(browserCtx, reinitWiringOpts{startBrowserGuards: true})
@@ -394,7 +383,6 @@ func (b *Bridge) RestartBrowser(cfg *config.RuntimeConfig) error {
 	b.AllocCtx = nil
 	b.AllocCancel = nil
 	b.TabManager = nil
-	b.Runtime = nil
 	b.stealthLaunchMode = stealth.LaunchModeUninitialized
 
 	b.LogStore = NewConsoleLogStore(1000)

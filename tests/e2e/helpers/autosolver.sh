@@ -358,7 +358,7 @@ autosolver_run_retry_case() {
     if [ "$settled_passed" = "true" ]; then
       pass_assert "retry: page settled to passed state within ${poll_attempts} polls"
     else
-      soft_pass_assert "retry: page loaded but score not 100% passed (critical: ${settled_critical}/${settled_total})"
+      skip_assert "retry: page loaded but score not 100% passed (critical: ${settled_critical}/${settled_total})"
     fi
 
     if [ "$poll_attempts" -le "$max_poll" ]; then

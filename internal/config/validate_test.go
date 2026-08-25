@@ -1,7 +1,6 @@
 package config
 
 import (
-	"context"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -1064,9 +1063,6 @@ func (testStubBrowser) ClassifyLaunchError(_ browsers.LaunchFailure) browsers.La
 }
 func (testStubBrowser) CanHandle(_ browsers.RequestIntent) browsers.HandleDecision {
 	return browsers.HandleDecision{Decision: browsers.DecisionHandle}
-}
-func (testStubBrowser) NewRuntimeInstance(_ context.Context, _ bool) browsers.RuntimeInstance {
-	return nil
 }
 
 var registerStubOnce sync.Once

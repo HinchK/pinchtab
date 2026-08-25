@@ -119,7 +119,7 @@ config's `server.token` off the machine:
 PINCHTAB_TOKEN=<that-host-token> pinchtab --server http://remote:9867 mcp
 ```
 
-`PINCHTAB_TOKEN` comes from `server.token` in your PinchTab config file — that is the credential for your LOCAL server, not for a remote one. To copy the current token without printing it to stdout, run `pinchtab config token`.
+`PINCHTAB_TOKEN` comes from `server.token` in your PinchTab config file — that is the credential for your LOCAL server, not for a remote one. To copy the current token without printing it to stdout, run `pinchtab config token`. On a host with no clipboard tool — CI, Docker, headless Linux — use `PINCHTAB_TOKEN=$(pinchtab config token --stdout)`, which prints the token and nothing else.
 
 ## Typical Agent Workflow
 
@@ -146,7 +146,7 @@ Tool calls:
     → ...input[ref=e3] placeholder="Search Wikipedia"...
   pinchtab_click({selector: "e3"})
   pinchtab_type({selector: "e3", text: "climate change"})
-  pinchtab_press({key: "Enter"})
+  pinchtab_key({action: "press", key: "Enter"})
   pinchtab_snapshot({format: "compact"})
   pinchtab_get_text({})
 ```

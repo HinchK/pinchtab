@@ -68,14 +68,8 @@ func (h *Handlers) HandleFind(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve tab context to get the resolved ID for cache lookup.
-	// Keep ctxTab so we can reuse it for CDP operations (e.g. auto-refresh).
-	ctxTab, resolvedTabID, err := h.tabContext(r, req.TabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctxTab, resolvedTabID); !ok {
+	ctxTab, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy)
+	if !ok {
 		return
 	}
 

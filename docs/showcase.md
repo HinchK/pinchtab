@@ -227,7 +227,7 @@ curl -s -X POST http://127.0.0.1:9867/instances/attach \
 ```bash
 curl -s http://127.0.0.1:9867/instances | jq .
 # CLI Alternative
-pinchtab instances
+pinchtab instance list
 ```
 
 This is useful when:

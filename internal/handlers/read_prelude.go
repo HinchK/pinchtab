@@ -34,25 +34,16 @@ func (h *Handlers) resolveReadRouting(w http.ResponseWriter, r *http.Request, ta
 	return routing.EffectiveCfg, route, true
 }
 
-// resolveReadContext resolves the tab context, enforces the current-tab domain
-// policy, and wires the action-timeout context (launching the client-disconnect
-// canceller). ok=false means an error response was already written.
-//
-// When ok, the CALLER must defer in this registration order so the prior LIFO
-// semantics are preserved (cancel runs before auto-close arming):
+// resolveReadContext guards the tab and wires the action-timeout context.
+// ok=false means an error response was already written. When ok, the CALLER must
+// defer in this registration order so the LIFO semantics hold (cancel runs
+// before auto-close arming):
 //
 //	defer h.armAutoCloseIfEnabled(resolvedTabID)
 //	defer cancel()
 func (h *Handlers) resolveReadContext(w http.ResponseWriter, r *http.Request, tabID string, actionTimeout time.Duration) (resolvedTabID string, tCtx context.Context, cancel context.CancelFunc, ok bool) {
-	ctx, resolvedTabID, err := h.tabContextWithHeader(w, r, tabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return "", nil, nil, false
-	}
-	if h.refuseIfDialogBlocked(w, resolvedTabID) {
-		return "", nil, nil, false
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, resolvedTabID, ok := h.guardedTabContextWithHeader(w, r, tabID, guardDialogBlocked|guardDomainPolicy)
+	if !ok {
 		return "", nil, nil, false
 	}
 
@@ -61,21 +52,12 @@ func (h *Handlers) resolveReadContext(w http.ResponseWriter, r *http.Request, ta
 	return resolvedTabID, tCtx, tCancel, true
 }
 
-// resolveBinaryReadContext is the visual-export sibling of resolveReadContext: it
-// resolves the tab context (no request header), enforces the current-tab domain
-// policy, and wires the action-timeout/client-cancel — but does NOT arm
-// auto-close (screenshot/pdf are one-shot exports). ok=false means an error
-// response was already written. The caller must defer cancel().
+// resolveBinaryReadContext is the visual-export sibling of resolveReadContext:
+// no resolved-tab response header, and no auto-close arming (screenshot/pdf are
+// one-shot exports). The caller must defer cancel().
 func (h *Handlers) resolveBinaryReadContext(w http.ResponseWriter, r *http.Request, tabID string, actionTimeout time.Duration) (resolvedTabID string, tCtx context.Context, cancel context.CancelFunc, ok bool) {
-	ctx, resolvedTabID, err := h.tabContext(r, tabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return "", nil, nil, false
-	}
-	if h.refuseIfDialogBlocked(w, resolvedTabID) {
-		return "", nil, nil, false
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, tabID, guardDialogBlocked|guardDomainPolicy)
+	if !ok {
 		return "", nil, nil, false
 	}
 

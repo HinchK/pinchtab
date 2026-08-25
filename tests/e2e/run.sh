@@ -152,9 +152,6 @@ echo "Waiting for configured targets..."
 wait_for_ready_targets
 
 echo ""
-# When E2E_TEST_FILTER is set, source only scenario preamble + matching
-# start_test...end_test blocks. Lets a single test run end-to-end with the
-# scenario's setup intact, no per-helper guards needed.
 TEST_FILTER="${E2E_TEST_FILTER:-}"
 
 source_filtered_scenario() {
@@ -208,7 +205,41 @@ source_filtered_scenario() {
   return 0
 }
 
-# Run scenarios
+# finish_scenario is the scenario's verdict, and it runs from the subshell's EXIT trap
+# so that a scenario which calls `exit` cannot skip it. A file ending in
+# `fail_assert; end_test; exit 0` — a live shape in the smoke tier — otherwise reported a
+# counted failure as a passing file, which is the green-lane-that-stopped-checking this
+# card exists to prevent. Leaving the status alone when nothing failed keeps an explicit
+# non-zero exit intact.
+finish_scenario() {
+  run_scenario_cleanup
+  [ "${TESTS_FAILED:-0}" -eq 0 ] || exit 1
+}
+
+# Each scenario file runs in its own subshell: file-scope variables, functions
+# and traps die with the file, so no scenario can be reached by state another
+# one left behind. The subshell cannot write TESTS_FAILED back, so it reports
+# failure through its exit status instead.
+run_scenario_file() {
+  local script_path="$1" script_name="$2"
+  (
+    CURRENT_SCENARIO_FILE="${script_name%.sh}"
+    TESTS_FAILED=0
+    trap finish_scenario EXIT
+    if [ -n "${TEST_FILTER}" ]; then
+      if ! source_filtered_scenario "${script_path}" "${TEST_FILTER}"; then
+        echo -e "${MUTED}  no matching test in ${script_name}${NC}"
+      fi
+    else
+      # shellcheck disable=SC1090
+      source "${script_path}"
+    fi
+    [ "${TESTS_FAILED}" -eq 0 ]
+  )
+}
+
+SUITE_FAILED=0
+
 for script_name in "${SCENARIO_GROUPS[@]}"; do
   script_path="${GROUP_DIR}/${script_name}"
   if [ ! -f "${script_path}" ]; then
@@ -218,16 +249,9 @@ for script_name in "${SCENARIO_GROUPS[@]}"; do
 
   echo -e "${YELLOW}Running: ${script_name}${NC}"
   echo ""
-  CURRENT_SCENARIO_FILE="${script_name%.sh}"
-  if [ -n "${TEST_FILTER}" ]; then
-    if ! source_filtered_scenario "${script_path}" "${TEST_FILTER}"; then
-      echo -e "${MUTED}  no matching test in ${script_name}${NC}"
-    fi
-  else
-    source "${script_path}"
-  fi
+  run_scenario_file "${script_path}" "${script_name}" || SUITE_FAILED=1
   echo ""
 
 done
 
-finish_suite
+finish_suite "${SUITE_FAILED}"

@@ -38,12 +38,8 @@ func (h *Handlers) HandleStateCurrent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	tabID := r.URL.Query().Get("tabId")
-	ctx, resolvedTabID, err := h.tabContext(r, tabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, tabID, guardDomainPolicy)
+	if !ok {
 		return
 	}
 
@@ -97,12 +93,8 @@ func (h *Handlers) HandleStateLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ctx, resolvedTabID, err := h.tabContext(r, req.TabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy|guardHandoffPause)
+	if !ok {
 		return
 	}
 

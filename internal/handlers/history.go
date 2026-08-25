@@ -33,12 +33,8 @@ func (h *Handlers) handleHistoryNav(w http.ResponseWriter, r *http.Request,
 	}
 	tabID := r.URL.Query().Get("tabId")
 	dismissBanners := historyDismissBannersFlag(r)
-	ctx, resolvedID, err := h.tabContext(r, tabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedID) {
+	ctx, resolvedID, ok := h.guardedTabContext(w, r, tabID, guardHandoffPause)
+	if !ok {
 		return
 	}
 	if err := navigate(ctx, resolvedID, dismissBanners); err != nil {

@@ -35,7 +35,6 @@ func rawHandlerMap(c *Client) map[string]func(context.Context, mcp.CallToolReque
 
 		"pinchtab_click":            handleAction(c, "click"),
 		"pinchtab_type":             handleAction(c, "type"),
-		"pinchtab_press":            handleAction(c, "press"),
 		"pinchtab_hover":            handleAction(c, "hover"),
 		"pinchtab_focus":            handleAction(c, "focus"),
 		"pinchtab_select":           handleAction(c, "select"),
@@ -43,10 +42,7 @@ func rawHandlerMap(c *Client) map[string]func(context.Context, mcp.CallToolReque
 		"pinchtab_scroll_into_view": handleAction(c, "scrollintoview"),
 		"pinchtab_fill":             handleAction(c, "fill"),
 
-		"pinchtab_keyboard_type":       handleKeyboardText(c, "keyboard-type"),
-		"pinchtab_keyboard_inserttext": handleKeyboardText(c, "keyboard-inserttext"),
-		"pinchtab_keydown":             handleKeyboardKey(c, "keydown"),
-		"pinchtab_keyup":               handleKeyboardKey(c, "keyup"),
+		"pinchtab_key": handleKeyboard(c),
 
 		"pinchtab_eval": handleEval(c),
 		"pinchtab_pdf":  handlePDF(c),
@@ -59,12 +55,7 @@ func rawHandlerMap(c *Client) map[string]func(context.Context, mcp.CallToolReque
 		"pinchtab_cookies_set":     handleCookiesSet(c),
 		"pinchtab_connect_profile": handleConnectProfile(c),
 
-		"pinchtab_wait":              handleWait(),
-		"pinchtab_wait_for_selector": handleWaitForSelector(c),
-		"pinchtab_wait_for_text":     handleWaitForText(c),
-		"pinchtab_wait_for_url":      handleWaitForURL(c),
-		"pinchtab_wait_for_load":     handleWaitForLoad(c),
-		"pinchtab_wait_for_function": handleWaitForFunction(c),
+		"pinchtab_wait": handleWait(c),
 
 		"pinchtab_network":         handleNetwork(c),
 		"pinchtab_network_detail":  handleNetworkDetail(c),
@@ -72,9 +63,7 @@ func rawHandlerMap(c *Client) map[string]func(context.Context, mcp.CallToolReque
 		"pinchtab_network_route":   handleNetworkRoute(c),
 		"pinchtab_network_unroute": handleNetworkUnroute(c),
 
-		"pinchtab_record_start":  handleRecordStart(c),
-		"pinchtab_record_stop":   handleRecordStop(c),
-		"pinchtab_record_status": handleRecordStatus(c),
+		"pinchtab_record": handleRecord(c),
 
 		"pinchtab_dialog": handleDialog(c),
 

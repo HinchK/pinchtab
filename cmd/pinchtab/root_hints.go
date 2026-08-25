@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -10,24 +11,21 @@ import (
 )
 
 // printAgentHints renders the bare-landing banner for `pinchtab` with no
-// arguments. It intentionally does NOT probe localhost: running the bare
-// command just to read help/next-step output must not block on a stopped or
-// firewalled local server. The banner reflects the on-disk config as the
-// "stopped" state; use printAgentHintsWithHealth when live server status is
-// required.
+// arguments. The probe is bounded by fetchHealthSnapshot's timeout: a live
+// listener answers in single-digit milliseconds and a stopped one refuses the
+// loopback connect immediately, so only a firewalled port pays the ceiling —
+// cheaper than the banner asserting a server state it never checked.
 func printAgentHints(cfg *config.RuntimeConfig) {
-	renderAgentHints(os.Stdout, projectAgentStatus(cfg, nil, healthSnapshotStopped))
-}
-
-// printAgentHintsWithHealth probes localhost and renders the banner with live
-// server status. Used by status/health-style paths that genuinely need the
-// probe.
-func printAgentHintsWithHealth(cfg *config.RuntimeConfig) {
 	snap, state := fetchHealthSnapshot(cfg.Port)
-	renderAgentHints(os.Stdout, projectAgentStatus(cfg, snap, state))
+	// Any state but "stopped" means something answered on the port, so a log is
+	// being written somewhere: a listener that refused the token is still a running
+	// server, and telling its operator "no server running" is how a live log gets
+	// reported as absent.
+	logs := serverLogWhereForConfig(cfg, state != healthSnapshotStopped)
+	renderAgentHints(os.Stdout, projectAgentStatus(cfg, snap, state, logs))
 }
 
-func renderAgentHints(out *os.File, st agentStatus) {
+func renderAgentHints(out io.Writer, st agentStatus) {
 	_, _ = fmt.Fprintln(out, cli.StyleStdout(cli.HeadingStyle, "PinchTab")+" "+cli.StyleStdout(cli.MutedStyle, version))
 	_, _ = fmt.Fprintln(out)
 
@@ -45,6 +43,13 @@ func renderAgentHints(out *os.File, st agentStatus) {
 		}
 	} else {
 		_, _ = fmt.Fprintf(out, "  %-20s %s\n", "server", cli.StyleStdout(cli.WarningStyle, string(st.state)))
+	}
+
+	if st.logDestination != "" {
+		_, _ = fmt.Fprintf(out, "  %-20s %s\n", "logs", cli.StyleStdout(cli.ValueStyle, st.logDestination))
+	}
+	if st.staleLogPath != "" {
+		_, _ = fmt.Fprintf(out, "  %-20s %s\n", "", cli.StyleStdout(cli.MutedStyle, st.staleLogPath+" is not being written by this server"))
 	}
 
 	formatted := formatAllowedDomains(st.allowedDomains)

@@ -104,11 +104,11 @@ URL validation lives in `handleNavigate` (`handlers_navigation.go`), which calls
 | Category | Count | REST Endpoints Used |
 |----------|-------|---------------------|
 | Navigation | 5 | `/navigate`, `/snapshot`, `/frame`, `/screenshot`, `/text` |
-| Interaction | 9 | `/action` |
-| Keyboard | 4 | `/action` |
+| Interaction | 8 | `/action` |
+| Keyboard | 1 | `/action` |
 | Content | 3 | `/evaluate`, `/pdf`, `/find` |
 | Tab Management | 5 | `/tabs`, `/health`, `/cookies`, `/profiles/{id}/instance` |
-| Wait utilities | 6 | `/wait` |
+| Wait utilities | 1 | `/wait` |
 | Network | 5 | `/network`, `/network/route` (POST/DELETE) |
 | Dialog | 1 | `/dialog` |
 
@@ -118,7 +118,7 @@ URL validation lives in `handleNavigate` (`handlers_navigation.go`), which calls
 - **`pinchtab_cookies`** and **`pinchtab_cookies_set`** call `/cookies`, which requires `security.allowCookies: true`. Cookie values can expose session credentials, and setting one grants a session, so cookie operations are disabled by default.
 - **URL validation** — `pinchtab_navigate` rejects non-HTTP/HTTPS URLs to prevent SSRF via `file://`, `javascript:`, or custom schemes.
 - **Token forwarding** — the MCP client forwards the configured bearer token to PinchTab, so access control at the PinchTab layer applies to all tool calls.
-- **Wait caps** — `pinchtab_wait` and `pinchtab_wait_for_selector` enforce a 30-second maximum to prevent agent runaway.
+- **Wait caps** — `pinchtab_wait` enforces a 30-second maximum on both the fixed `for=ms` sleep and the `timeout` of every browser-backed condition, to prevent agent runaway.
 
 ## Related Pages
 

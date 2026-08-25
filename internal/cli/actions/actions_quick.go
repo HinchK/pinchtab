@@ -29,7 +29,7 @@ func Quick(client *http.Client, base, token string, args []string) {
 
 	snapParams := url.Values{}
 	snapParams.Set("filter", "interactive")
-	snapParams.Set("compact", "true")
+	snapParams.Set("format", "compact")
 	apiclient.DoGet(client, base, token, "/snapshot", snapParams)
 
 	if title, ok := navResult["title"].(string); ok {

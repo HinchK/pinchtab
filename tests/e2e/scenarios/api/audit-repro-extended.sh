@@ -1,29 +1,40 @@
 #!/bin/bash
-# audit-repro-extended.sh — the audit reproducibility guarantee: same input,
-# same report. Uses the checked-in fixtures/audit-site/normalize-report.jq
-# to strip volatile fields; the golden report is
-# fixtures/audit-site/golden-report.json (regeneration instructions live in
-# the jq filter's header comment).
+# audit-repro-extended.sh — the audit reproducibility guarantee: the same
+# input produces the same report, whatever concurrency it ran at. Two crawls,
+# one serial and one concurrent, carry every assertion here. Volatile fields
+# are stripped by fixtures/audit-site/normalize-report.jq, whose header owns
+# the rationale for each one and the golden-report.json regeneration recipe.
 
 GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/api.sh"
 
 NORMALIZE="${GROUP_DIR}/../../fixtures/audit-site/normalize-report.jq"
 GOLDEN="${GROUP_DIR}/../../fixtures/audit-site/golden-report.json"
-RUN_BODY="{\"sitemapUrl\":\"${FIXTURES_URL}/audit-site/sitemap.xml\",\"options\":{\"screenshot\":false},\"concurrency\":1}"
+SITEMAP="${FIXTURES_URL}/audit-site/sitemap.xml"
 ARTIFACT_DIR="${E2E_ARTIFACT_DIR:-/results}"
 ARTIFACT_PREFIX="${ARTIFACT_DIR}/audit-repro-${PINCHTAB_E2E_BROWSER:-chrome}"
 
-# ─────────────────────────────────────────────────────────────────
-start_test "two identical audit runs normalize byte-identical"
+audit_body() {
+  printf '{"sitemapUrl":"%s","options":{"screenshot":false},"concurrency":%s}' "$SITEMAP" "$1"
+}
 
-pt_post /audit -d "$RUN_BODY"
-assert_ok "first audit run"
+# ─────────────────────────────────────────────────────────────────
+start_test "two audit runs normalize byte-identical"
+
+pt_post /audit -d "$(audit_body 1)"
+assert_ok "serial audit run"
+SERIAL_RAW="$RESULT"
 RUN_ONE=$(echo "$RESULT" | jq -S -f "$NORMALIZE")
 
-pt_post /audit -d "$RUN_BODY"
-assert_ok "second audit run"
+pt_post /audit -d "$(audit_body 4)"
+assert_ok "concurrent audit run"
+CONCURRENT_RAW="$RESULT"
 RUN_TWO=$(echo "$RESULT" | jq -S -f "$NORMALIZE")
+
+# The one field the normalizer collapses because it legitimately differs here,
+# so each run still has to prove it echoes the concurrency it was asked for.
+assert_json_eq "$SERIAL_RAW" '.options.concurrency' "1" "serial run reports concurrency 1"
+assert_json_eq "$CONCURRENT_RAW" '.options.concurrency' "4" "concurrent run reports concurrency 4"
 
 # Matrix runs previously overwrote the next provider's report, losing the one
 # normalized payload needed to diagnose a provider-only golden mismatch.
@@ -45,13 +56,8 @@ start_test "normalized report matches the checked-in golden"
 if [ ! -f "$GOLDEN" ]; then
   fail_assert "golden report exists at $GOLDEN"
 else
-  # Cloak omits CapRuntimeConsoleEvents: to avoid the Runtime.enable
-  # bot-detection vector it never enables the Runtime domain, and the
-  # Console-domain fallback it uses instead cannot observe uncaught page errors
-  # (those are delivered only via Runtime.exceptionThrown). So on cloak
-  # browser.jsErrors is structurally always 0 and legitimately diverges from the
-  # chrome-generated golden. Drop that field from both sides for cloak only;
-  # every other provider still asserts the count exactly.
+  # Cloak's jsErrors count is structurally 0 (see the normalize filter header),
+  # so it is dropped from both sides for that provider only.
   GOLDEN_CMP=$(cat "$GOLDEN")
   LIVE_CMP="$RUN_ONE"
   if [ "${PINCHTAB_E2E_BROWSER:-chrome}" = "cloak" ]; then
@@ -73,10 +79,8 @@ end_test
 # ─────────────────────────────────────────────────────────────────
 start_test "concurrency 4 audits the same page set as serial"
 
-pt_post /audit -d "{\"sitemapUrl\":\"${FIXTURES_URL}/audit-site/sitemap.xml\",\"options\":{\"screenshot\":false},\"concurrency\":4}"
-assert_ok "concurrent audit run"
-SET_FOUR=$(echo "$RESULT" | jq -S '[.pages[].url] | sort')
 SET_ONE=$(echo "$RUN_ONE" | jq -S '[.pages[].url] | sort')
+SET_FOUR=$(echo "$RUN_TWO" | jq -S '[.pages[].url] | sort')
 
 if [ "$SET_ONE" = "$SET_FOUR" ]; then
   pass_assert "identical page URL set at concurrency 1 and 4"

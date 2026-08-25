@@ -616,8 +616,8 @@ func TestWaitTimeoutAcceptsStringForm(t *testing.T) {
 	srv := mockPinchTab()
 	defer srv.Close()
 
-	text := resultText(t, callTool(t, "pinchtab_wait_for_selector",
-		map[string]any{"selector": "#done", "timeout": "5"}, srv))
+	text := resultText(t, callTool(t, "pinchtab_wait",
+		map[string]any{"for": "selector", "value": "#done", "timeout": "5"}, srv))
 	if !strings.Contains(text, `"timeout":5`) {
 		t.Errorf("string-form timeout did not reach the wait body: %s", text)
 	}

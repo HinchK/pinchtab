@@ -81,16 +81,16 @@ PINCHTAB_TOKEN=<that-host-token> pinchtab --server http://remote:9867 mcp
 
 ## Available Tools
 
-PinchTab currently exposes 47 tools:
+PinchTab currently exposes 36 tools:
 
 - Navigation: 9
-- Interaction: 9
-- Keyboard: 4
+- Interaction: 8
+- Keyboard: 1
 - Content: 3
-- Recording: 3
+- Recording: 1
 - Site: 1
 - Tab management: 5
-- Wait utilities: 6
+- Wait utilities: 1
 - Network: 5
 - Dialog: 1
 
@@ -110,7 +110,6 @@ PinchTab currently exposes 47 tools:
 
 - `pinchtab_click`
 - `pinchtab_type`
-- `pinchtab_press`
 - `pinchtab_hover`
 - `pinchtab_focus`
 - `pinchtab_select`
@@ -120,10 +119,7 @@ PinchTab currently exposes 47 tools:
 
 ### Keyboard
 
-- `pinchtab_keyboard_type`
-- `pinchtab_keyboard_inserttext`
-- `pinchtab_keydown`
-- `pinchtab_keyup`
+- `pinchtab_key` — `action` is `press`, `down`, `up`, `type` or `insert`
 
 ### Content
 
@@ -133,9 +129,7 @@ PinchTab currently exposes 47 tools:
 
 ### Recording
 
-- `pinchtab_record_start`
-- `pinchtab_record_stop`
-- `pinchtab_record_status`
+- `pinchtab_record` — `action` is `start`, `stop` or `status`
 
 ### Site
 
@@ -152,12 +146,7 @@ PinchTab currently exposes 47 tools:
 
 ### Wait Utilities
 
-- `pinchtab_wait`
-- `pinchtab_wait_for_selector`
-- `pinchtab_wait_for_text`
-- `pinchtab_wait_for_url`
-- `pinchtab_wait_for_load`
-- `pinchtab_wait_for_function`
+- `pinchtab_wait` — `for` is `ms`, `selector`, `text`, `url`, `load` or `function`, and `value` carries the condition
 
 ### Network
 

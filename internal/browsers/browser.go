@@ -4,7 +4,6 @@
 package browsers
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -92,11 +91,6 @@ type Browser interface {
 	// intent. Providers return DecisionHandle, DecisionSkip, or
 	// DecisionFail with an optional reason.
 	CanHandle(intent RequestIntent) HandleDecision
-
-	// NewRuntimeInstance creates a post-launch RuntimeInstance from an
-	// already-initialized browser context. Each provider returns its own
-	// Instance type (chrome, cloak, ghost-chrome).
-	NewRuntimeInstance(browserCtx context.Context, headless bool) RuntimeInstance
 }
 
 var (

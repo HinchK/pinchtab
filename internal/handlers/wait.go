@@ -173,12 +173,8 @@ func (h *Handlers) handleWaitCore(w http.ResponseWriter, r *http.Request, req wa
 		return
 	}
 
-	ctx, resolvedTabID, err := h.tabContext(r, req.TabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy)
+	if !ok {
 		return
 	}
 
@@ -222,7 +218,7 @@ func (h *Handlers) handleWaitCore(w http.ResponseWriter, r *http.Request, req wa
 		matchLabel = "fn"
 	}
 
-	err = pollUntil(tCtx, pollInterval, func() (bool, error) {
+	err := pollUntil(tCtx, pollInterval, func() (bool, error) {
 		if mode == "url" {
 			var href string
 			if evalErr := h.Bridge.Evaluate(tCtx, "window.location.href", &href, bridge.EvalOpts{}); evalErr != nil {

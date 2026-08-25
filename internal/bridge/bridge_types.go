@@ -322,4 +322,5 @@ func (e *StaticEscalateError) Error() string {
 type ContentParams struct {
 	ContentGuard *contentguard.Scanner
 	MaxDepth     int // max AX tree depth for snapshots; 0 or -1 means unlimited
+	SkipMetadata bool
 }

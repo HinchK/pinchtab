@@ -39,7 +39,7 @@ func TestDetachedDaemonOwnershipTreatsUnsupportedOSAsNotInstalled(t *testing.T) 
 	}
 }
 
-func TestDetachedAddressChanged(t *testing.T) {
+func TestApplyServerAddressFlagsReportsAddressChange(t *testing.T) {
 	cases := []struct {
 		name       string
 		bind, port string
@@ -57,8 +57,8 @@ func TestDetachedAddressChanged(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := &config.RuntimeConfig{Bind: tc.bind, Port: tc.port}
-			if got := detachedAddressChanged(cfg, tc.flagBind, tc.flagPort); got != tc.want {
-				t.Fatalf("detachedAddressChanged() = %v, want %v", got, tc.want)
+			if got := applyServerAddressFlags(cfg, tc.flagBind, tc.flagPort); got != tc.want {
+				t.Fatalf("applyServerAddressFlags() changed = %v, want %v", got, tc.want)
 			}
 		})
 	}

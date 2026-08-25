@@ -17,6 +17,10 @@
 # Console-domain fallback never sees uncaught page errors, which ride only
 # Runtime.exceptionThrown), so its count is structurally always 0; the
 # audit-repro-extended golden check excludes jsErrors for the cloak provider.
+# The run concurrency collapses to 0 so a serial and a concurrent run of the
+# same input compare equal: it is the one report field that legitimately
+# differs between them, and audit-repro-extended asserts each raw report echoes
+# the concurrency it was asked for before normalizing.
 #
 # Regenerate the golden report (from a runner shell against the e2e stack):
 #   curl -s -H "Authorization: Bearer $E2E_SERVER_TOKEN" -X POST "$E2E_SERVER/audit" \
@@ -25,6 +29,7 @@
 #     > tests/e2e/fixtures/audit-site/golden-report.json
 .generatedAt = "0000-00-00T00:00:00Z"
 | .input = {}
+| .options.concurrency = 0
 | .pages |= map(
     del(.screenshot)
     | .browser.screenshotPath = ""

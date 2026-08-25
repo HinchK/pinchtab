@@ -13,25 +13,39 @@ import (
 	"github.com/pinchtab/pinchtab/internal/server"
 )
 
-func handleConfigTokenCopy() {
+func handleConfigTokenCopy(toStdout bool) {
 	cfg := loadLocalConfig()
-	if err := copyConfigToken(cfg.Token); err != nil {
+	if err := emitConfigToken(cfg.Token, toStdout); err != nil {
 		fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.ErrorStyle, err.Error()))
 		os.Exit(1)
 	}
 }
 
-func copyConfigToken(token string) error {
-	if strings.TrimSpace(token) == "" {
+// emitConfigToken puts the token where the caller asked for it. Every human
+// message goes to stderr: stdout is the machine channel, so
+// TOKEN=$(pinchtab config token) captures the token or nothing, never prose
+// that would then be sent as a bearer credential.
+//
+// A clipboard failure is an error, not a notice. It used to print and return
+// nil, so on the headless hosts where agents actually run the command exited 0
+// having done nothing and named no other way to get the token.
+func emitConfigToken(token string, toStdout bool) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
 		return fmt.Errorf("server token is empty")
 	}
 
-	if err := copyToClipboard(token); err == nil {
-		fmt.Println(cli.StyleStdout(cli.SuccessStyle, "Token copied to clipboard."))
+	if toStdout {
+		fmt.Println(token)
 		return nil
 	}
 
-	fmt.Println(cli.StyleStdout(cli.WarningStyle, "Clipboard unavailable; token not shown for safety."))
+	if err := copyToClipboard(token); err != nil {
+		return fmt.Errorf("clipboard unavailable (%v); run `pinchtab config token --stdout` to print it, or read server.token from %s",
+			err, workflow.CurrentConfigPath())
+	}
+
+	fmt.Fprintln(os.Stderr, cli.StyleStderr(cli.SuccessStyle, "Token copied to clipboard."))
 	return nil
 }
 

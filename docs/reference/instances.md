@@ -17,13 +17,13 @@ curl http://localhost:9867/instances
 # Response: JSON array (see below)
 
 # CLI Alternative (human-readable by default)
-pinchtab instances
+pinchtab instance list
 # Output: inst_0a89  9999  headed  running
 
-pinchtab instances --json              # Full JSON response
+pinchtab instance list --json          # Full JSON response
 ```
 
-`pinchtab instances` is the simplest way to inspect the current fleet from the CLI.
+`pinchtab instance list` is the simplest way to inspect the current fleet from the CLI. The older `pinchtab instances` spelling still runs as a deprecated alias.
 
 Response shape:
 

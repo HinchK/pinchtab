@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
@@ -19,9 +18,8 @@ type headersRequest struct {
 // HandleSetHeaders sets extra HTTP headers via CDP.
 // POST /emulation/headers
 func (h *Handlers) HandleSetHeaders(w http.ResponseWriter, r *http.Request) {
-	var req headersRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
+	req, ok := decodeJSONBody[headersRequest](w, r)
+	if !ok {
 		return
 	}
 
@@ -31,12 +29,10 @@ func (h *Handlers) HandleSetHeaders(w http.ResponseWriter, r *http.Request) {
 // HandleTabSetHeaders sets extra HTTP headers for a specific tab.
 // POST /tabs/{id}/emulation/headers
 func (h *Handlers) HandleTabSetHeaders(w http.ResponseWriter, r *http.Request) {
-	var req headersRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxBodySize)).Decode(&req); err != nil {
-		httpx.Error(w, 400, fmt.Errorf("decode: %w", err))
+	req, ok := decodeJSONBody[headersRequest](w, r)
+	if !ok {
 		return
 	}
-
 	tabID, ok := h.requirePathTabIDMatch(w, r, req.TabID)
 	if !ok {
 		return
@@ -52,12 +48,8 @@ func (h *Handlers) setHeaders(w http.ResponseWriter, r *http.Request, req header
 		return
 	}
 
-	ctx, resolvedTabID, err := h.tabContext(r, req.TabID)
-	if err != nil {
-		WriteTabContextError(w, err, 404)
-		return
-	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	ctx, resolvedTabID, ok := h.guardedTabContext(w, r, req.TabID, guardDomainPolicy|guardHandoffPause)
+	if !ok {
 		return
 	}
 

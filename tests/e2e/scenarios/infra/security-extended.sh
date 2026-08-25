@@ -5,21 +5,11 @@ GROUP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GROUP_DIR}/../../helpers/api.sh"
 
 secure_get() {
-  local path="$1"
-  shift
-  local old_url="$E2E_SERVER"
-  E2E_SERVER="$E2E_SECURE_SERVER"
-  pt_get "$path" "$@"
-  E2E_SERVER="$old_url"
+  with_server "$E2E_SECURE_SERVER" pt_get "$@"
 }
 
 secure_post() {
-  local path="$1"
-  shift
-  local old_url="$E2E_SERVER"
-  E2E_SERVER="$E2E_SECURE_SERVER"
-  pt_post "$path" "$@"
-  E2E_SERVER="$old_url"
+  with_server "$E2E_SECURE_SERVER" pt_post "$@"
 }
 
 start_test "security: evaluate BLOCKED when disabled"

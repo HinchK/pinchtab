@@ -164,6 +164,17 @@ func daemonLogDir(env environment) string {
 	return filepath.Join(pinchtabStateHome(env), "logs")
 }
 
+// StderrLogPath is where a service-managed server's diagnostics land. Exported so a
+// surface that tells an operator where to look reads the same path the installer
+// writes into the unit, rather than spelling it a second time.
+func StderrLogPath() (string, error) {
+	env, err := currentEnvironment()
+	if err != nil {
+		return "", err
+	}
+	return daemonStderrLogPath(env), nil
+}
+
 func daemonStdoutLogPath(env environment) string {
 	return filepath.Join(daemonLogDir(env), "daemon.out.log")
 }

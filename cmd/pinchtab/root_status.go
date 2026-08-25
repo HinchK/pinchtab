@@ -13,6 +13,8 @@ type agentStatus struct {
 	running        bool
 	guardsDown     bool
 	listenAddr     string
+	logDestination string
+	staleLogPath   string
 	sensitive      []string
 	allowedDomains []string
 	idpiEnabled    bool
@@ -23,11 +25,13 @@ type agentStatus struct {
 // projectAgentStatus derives the banner fields from the runtime config and the
 // (possibly nil) health snapshot. snap is non-nil only when state is
 // healthSnapshotRunning.
-func projectAgentStatus(cfg *config.RuntimeConfig, snap *healthSnapshot, state healthSnapshotState) agentStatus {
+func projectAgentStatus(cfg *config.RuntimeConfig, snap *healthSnapshot, state healthSnapshotState, logs serverLogWhere) agentStatus {
 	st := agentStatus{
 		state:          state,
 		running:        state == healthSnapshotRunning,
 		listenAddr:     cfg.ListenAddr(),
+		logDestination: logs.Destination,
+		staleLogPath:   logs.StalePath,
 		allowedDomains: cfg.AllowedDomains,
 		idpiEnabled:    cfg.IDPI.Enabled,
 	}
@@ -49,7 +53,7 @@ func nextStepsForState(state healthSnapshotState) ([]cli.CommandHint, int) {
 		return cli.NextStepsRunningHints, 64
 	case healthSnapshotProtected:
 		return []cli.CommandHint{
-			{Command: "pinchtab config token", Comment: "# copy configured API token"},
+			{Command: "pinchtab config token --stdout", Comment: "# print the API token (capture with $(...))"},
 			{Command: "pinchtab health --json", Comment: "# retry health with the current token"},
 			{Command: "pinchtab config show", Comment: "# inspect configured port and token"},
 		}, 44

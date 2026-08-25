@@ -97,11 +97,9 @@ func (h *Handlers) HandleTabNetworkRouteList(w http.ResponseWriter, r *http.Requ
 	h.handleNetworkRouteListFor(w, r, tabID)
 }
 
-// requireRouteContext is the shared prelude for the network/route handlers.
-// It runs the capability gate, ensures Chrome is up, and resolves the tab
-// context. On failure the response has been written and ok=false. On success
-// the caller has tabCtx + resolved tab ID; mutation handlers should follow up
-// with enforceCurrentTabDomainPolicy(tabCtx, resolvedID).
+// requireRouteContext is the shared prelude for the network/route handlers: the
+// capability gate, browser bringup and tab resolution. It applies no tab guards
+// — each caller declares its own.
 func (h *Handlers) requireRouteContext(w http.ResponseWriter, r *http.Request, tabID string) (tabCtx context.Context, resolvedID string, ok bool) {
 	if !h.networkInterceptEnabled() {
 		h.writeCapabilityDisabled(w, routes.CapNetworkIntercept)
@@ -127,7 +125,7 @@ func (h *Handlers) handleNetworkRouteFor(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, tabCtx, resolvedID); !ok {
+	if _, ok := h.applyTabGuards(w, r, tabCtx, resolvedID, guardDomainPolicy|guardHandoffPause); !ok {
 		return
 	}
 
@@ -189,7 +187,7 @@ func (h *Handlers) handleNetworkUnrouteFor(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, tabCtx, resolvedID); !ok {
+	if _, ok := h.applyTabGuards(w, r, tabCtx, resolvedID, guardDomainPolicy|guardHandoffPause); !ok {
 		return
 	}
 

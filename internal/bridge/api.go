@@ -157,8 +157,6 @@ type BridgeAPI interface {
 	AddScriptToEvaluateOnNewDocument(ctx context.Context, source string) (string, error)
 }
 
-// Browser-runtime DTOs are defined once in internal/runtimetypes and aliased
-// here so bridge and the browsers RuntimeInstance speak one set of structs.
 // Construct ScreencastStream via runtimetypes.NewScreencastStreamWithDone (the
 // bridge screencast loop owns and closes the done channel itself).
 type (

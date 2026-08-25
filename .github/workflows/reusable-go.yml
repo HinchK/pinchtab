@@ -48,6 +48,23 @@ jobs:
       - name: Build
         run: go build -o pinchtab ./cmd/pinchtab
 
+      - name: Agent preamble budget
+        run: |
+          set +e
+          go test -count=1 -v -run TestAgentPreambleStaysWithinBudget ./internal/mcp/ 2>&1 | tee preamble.log
+          status=${PIPESTATUS[0]}
+          if ! grep -q '^=== RUN' preamble.log; then
+            echo "no test ran: -run matched nothing, so the preamble budget guard is vacuous; re-point it at whatever measures the preamble rather than deleting it" >&2
+            status=1
+          fi
+          {
+            echo "### Agent preamble"
+            echo '```'
+            cat preamble.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
       - name: Install gotestsum
         run: go install gotest.tools/gotestsum@latest
 

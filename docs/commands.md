@@ -28,6 +28,27 @@ is set: `--log-level debug|info|warn|error`, then `server.logLevel` in the confi
 file, then `-v`, then the default `info`. `-v` always adds the full startup banner,
 and it raises the level to debug only when neither of the other two is set.
 
+Where those lines land depends on how the server was started, which is why `pinchtab`
+with no arguments prints a `logs` row naming the live destination. There are four ways a
+server starts, and three destinations: `<stateDir>/server.log` for `pinchtab server -b`
+**and for the server a bare `pinchtab nav` or `pinchtab mcp` auto-starts** — both spawn
+detached and both append to that same file — `~/.pinchtab/logs/daemon.err.log` for a
+daemon-installed service, and the terminal for a foreground run. A `server.log` left
+behind by an earlier detached run is called out as not being written by the current
+server, so it cannot be mistaken for a live one.
+
+A request that fails logs its cause there UNREDACTED — absolute paths intact — under the
+same `requestId` the access log records, so a 5xx can be joined to the reason it happened:
+
+```bash
+grep '"request failed"' <stateDir>/server.log        # causes, with requestId and status
+grep <requestId> ~/.pinchtab/activity/*.jsonl        # the access-log line it belongs to
+```
+
+The message that crosses the HTTP boundary is still path-sanitized (`fork/exec [path]`),
+so the unredacted copy exists only in the server's own log. Server faults (5xx) log at
+error level; a 4xx is the caller's input and logs at debug.
+
 The access log is what an open dashboard costs: its errors and console panels each poll
 on a 3s interval, so a dashboard left open writes roughly 40 lines a minute. That is the
 deliberate trade for a run that explains itself afterwards, and `--log-level warn` is the
@@ -35,7 +56,8 @@ escape hatch when you want the record without the polling.
 
 A daemon-installed server and the server a bare `pinchtab nav` auto-starts both run
 `pinchtab server` with no flags, so `server.logLevel` is the only way to set their
-threshold (`pinchtab config set server.logLevel warn`).
+threshold (`pinchtab config set server.logLevel warn`). That also means a 4xx cause is
+not written at the default `info` level; raise the level when you need one.
 
 Everything in this paragraph applies to `pinchtab bridge` as well: it reads the same
 `server.logLevel`, accepts the same `--log-level`, and resolves them with the same
@@ -319,7 +341,7 @@ pinchtab record status                  # Check recording status
 ## Instances, Profiles, And Activity
 
 ```bash
-pinchtab instances                      # List running instances
+pinchtab instance list                  # List running instances
 pinchtab instance start                 # Start an instance
 pinchtab instance start --profile <id-or-name>
 pinchtab instance start --mode headed
@@ -388,6 +410,7 @@ pinchtab config                         # Interactive config overview/editor
 pinchtab config init                    # Create a default config file
 pinchtab config show                    # Print effective runtime config
 pinchtab config token                   # Copy server.token to the clipboard without printing it
+pinchtab config token --stdout          # Print server.token to stdout (headless hosts, $(...) capture)
 pinchtab config path                    # Print config file path
 pinchtab config validate                # Validate the current config file
 pinchtab config get <path>              # Read one file-config value

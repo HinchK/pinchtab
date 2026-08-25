@@ -3,7 +3,10 @@ package e2e
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1195,4 +1198,115 @@ func dockerfileDefaultCommand(t *testing.T) string {
 	}
 	t.Fatal("Dockerfile declares no CMD, so a service without `command:` cannot be classified")
 	return ""
+}
+
+func syntheticLaneSuite(extended, smoke bool) suiteDef {
+	group := suiteGroup{label: "Synthetic", dir: "synthetic", helper: "api", commands: apiCommands(), runner: "runner-api"}
+	return suiteDescriptor{
+		Name:     "synthetic-suite",
+		Group:    &group,
+		Compose:  "compose.yml",
+		Extended: extended,
+		Smoke:    smoke,
+		Ready:    primaryReady(),
+	}.build()
+}
+
+func newSyntheticLaneRepo(t *testing.T) string {
+	t.Helper()
+	repo := t.TempDir()
+	dir := filepath.Join(repo, "tests/e2e/scenarios/synthetic")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range []string{"probe-basic.sh", "probe-smoke.sh"} {
+		if err := os.WriteFile(filepath.Join(dir, file), []byte("#!/bin/bash\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return repo
+}
+
+func newSyntheticLaneRunner(t *testing.T, repo string, exitCode int, stdout, stderr *bytes.Buffer) *Runner {
+	t.Helper()
+	stealth := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"provider":"chrome"}`))
+	}))
+	t.Cleanup(stealth.Close)
+
+	script := filepath.Join(t.TempDir(), "compose.sh")
+	body := fmt.Sprintf(`#!/bin/sh
+case "$*" in
+  *"port pinchtab 9999"*) echo "%s"; exit 0 ;;
+  *"E2E_SCENARIO_DIR=scenarios/synthetic"*) exit %d ;;
+esac
+exit 0
+`, strings.TrimPrefix(stealth.URL, "http://"), exitCode)
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	return &Runner{
+		args:     Args{Filter: "synthetic"},
+		stdout:   stdout,
+		stderr:   stderr,
+		repoRoot: repo,
+		compose:  []string{script},
+		logsMode: "hide",
+	}
+}
+
+func TestLaneFailsOnSuiteRegisteredOnlyInDefs(t *testing.T) {
+	cases := []struct {
+		lane     lane
+		extended bool
+		smoke    bool
+		run      func(*Runner, lane) int
+	}{
+		{lane: basicLane(), run: (*Runner).runStackLane},
+		{lane: extendedLane(), extended: true, run: (*Runner).runStackLane},
+		{lane: smokeLane(), smoke: true, run: (*Runner).runSmokeLane},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.lane.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			r := newSyntheticLaneRunner(t, newSyntheticLaneRepo(t), 7, &stdout, &stderr)
+
+			l := tc.lane
+			l.stack = "compose.yml"
+			l.defs = append(l.defs, syntheticLaneSuite(tc.extended, tc.smoke))
+
+			if code := tc.run(r, l); code != 1 {
+				t.Fatalf("lane returned %d, want 1; stderr: %s", code, stderr.String())
+			}
+			for _, want := range []string{
+				"e2e: " + tc.lane.name + " suites failed",
+				"e2e: exit codes: synthetic-suite=7",
+			} {
+				if !strings.Contains(stderr.String(), want) {
+					t.Fatalf("stderr missing %q:\n%s", want, stderr.String())
+				}
+			}
+			if strings.Contains(stdout.String(), "suites passed") {
+				t.Fatalf("lane should not report success:\n%s", stdout.String())
+			}
+		})
+	}
+}
+
+func TestLanePassesWhenEverySuiteSucceeds(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	r := newSyntheticLaneRunner(t, newSyntheticLaneRepo(t), 0, &stdout, &stderr)
+
+	l := basicLane()
+	l.stack = "compose.yml"
+	l.defs = append(l.defs, syntheticLaneSuite(false, false))
+
+	if code := r.runStackLane(l); code != 0 {
+		t.Fatalf("lane returned %d, want 0; stderr: %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "E2E basic suites passed") {
+		t.Fatalf("stdout should report success:\n%s", stdout.String())
+	}
 }

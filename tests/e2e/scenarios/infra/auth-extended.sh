@@ -8,7 +8,9 @@ AUTH_COOKIE_FILE="/tmp/pinchtab-auth-cookie-$$.txt"
 AUTH_HEADERS_FILE="/tmp/pinchtab-auth-headers-$$.txt"
 AUTH_BODY_FILE="/tmp/pinchtab-auth-body-$$.txt"
 
-trap 'rm -f "$AUTH_COOKIE_FILE" "$AUTH_HEADERS_FILE" "$AUTH_BODY_FILE"' EXIT
+scenario_cleanup() {
+  rm -f "$AUTH_COOKIE_FILE" "$AUTH_HEADERS_FILE" "$AUTH_BODY_FILE"
+}
 
 auth_reset_session() {
   rm -f "$AUTH_COOKIE_FILE" "$AUTH_HEADERS_FILE" "$AUTH_BODY_FILE"
@@ -284,50 +286,48 @@ end_test
 # ─────────────────────────────────────────────────────────────────
 start_test "auth: screencast websocket rejects bad origin for cookie session"
 
-OLD_SERVER="$E2E_SERVER"
-E2E_SERVER="${E2E_FULL_SERVER:-$E2E_SERVER}"
+screencast_bad_origin_checks() {
+  pt_get /instances
+  SCREENCAST_INST_ID=$(echo "$RESULT" | jq -r '.[0].id')
+  assert_ok "list instances for screencast"
 
-pt_get /instances
-SCREENCAST_INST_ID=$(echo "$RESULT" | jq -r '.[0].id')
-assert_ok "list instances for screencast"
+  pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/table.html\"}"
+  SCREENCAST_TAB_ID=$(get_tab_id)
+  assert_ok "navigate for screencast auth boundary"
 
-pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/table.html\"}"
-SCREENCAST_TAB_ID=$(get_tab_id)
-assert_ok "navigate for screencast auth boundary"
+  auth_reset_session
+  auth_post_json /api/auth/login "{\"token\":\"${E2E_SERVER_TOKEN}\"}"
+  assert_http_status 200 "login succeeds"
+  auth_ws_get "/instances/${SCREENCAST_INST_ID}/proxy/screencast?tabId=${SCREENCAST_TAB_ID}" -H "Origin: http://evil.example"
+  assert_http_status 403 "bad origin websocket upgrade blocked"
+  assert_contains "$RESULT" "origin_forbidden" "websocket origin error returned"
+}
 
-auth_reset_session
-auth_post_json /api/auth/login "{\"token\":\"${E2E_SERVER_TOKEN}\"}"
-assert_http_status 200 "login succeeds"
-auth_ws_get "/instances/${SCREENCAST_INST_ID}/proxy/screencast?tabId=${SCREENCAST_TAB_ID}" -H "Origin: http://evil.example"
-assert_http_status 403 "bad origin websocket upgrade blocked"
-assert_contains "$RESULT" "origin_forbidden" "websocket origin error returned"
-
-E2E_SERVER="$OLD_SERVER"
+with_server "${E2E_FULL_SERVER:-$E2E_SERVER}" screencast_bad_origin_checks
 
 end_test
 
 # ─────────────────────────────────────────────────────────────────
 start_test "auth: screencast websocket allows same-origin cookie session"
 
-OLD_SERVER="$E2E_SERVER"
-E2E_SERVER="${E2E_FULL_SERVER:-$E2E_SERVER}"
+screencast_same_origin_checks() {
+  pt_get /instances
+  SCREENCAST_INST_ID=$(echo "$RESULT" | jq -r '.[0].id')
+  assert_ok "list instances for same-origin screencast"
 
-pt_get /instances
-SCREENCAST_INST_ID=$(echo "$RESULT" | jq -r '.[0].id')
-assert_ok "list instances for same-origin screencast"
+  pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/table.html\"}"
+  SCREENCAST_TAB_ID=$(get_tab_id)
+  assert_ok "navigate for same-origin screencast"
 
-pt_post /navigate -d "{\"url\":\"${FIXTURES_URL}/table.html\"}"
-SCREENCAST_TAB_ID=$(get_tab_id)
-assert_ok "navigate for same-origin screencast"
+  auth_reset_session
+  auth_post_json /api/auth/login "{\"token\":\"${E2E_SERVER_TOKEN}\"}"
+  assert_http_status 200 "login succeeds"
+  auth_ws_get "/instances/${SCREENCAST_INST_ID}/proxy/screencast?tabId=${SCREENCAST_TAB_ID}" -H "Origin: ${E2E_SERVER}"
+  assert_http_status 101 "same-origin websocket upgrade allowed"
+  assert_auth_header_contains "101 Switching Protocols" "websocket handshake completed"
+}
 
-auth_reset_session
-auth_post_json /api/auth/login "{\"token\":\"${E2E_SERVER_TOKEN}\"}"
-assert_http_status 200 "login succeeds"
-auth_ws_get "/instances/${SCREENCAST_INST_ID}/proxy/screencast?tabId=${SCREENCAST_TAB_ID}" -H "Origin: ${E2E_SERVER}"
-assert_http_status 101 "same-origin websocket upgrade allowed"
-assert_auth_header_contains "101 Switching Protocols" "websocket handshake completed"
-
-E2E_SERVER="$OLD_SERVER"
+with_server "${E2E_FULL_SERVER:-$E2E_SERVER}" screencast_same_origin_checks
 
 end_test
 

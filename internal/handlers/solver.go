@@ -79,10 +79,7 @@ func (h *Handlers) HandleSolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
-		return
-	}
-	if !h.enforceTabNotPausedForHandoffOrRespond(w, resolvedTabID) {
+	if _, ok := h.applyTabGuards(w, r, ctx, resolvedTabID, guardDomainPolicy|guardHandoffPause); !ok {
 		return
 	}
 
@@ -134,9 +131,7 @@ func (h *Handlers) HandleSolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Re-check domain policy after solve — the page may have redirected
-	// to a different domain once the challenge was resolved.
-	if _, ok := h.enforceCurrentTabDomainPolicy(w, r, ctx, resolvedTabID); !ok {
+	if _, ok := h.applyTabGuards(w, r, ctx, resolvedTabID, guardDomainPolicy); !ok {
 		return
 	}
 

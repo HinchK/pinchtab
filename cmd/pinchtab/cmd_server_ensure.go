@@ -151,7 +151,7 @@ func autoStartServer() error {
 	}
 
 	args := autoStartServerArgs(marker)
-	pid, err := spawnDetachedChild(binary, args, nil)
+	pid, err := spawnDetachedServer(stateDir, binary, args)
 	if err != nil {
 		return err
 	}
@@ -168,7 +168,7 @@ func autoStartServer() error {
 func autoStartServerArgs(marker ...string) []string {
 	args := []string{"server"}
 	if len(marker) > 0 && strings.TrimSpace(marker[0]) != "" {
-		args = append(args, "--background-child", marker[0])
+		args = append(args, backgroundChildFlag, marker[0])
 	}
 	return args
 }

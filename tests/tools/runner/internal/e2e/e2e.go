@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -17,8 +18,16 @@ type Args struct {
 	Logs      string
 	Provider  string
 	Providers []string // resolved list; len>1 means matrix mode
+	Slowest   int
+	Rebuild   bool
 	DryRun    bool
 }
+
+// defaultProvider is the browser a run uses when --browser is omitted. The
+// runner drives PINCHTAB_E2E_BROWSER from it and the timings artifact records
+// it as the run's condition, so all three must read the same value or a run
+// gets labelled with a browser it did not use.
+const defaultProvider = "chrome"
 
 var errHelp = errors.New("help requested")
 
@@ -43,6 +52,13 @@ Options:
                          comma-separated names to run a browser matrix. Cloak
                          builds pinchtab-cloakbrowser:test unless SKIP_BUILD=1.
                          ghost-chrome uses Chrome with static routing.
+  --slowest N            Report only: print the N slowest tests and the
+                         per-scenario totals from results/timings-<suite>.json.
+                         Runs nothing and needs no Docker.
+  --rebuild              Rebuild the docker smoke images even when their build
+                         inputs are unchanged. The lane otherwise reuses an
+                         image already built from the same Dockerfile and
+                         context, which is what makes a repeat run cheap.
   --dry-run              Print the compose plan without running it
   --help, -h             Show this help
 `
@@ -57,6 +73,14 @@ func Run(argv []string, stdout, stderr io.Writer) int {
 		_, _ = fmt.Fprintf(stderr, "e2e: %v\n\n", err)
 		WriteUsage(stderr)
 		return 1
+	}
+
+	if args.Slowest > 0 {
+		if err := runSlowest(args.Suite, args.Slowest, resolveRepoRoot(), stdout); err != nil {
+			_, _ = fmt.Fprintf(stderr, "e2e: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	if len(args.Providers) > 1 {
@@ -169,6 +193,18 @@ func ParseArgs(argv []string) (Args, error) {
 				return args, err
 			}
 			args.Provider = v
+		case "--slowest":
+			v, err := next(&i, arg)
+			if err != nil {
+				return args, err
+			}
+			n, convErr := strconv.Atoi(strings.TrimSpace(v))
+			if convErr != nil || n <= 0 {
+				return args, fmt.Errorf("--slowest must be a positive whole number (got %q)", v)
+			}
+			args.Slowest = n
+		case "--rebuild":
+			args.Rebuild = true
 		case "--dry-run":
 			args.DryRun = true
 		default:
@@ -188,7 +224,7 @@ func ParseArgs(argv []string) (Args, error) {
 		}
 	}
 	if args.Provider == "" {
-		args.Provider = "chrome"
+		args.Provider = defaultProvider
 	}
 	args.Providers = resolveProviderList(args.Provider)
 	if len(args.Providers) == 0 {

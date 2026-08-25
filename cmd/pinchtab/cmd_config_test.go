@@ -63,20 +63,25 @@ func TestClipboardCommands(t *testing.T) {
 	}
 }
 
-func TestCopyConfigTokenDoesNotPrintTokenWhenClipboardUnavailable(t *testing.T) {
+func TestEmitConfigTokenFailsLoudlyWhenClipboardUnavailable(t *testing.T) {
 	t.Setenv("PATH", "")
 
-	output := captureStdout(t, func() {
-		if err := copyConfigToken("very-secret-token-value"); err != nil {
-			t.Fatalf("copyConfigToken() error = %v", err)
-		}
+	var err error
+	stdout, _ := captureStdoutStderr(t, func() {
+		err = emitConfigToken("very-secret-token-value", false)
 	})
 
-	if strings.Contains(output, "very-secret-token-value") {
-		t.Fatalf("expected token to stay hidden, got %q", output)
+	if err == nil {
+		t.Fatal("emitConfigToken() returned nil with no clipboard available; the command would exit 0 having done nothing")
 	}
-	if !strings.Contains(output, "token not shown for safety") {
-		t.Fatalf("expected safe fallback message, got %q", output)
+	if strings.Contains(err.Error(), "very-secret-token-value") {
+		t.Errorf("the failure message leaks the token: %v", err)
+	}
+	if !strings.Contains(err.Error(), "--stdout") {
+		t.Errorf("the failure names no supported way to get the token on a headless host: %v", err)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty; a caller capturing $(...) must not receive prose", stdout)
 	}
 }
 
@@ -298,18 +303,21 @@ func TestConfigTokenSubcommandCopiesToClipboard(t *testing.T) {
 		rootCmd.SetArgs(nil)
 	})
 
-	output := captureStdout(t, func() {
+	stdout, stderr := captureStdoutStderr(t, func() {
 		rootCmd.SetArgs([]string{"config", "token"})
 		if err := rootCmd.Execute(); err != nil {
 			t.Fatalf("Execute() error = %v", err)
 		}
 	})
 
-	if strings.Contains(output, "test-token-for-clipboard") {
-		t.Fatalf("expected token to stay hidden, got %q", output)
+	if strings.Contains(stdout+stderr, "test-token-for-clipboard") {
+		t.Fatalf("expected token to stay hidden, got stdout=%q stderr=%q", stdout, stderr)
 	}
-	if !strings.Contains(output, "Token copied to clipboard") {
-		t.Fatalf("expected clipboard success message, got %q", output)
+	if stdout != "" {
+		t.Fatalf("stdout = %q, want empty; the human message belongs on stderr so $(...) captures nothing", stdout)
+	}
+	if !strings.Contains(stderr, "Token copied to clipboard") {
+		t.Fatalf("expected clipboard success message on stderr, got %q", stderr)
 	}
 }
 
@@ -389,8 +397,8 @@ func TestConfigSchemaSubcommandPrintsBundledSchema(t *testing.T) {
 	}
 }
 
-func TestCopyConfigTokenReturnsErrorWhenEmpty(t *testing.T) {
-	err := copyConfigToken("")
+func TestEmitConfigTokenReturnsErrorWhenEmpty(t *testing.T) {
+	err := emitConfigToken("", false)
 	if err == nil {
 		t.Fatal("expected error for empty token")
 	}

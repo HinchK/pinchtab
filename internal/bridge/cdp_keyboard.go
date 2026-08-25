@@ -102,6 +102,25 @@ func editingCommand(key string, modifiers int) string {
 	return ""
 }
 
+func w3cKeyName(key string) string {
+	if key == "Return" {
+		return "Enter"
+	}
+	return key
+}
+
+func dispatchNamedKeyEvent(ctx context.Context, key, eventType string) error {
+	params := map[string]any{"type": eventType, "key": w3cKeyName(key)}
+	if def, ok := namedKeyDefs[key]; ok {
+		params["code"] = def.code
+		params["windowsVirtualKeyCode"] = def.virtualKey
+		params["nativeVirtualKeyCode"] = def.virtualKey
+	}
+	return chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+		return chromedp.FromContext(ctx).Target.Execute(ctx, "Input.dispatchKeyEvent", params, nil)
+	}))
+}
+
 // DispatchNamedKey dispatches key with the given CDP modifier bitmask
 // (Alt=1, Ctrl=2, Meta=4, Shift=8). Unrecognised keys with no modifiers fall
 // back to chromedp.KeyEvent (types the key); with modifiers they are dispatched
@@ -117,10 +136,7 @@ func DispatchNamedKey(ctx context.Context, key string, modifiers int) error {
 		return chromedp.Run(ctx, chromedp.KeyEvent(key))
 	}
 
-	w3cKey := key
-	if key == "Return" {
-		w3cKey = "Enter"
-	}
+	w3cKey := w3cKeyName(key)
 
 	// A named key with modifiers is a shortcut (Shift+ArrowRight selects,
 	// Ctrl+Backspace deletes a word): suppress its default text so it isn't

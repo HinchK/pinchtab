@@ -99,6 +99,54 @@ wait_for_instance_ready() {
   done
 }
 
+# wait_until polls a predicate until it holds, and fails the current test when
+# it never does. The predicate is a shell command string; anything it prints is
+# discarded. Bounded and loud by construction: a scenario cannot wait forever,
+# and it cannot mistake a timeout for a pass.
+wait_until() {
+  local predicate="$1"
+  local timeout_sec="${2:-10}"
+  local interval="${3:-0.2}"
+  local deadline
+  deadline=$(($(get_time_ms) + timeout_sec * 1000))
+
+  while true; do
+    if eval "$predicate" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ "$(get_time_ms)" -ge "$deadline" ]; then
+      fail_assert "timed out after ${timeout_sec}s waiting for: ${predicate}"
+      return 1
+    fi
+    sleep "$interval"
+  done
+}
+
+_e2e_against() {
+  local base_url="$1" token="$2"
+  shift 2
+  local prev_url="$E2E_SERVER" prev_token="${E2E_SERVER_TOKEN:-}"
+  E2E_SERVER="$base_url"
+  E2E_SERVER_TOKEN="$token"
+  "$@"
+  local rc=$?
+  E2E_SERVER="$prev_url"
+  E2E_SERVER_TOKEN="$prev_token"
+  return $rc
+}
+
+with_server() {
+  local base_url="$1"
+  shift
+  _e2e_against "$base_url" "${E2E_SERVER_TOKEN:-}" "$@"
+}
+
+pt_on() {
+  local base_url="$1" token="$2"
+  shift 2
+  _e2e_against "$base_url" "$token" "$@"
+}
+
 start_test() {
   ASSERTIONS_PASSED=0
   ASSERTIONS_FAILED=0
@@ -153,11 +201,6 @@ skip_test() {
   local reason="${1:-skipped}"
   echo -e "  ${YELLOW}⚠ skipped:${NC} ${reason}"
   ((ASSERTIONS_SKIPPED++)) || true
-}
-
-soft_pass_assert() {
-  echo -e "  ${YELLOW}~${NC} ${1:-}"
-  ((ASSERTIONS_PASSED++)) || true
 }
 
 _e2e_default_ref_json() {
@@ -219,8 +262,15 @@ assert_ref_json_jq() {
   assert_json_jq "$(_e2e_default_ref_json)" "$expr" "$success_desc" "$fail_desc" "$@"
 }
 
+run_scenario_cleanup() {
+  if declare -F scenario_cleanup >/dev/null 2>&1; then
+    scenario_cleanup
+  fi
+  return 0
+}
+
 finish_suite() {
-  if [ "$TESTS_FAILED" -gt 0 ]; then
+  if [ "${1:-$TESTS_FAILED}" -gt 0 ]; then
     exit 1
   fi
 }

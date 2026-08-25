@@ -176,7 +176,7 @@ Notes:
 ```bash
 curl -s http://localhost:9867/instances | jq .
 # CLI Alternative
-pinchtab instances
+pinchtab instance list
 ```
 
 An attached instance appears in the normal instance list with:

@@ -3,79 +3,58 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
 
-func handleWait() func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+var waitModes = map[string]string{
+	"ms":       "ms",
+	"selector": "selector",
+	"text":     "text",
+	"url":      "url",
+	"load":     "load",
+	"function": "fn",
+}
+
+func handleWait(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		ms, err := r.RequireFloat("ms")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
+		mode, field, refusal := pickMode(r, "for", waitModes)
+		if refusal != nil {
+			return refusal, nil
 		}
-		if ms < 0 {
-			ms = 0
+		value, refusal := suppliedStringArg(r, "wait", "value", "", "value")
+		if refusal != nil {
+			return refusal, nil
 		}
-		if ms > maxWaitMS {
-			ms = maxWaitMS
+		if strings.TrimSpace(value) == "" {
+			return mcp.NewToolResultError(fmt.Sprintf("wait for=%q needs a non-empty 'value'", mode)), nil
 		}
-		select {
-		case <-time.After(time.Duration(ms) * time.Millisecond):
-			return mcp.NewToolResultText(fmt.Sprintf(`{"waited_ms":%d}`, int(ms))), nil
-		case <-ctx.Done():
-			return mcp.NewToolResultError("wait cancelled"), nil
+		if mode == "ms" {
+			return sleepFor(ctx, strings.TrimSpace(value))
 		}
+		return callWaitEndpoint(ctx, c, r, map[string]any{field: value})
 	}
 }
 
-func handleWaitForSelector(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		sel, err := r.RequireString("selector")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return callWaitEndpoint(ctx, c, r, map[string]any{"selector": sel})
+func sleepFor(ctx context.Context, value string) (*mcp.CallToolResult, error) {
+	ms, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("wait for=\"ms\" needs a numeric 'value' in milliseconds, got %q", value)), nil
 	}
-}
-
-func handleWaitForText(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		text, err := r.RequireString("text")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return callWaitEndpoint(ctx, c, r, map[string]any{"text": text})
+	if ms < 0 {
+		ms = 0
 	}
-}
-
-func handleWaitForURL(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		u, err := r.RequireString("url")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return callWaitEndpoint(ctx, c, r, map[string]any{"url": u})
+	if ms > maxWaitMS {
+		ms = maxWaitMS
 	}
-}
-
-func handleWaitForLoad(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		load, err := r.RequireString("load")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return callWaitEndpoint(ctx, c, r, map[string]any{"load": load})
-	}
-}
-
-func handleWaitForFunction(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	return func(ctx context.Context, r mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		fn, err := r.RequireString("fn")
-		if err != nil {
-			return mcp.NewToolResultError(err.Error()), nil
-		}
-		return callWaitEndpoint(ctx, c, r, map[string]any{"fn": fn})
+	select {
+	case <-time.After(time.Duration(ms) * time.Millisecond):
+		return mcp.NewToolResultText(fmt.Sprintf(`{"waited_ms":%d}`, int(ms))), nil
+	case <-ctx.Done():
+		return mcp.NewToolResultError("wait cancelled"), nil
 	}
 }
 

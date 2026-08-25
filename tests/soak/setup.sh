@@ -70,7 +70,7 @@ sleep 3
 docker exec "$CONTAINER" sh -c "
   echo '[soak] ready:'
   pinchtab nav http://localhost:$FIX_PORT/heavy.html >/dev/null 2>&1 && echo '  heavy nav OK'
-  echo \"  instance: \$(pinchtab instances 2>&1 | head -1)\"
+  echo \"  instance: \$(pinchtab instance list 2>&1 | head -1)\"
   echo \"  maxTabs=\$(pinchtab config get instanceDefaults.maxTabs)  fixtures=http://localhost:$FIX_PORT\"
 "
 echo "[soak] container '$CONTAINER' ready. Run:  CONTAINER=$CONTAINER FIX_PORT=$FIX_PORT tests/soak/soak.sh 3600"

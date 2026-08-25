@@ -109,16 +109,11 @@ func handleSnapshot(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 		if v, ok := optBool(r, "interactive"); ok && v {
 			q.Set("filter", "interactive")
 		}
-		if v, ok := optBool(r, "compact"); ok && v {
-			q.Set("format", "compact")
+		format, err := snapshotFormatFor(r)
+		if err != nil {
+			return mcp.NewToolResultError(err.Error()), nil
 		}
-		if rawFormat := optString(r, "format"); rawFormat != "" {
-			format, err := normalizeSnapshotFormat(rawFormat)
-			if err != nil {
-				return mcp.NewToolResultError(err.Error()), nil
-			}
-			q.Set("format", format)
-		}
+		q.Set("format", format)
 		if v, ok := optBool(r, "diff"); ok && v {
 			q.Set("diff", "true")
 		}
@@ -140,6 +135,16 @@ func handleSnapshot(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.
 		}
 		return resultFromBytes(body, code)
 	}
+}
+
+func snapshotFormatFor(r mcp.CallToolRequest) (string, error) {
+	if raw := optString(r, "format"); raw != "" {
+		return normalizeSnapshotFormat(raw)
+	}
+	if compact, ok := optBool(r, "compact"); ok && !compact {
+		return "json", nil
+	}
+	return "compact", nil
 }
 
 func handleFrame(c *Client) func(context.Context, mcp.CallToolRequest) (*mcp.CallToolResult, error) {

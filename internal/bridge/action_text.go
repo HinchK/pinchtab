@@ -297,39 +297,19 @@ func (b *Bridge) actionKeyboardInsert(ctx context.Context, req ActionRequest) (m
 }
 
 func (b *Bridge) actionKeyDown(ctx context.Context, req ActionRequest) (map[string]any, error) {
-	if req.Key == "" {
-		return nil, fmt.Errorf("key required for keydown")
-	}
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		params := map[string]any{"type": "keyDown", "key": req.Key}
-		if def, ok := namedKeyDefs[req.Key]; ok {
-			params["code"] = def.code
-			params["windowsVirtualKeyCode"] = def.virtualKey
-			params["nativeVirtualKeyCode"] = def.virtualKey
-		}
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Input.dispatchKeyEvent", params, nil)
-	}))
-	if err != nil {
-		return nil, err
-	}
-	return map[string]any{"keydown": req.Key}, nil
+	return b.dispatchSingleKeyEvent(ctx, req, "keyDown", ActionKeyDown)
 }
 
 func (b *Bridge) actionKeyUp(ctx context.Context, req ActionRequest) (map[string]any, error) {
+	return b.dispatchSingleKeyEvent(ctx, req, "keyUp", ActionKeyUp)
+}
+
+func (b *Bridge) dispatchSingleKeyEvent(ctx context.Context, req ActionRequest, eventType, resultKey string) (map[string]any, error) {
 	if req.Key == "" {
-		return nil, fmt.Errorf("key required for keyup")
+		return nil, fmt.Errorf("key required for %s", resultKey)
 	}
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		params := map[string]any{"type": "keyUp", "key": req.Key}
-		if def, ok := namedKeyDefs[req.Key]; ok {
-			params["code"] = def.code
-			params["windowsVirtualKeyCode"] = def.virtualKey
-			params["nativeVirtualKeyCode"] = def.virtualKey
-		}
-		return chromedp.FromContext(ctx).Target.Execute(ctx, "Input.dispatchKeyEvent", params, nil)
-	}))
-	if err != nil {
+	if err := dispatchNamedKeyEvent(ctx, req.Key, eventType); err != nil {
 		return nil, err
 	}
-	return map[string]any{"keyup": req.Key}, nil
+	return map[string]any{resultKey: req.Key}, nil
 }

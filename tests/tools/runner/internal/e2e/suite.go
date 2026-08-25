@@ -57,14 +57,15 @@ var (
 // derived from Name so they cannot drift by typo. Group is nil for host-only
 // suites such as docker-smoke.
 type suiteDescriptor struct {
-	Name        string
-	Group       *suiteGroup
-	TitleSuffix string // overrides the derived "tests (Docker)" suffix when set
-	Compose     string
-	Extended    bool
-	Smoke       bool
-	Ready       []string
-	LogServices []string
+	Name         string
+	Group        *suiteGroup
+	TitleSuffix  string // overrides the derived "tests (Docker)" suffix when set
+	Compose      string
+	Extended     bool
+	Smoke        bool
+	Ready        []string
+	LogServices  []string
+	RestartAfter []string
 }
 
 func resultsPath(prefix, name, ext string) string {
@@ -73,17 +74,19 @@ func resultsPath(prefix, name, ext string) string {
 
 func (d suiteDescriptor) build() suiteDef {
 	def := suiteDef{
-		Name:        d.Name,
-		Title:       d.title(),
-		Compose:     d.Compose,
-		Ready:       d.Ready,
-		Extended:    d.Extended,
-		Smoke:       d.Smoke,
-		Summary:     resultsPath("summary", d.Name, "txt"),
-		Report:      resultsPath("report", d.Name, "md"),
-		Output:      resultsPath("output", d.Name, "log"),
-		LogPrefix:   "logs-" + d.Name,
-		LogServices: d.LogServices,
+		Name:         d.Name,
+		Title:        d.title(),
+		Compose:      d.Compose,
+		Ready:        d.Ready,
+		Extended:     d.Extended,
+		Smoke:        d.Smoke,
+		Summary:      resultsPath("summary", d.Name, "txt"),
+		Report:       resultsPath("report", d.Name, "md"),
+		Timings:      resultsPath("timings", d.Name, "json"),
+		Output:       resultsPath("output", d.Name, "log"),
+		LogPrefix:    "logs-" + d.Name,
+		LogServices:  d.LogServices,
+		RestartAfter: d.RestartAfter,
 	}
 	if d.Group != nil {
 		g := d.Group
@@ -124,17 +127,18 @@ var suiteDescriptors = []suiteDescriptor{
 	{Name: "cli", Group: &groupCLI, Compose: singleCompose, Ready: primaryReady(),
 		LogServices: []string{"runner-cli", "pinchtab"}},
 	{Name: "cli-extended", Group: &groupCLI, Compose: singleCompose, Extended: true, Ready: primaryReady(),
-		LogServices: []string{"runner-cli", "pinchtab"}},
+		LogServices: []string{"runner-cli", "pinchtab"}, RestartAfter: []string{"pinchtab"}},
 	{Name: "infra", Group: &groupInfra, Compose: singleCompose, Ready: primaryReady(),
 		LogServices: []string{"runner-api", "pinchtab"}},
 	{Name: "infra-extended", Group: &groupInfra, Compose: multiCompose, Extended: true, Ready: extendedReady(),
-		LogServices: []string{"runner-api", "pinchtab", "pinchtab-secure", "pinchtab-medium", "pinchtab-full", "pinchtab-ghostchrome", "pinchtab-bridge"}},
+		LogServices:  []string{"runner-api", "pinchtab", "pinchtab-secure", "pinchtab-medium", "pinchtab-full", "pinchtab-ghostchrome", "pinchtab-bridge"},
+		RestartAfter: []string{"pinchtab"}},
 	{Name: "plugin", Group: &groupPlugin, Compose: singleCompose, Ready: primaryReady(),
 		LogServices: []string{"runner-api", "pinchtab"}},
 	{Name: "api-smoke", Group: &groupAPI, Compose: multiCompose, Smoke: true, Ready: extendedReady(),
 		LogServices: []string{"runner-api", "pinchtab", "pinchtab-secure", "pinchtab-autoclose", "pinchtab-medium", "pinchtab-full", "pinchtab-ghostchrome", "pinchtab-bridge"}},
 	{Name: "cli-smoke", Group: &groupCLI, Compose: multiCompose, Smoke: true, Ready: primaryReady(),
-		LogServices: []string{"runner-cli", "pinchtab"}},
+		LogServices: []string{"runner-cli", "pinchtab"}, RestartAfter: []string{"pinchtab"}},
 	{Name: "infra-smoke", Group: &groupInfra, Compose: multiCompose, Smoke: true, Ready: extendedReady(),
 		LogServices: []string{"runner-api", "pinchtab", "pinchtab-secure", "pinchtab-medium", "pinchtab-full", "pinchtab-ghostchrome", "pinchtab-bridge"}},
 	{Name: "plugin-smoke", Group: &groupPlugin, Compose: multiCompose, Smoke: true, Ready: primaryReady(),
@@ -142,13 +146,21 @@ var suiteDescriptors = []suiteDescriptor{
 	{Name: "docker-smoke", Group: nil, TitleSuffix: "tests (host)", Smoke: true},
 }
 
-func suiteByName(name string) suiteDef {
+func suiteDefByName(name string) (suiteDef, bool) {
 	for _, d := range suiteDescriptors {
 		if d.Name == name {
-			return d.build()
+			return d.build(), true
 		}
 	}
-	panic("e2e: unknown suite descriptor " + name)
+	return suiteDef{}, false
+}
+
+func suiteByName(name string) suiteDef {
+	def, ok := suiteDefByName(name)
+	if !ok {
+		panic("e2e: unknown suite descriptor " + name)
+	}
+	return def
 }
 
 func apiSuite() suiteDef           { return suiteByName("api") }
@@ -291,7 +303,7 @@ func (r *Runner) prepareSuiteResults(def suiteDef) {
 		_, _ = fmt.Fprintf(r.stdout, "# prepare results for %s\n", def.Name)
 		return
 	}
-	for _, path := range []string{def.Summary, def.Report, def.Output} {
+	for _, path := range []string{def.Summary, def.Report, def.Timings, def.Output} {
 		_ = os.Remove(filepath.Join(r.repoRoot, path))
 	}
 	for _, path := range []string{
@@ -347,7 +359,7 @@ func execCommand(command []string, dir string) *exec.Cmd {
 }
 
 func (r *Runner) showFailureArtifacts(def suiteDef, duration time.Duration) {
-	paths := []string{def.Summary, def.Report, def.Output}
+	paths := []string{def.Summary, def.Report, def.Timings, def.Output}
 	for _, path := range paths {
 		if fileExists(filepath.Join(r.repoRoot, path)) {
 			_, _ = fmt.Fprintf(r.stdout, "  artifact: %s\n", path)
@@ -398,6 +410,8 @@ func (r *Runner) writeSuiteReports(def suiteDef, duration time.Duration, exitCod
 	if err := os.WriteFile(filepath.Join(r.repoRoot, def.Report), []byte(report), 0o644); err != nil {
 		_, _ = fmt.Fprintf(r.stderr, "e2e: failed to write %s: %v\n", def.Report, err)
 	}
+
+	r.writeSuiteTimings(def, data, timestamp)
 	return data
 }
 
