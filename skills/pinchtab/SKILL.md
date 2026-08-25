@@ -117,7 +117,7 @@ After changing config with the server running, restart to apply: `pinchtab serve
 pinchtab server | health
 pinchtab server stop                                # stop any running server (foreground or background)
 pinchtab server restart                             # stop + restart in background (applies config changes)
-pinchtab instance list | profiles
+pinchtab instances | profiles
 pinchtab --server http://localhost:9868 snap -i -c  # target a specific instance
 ```
 

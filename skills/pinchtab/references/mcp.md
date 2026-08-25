@@ -63,6 +63,7 @@ All tool names are prefixed with `pinchtab_`.
 | `pinchtab_click` | Click element by selector. Required: `selector` or legacy `ref`. Optional: `waitNav`, `mode` (`dom` or `dispatch` as a broad low-level escape hatch), `tabId`. `mode` and `humanize` are mutually exclusive. |
 | `pinchtab_type` | Type text keystroke-by-keystroke. Required: `selector` or legacy `ref`, plus `text`. Optional: `tabId`. |
 | `pinchtab_fill` | Fill input via JS dispatch. Required: `selector` or legacy `ref`, plus `value` — send `value=""` to clear the field (omitting it is refused). Optional: `tabId`. |
+| `pinchtab_press` | Press a named key (`Enter`, `Tab`, `Escape`, etc.). Required: `key`. Optional: `tabId`. |
 | `pinchtab_hover` | Hover over element. Required: `selector` or legacy `ref`. Optional: `tabId`. |
 | `pinchtab_focus` | Focus an element. Required: `selector` or legacy `ref`. Optional: `tabId`. |
 | `pinchtab_select` | Select dropdown option. Required: `selector` or legacy `ref`, plus `value`. Optional: `tabId`. |
@@ -71,7 +72,10 @@ All tool names are prefixed with `pinchtab_`.
 ### Keyboard
 | Tool | Description |
 |------|-------------|
-| `pinchtab_key` | Keyboard input. Required: `action` — `press` a named key (`Enter`, `Tab`, `Escape`, etc.), `down` to hold one, `up` to release one, `type` to type into the focused element with keystroke events, or `insert` to insert text without key events. `press`/`down`/`up` require `key`; `type`/`insert` require `text`. Optional: `nodeId`, `tabId`. |
+| `pinchtab_keyboard_type` | Type text into the focused element with keystroke events. Required: `text`. Optional: `tabId`. |
+| `pinchtab_keyboard_inserttext` | Insert text into the focused element without key events. Required: `text`. Optional: `tabId`. |
+| `pinchtab_keydown` | Hold a key down. Required: `key`. Optional: `tabId`. |
+| `pinchtab_keyup` | Release a key. Required: `key`. Optional: `tabId`. |
 
 ### Content
 | Tool | Description |
@@ -93,7 +97,12 @@ All tool names are prefixed with `pinchtab_`.
 ### Utility
 | Tool | Description |
 |------|-------------|
-| `pinchtab_wait` | Wait for one condition. Required: `for` — `ms` (wait N milliseconds, max 30000), `selector` (appear or disappear), `text` (appear), `url` (glob match), `load` (`ready-state`, `content-loaded` or `network-idle`), or `function` (JavaScript expression becomes truthy) — plus `value` carrying it. Optional: `timeout`, `state` (with `for=selector`), `tabId`. |
+| `pinchtab_wait` | Wait N milliseconds. Required: `ms` (max 30000). |
+| `pinchtab_wait_for_selector` | Wait for selector to appear or disappear. Required: `selector`. Optional: `timeout`, `state`, `tabId`. |
+| `pinchtab_wait_for_text` | Wait for text to appear. Required: `text`. Optional: `timeout`, `tabId`. |
+| `pinchtab_wait_for_url` | Wait for a URL glob match. Required: `url`. Optional: `timeout`, `tabId`. |
+| `pinchtab_wait_for_load` | Wait for a load state. Required: `load`. Optional: `timeout`, `tabId`. |
+| `pinchtab_wait_for_function` | Wait for a JavaScript expression to become truthy. Required: `fn`. Optional: `timeout`, `tabId`. |
 
 ### Network
 | Tool | Description |
@@ -133,7 +142,7 @@ The MCP surface is intentionally scoped to browser automation. The following are
 | CAPTCHA or human verification | ❌ Not available | Hand the step to the user |
 | Modify stealth or fingerprint settings | ❌ Not available | Not part of an agent workflow |
 | Start or stop the PinchTab server | ❌ Not available | Use `pinchtab server` or `pinchtab daemon` CLI |
-| Manage fleet instances | ❌ Not available | Use `pinchtab instance list` CLI |
+| Manage fleet instances | ❌ Not available | Use `pinchtab instances` CLI |
 | Read/write PinchTab config | ❌ Not available | Edit `~/.pinchtab/config.json` directly |
 
 For supported non-MCP browser work, use the CLI commands alongside the MCP tools. Keep privileged controls within the explicit authorization and data-handling rules above.
