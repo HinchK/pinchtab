@@ -748,7 +748,6 @@ func TestDryRunSmokePlan(t *testing.T) {
 	out := stdout.String()
 	for _, want := range []string{
 		"suite:    smoke",
-		`Skipping plugin-smoke: filter "" has no matching scenarios`,
 		"docker compose -f tests/e2e/docker-compose-multi.yml up -d pinchtab pinchtab-secure pinchtab-autoclose pinchtab-medium pinchtab-full fixtures",
 		"E2E_SUMMARY_TITLE=PinchTab E2E API Smoke Suite",
 		"runner-api /bin/bash /e2e/run.sh scenario=auto-switch-smoke.sh scenario=network-route-smoke.sh scenario=recording-smoke.sh scenario=tabs-autoclose-smoke.sh",
@@ -757,6 +756,8 @@ func TestDryRunSmokePlan(t *testing.T) {
 		"docker compose -f tests/e2e/docker-compose-multi.yml restart pinchtab",
 		"E2E_SUMMARY_TITLE=PinchTab E2E Infra Smoke Suite",
 		"runner-api /bin/bash /e2e/run.sh scenario=autosolver-smoke.sh scenario=browser-routing-smoke.sh scenario=dashboard-smoke.sh scenario=orchestrator-smoke.sh scenario=security-smoke.sh",
+		"E2E_SUMMARY_TITLE=PinchTab E2E Plugin Smoke Suite",
+		"runner-api /bin/bash /e2e/run.sh scenario=plugin-smoke.sh",
 		"== E2E Docker Smoke tests (host) ==",
 		"docker build --load -t pinchtab-release-smoke:dry-run .",
 		"docker build --load --platform linux/amd64 -f tests/tools/docker/chrome-cft-smoke.Dockerfile -t pinchtab-chrome-cft-smoke:dry-run .",

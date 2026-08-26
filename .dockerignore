@@ -39,8 +39,9 @@ node_modules/
 dashboard/node_modules/
 npm/node_modules/
 npm/dist/
-plugin/node_modules/
-plugin/dist/
+plugins/openclaw/node_modules/
+plugins/openclaw/dist/
+plugins/grok/node_modules/
 *.log
 
 # Build caches

@@ -18,7 +18,7 @@ The [Model Context Protocol](https://modelcontextprotocol.io/) is an open standa
 
 - PinchTab installed (`pinchtab --version`)
 - Chrome installed and on PATH (or pointed to via config)
-- An MCP-compatible client: Claude Desktop, VS Code with GitHub Copilot, or Cursor
+- An MCP-compatible client: Claude Desktop, VS Code with GitHub Copilot, Cursor, or Grok Build
 
 ## Step 1: Start PinchTab
 
@@ -89,6 +89,37 @@ Add to your Cursor MCP settings (`~/.cursor/mcp.json`):
     }
   }
 }
+```
+
+### Grok Build
+
+After PinchTab is listed in the official xAI marketplace, install the plugin with:
+
+```bash
+grok plugin install pinchtab --trust
+```
+
+Until then, or to install from the PinchTab repository marketplace:
+
+```bash
+grok plugin marketplace add pinchtab/pinchtab
+grok plugin install pinchtab --trust
+```
+
+You can also install the plugin directory directly from GitHub:
+
+```bash
+grok plugin install pinchtab/pinchtab#plugins/grok --trust
+```
+
+From the root of a local checkout, use `grok plugin install ./plugins/grok --trust`. The plugin does not install the binary. Install PinchTab separately, start `pinchtab server`, then trust the plugin so MCP tools appear in `/mcps`. See the [Grok plugin install and usage guide](../../plugins/grok/README.md) for first use, verification, domain authorization, and troubleshooting.
+
+To configure MCP without the plugin, add to `~/.grok/config.toml`:
+
+```toml
+[mcp_servers.pinchtab]
+command = "pinchtab"
+args = ["mcp"]
 ```
 
 ### Any SDK-based Agent

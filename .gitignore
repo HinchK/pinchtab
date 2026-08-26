@@ -53,9 +53,9 @@ pinchtab-dev
 pinchtab-small
 pinchtab.exe
 plugins/*/.venv/
-plugin/node_modules/
-plugin/package-lock.json
-plugin/skills/pinchtab/
+plugins/openclaw/node_modules/
+plugins/openclaw/package-lock.json
+plugins/openclaw/skills/pinchtab/
 tests/e2e/results/*
 tests/benchmark/results/
 tests/tools/browserbench/results/

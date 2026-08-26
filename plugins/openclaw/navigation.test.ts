@@ -32,6 +32,7 @@ describe("navigation routing", () => {
       if (path === "/instances") return jsonResponse([{ id: "inst_a", status: "running" }]);
       if (path === "/navigate") return jsonResponse({ tabId: "tab_nav" });
       if (path === "/tab") return jsonResponse({ tabId: "tab_new" });
+      if (path === "/instances/inst_a/tabs/open") return jsonResponse({ tabId: "tab_profile" });
       if (path === "/tabs/tab_existing/navigate") return jsonResponse({ tabId: "tab_existing" });
       throw new Error(`unexpected fetch: ${path}`);
     }) as typeof fetch;
@@ -52,6 +53,18 @@ describe("navigation routing", () => {
     const result = await executeBrowserAction({ baseUrl: "http://localhost:9867" }, { action: "navigate", url: "https://example.com", newTab: true });
     assert.match(result.content[0].text, /tab_new/);
     assert.ok(calls.some((call) => new URL(call.url).pathname === "/tab"));
+  });
+
+  it("browser navigate opens the first profiled tab through the instance-scoped route", async () => {
+    const result = await executeBrowserAction(
+      { baseUrl: "http://localhost:9867", persistSessionTabs: false, profiles: { staging: { instanceId: "inst_a" } } },
+      { action: "navigate", url: "https://example.com", profile: "staging" },
+    );
+
+    assert.match(result.content[0].text, /tab_profile/);
+    const navigation = calls.find((call) => new URL(call.url).pathname === "/instances/inst_a/tabs/open");
+    assert.deepStrictEqual(navigation?.body, { url: "https://example.com" });
+    assert.ok(!calls.some((call) => new URL(call.url).pathname === "/navigate"));
   });
 
   it("pinchtab navigate reuses top-level /navigate when tabId is absent", async () => {

@@ -98,7 +98,7 @@ echo "packing plugin (release-flow simulation: prepack → build → npm pack)..
 # (compiled runtime, files allowlist, manifest paths) end-to-end.
 PACK_DIR="$TEMP_ARTIFACTS/plugin-pack"
 mkdir -p "$PACK_DIR"
-if ! (cd "$ROOT_DIR/plugin" && npm pack --pack-destination "$PACK_DIR" >"$TEMP_ARTIFACTS/plugin-pack.log" 2>&1); then
+if ! (cd "$ROOT_DIR/plugins/openclaw" && npm pack --pack-destination "$PACK_DIR" >"$TEMP_ARTIFACTS/plugin-pack.log" 2>&1); then
   cat "$TEMP_ARTIFACTS/plugin-pack.log" >&2
   cp -R "$TEMP_ARTIFACTS/." "$FINAL_ARTIFACTS_DIR/"
   echo "plugin pack failed — artifacts: $FINAL_ARTIFACTS_DIR" >&2

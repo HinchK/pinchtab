@@ -6,10 +6,6 @@ on:
       version:
         description: 'Release version (e.g. 0.8.0, without v prefix)'
         required: true
-      ref:
-        description: 'Git ref to release. Defaults to main.'
-        required: false
-        default: 'main'
 
 env:
   GORELEASER_VERSION: v2.14.3
@@ -26,7 +22,7 @@ jobs:
     uses: ./.github/workflows/reusable-validate-release.yml
     with:
       version: ${{ inputs.version }}
-      ref: ${{ inputs.ref }}
+      ref: ${{ github.sha }}
 
   release-secret-checks:
     needs: validate
@@ -66,8 +62,6 @@ jobs:
   plugin-checks:
     needs: validate
     uses: ./.github/workflows/reusable-plugin.yml
-    with:
-      ref: ${{ needs.validate.outputs.sha }}
 
   e2e-api-extended:
     needs: validate
@@ -187,7 +181,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Sync plugin version with release
-        working-directory: plugin
+        working-directory: plugins/openclaw
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
@@ -205,11 +199,11 @@ jobs:
           fi
 
       - name: Install plugin deps
-        working-directory: plugin
+        working-directory: plugins/openclaw
         run: npm install --ignore-scripts --no-package-lock
 
       - name: Dry-run npm pack (validates prepack chain + files allowlist)
-        working-directory: plugin
+        working-directory: plugins/openclaw
         run: |
           npm pack --dry-run
           # Real pack so we know prepack actually emits dist/ before clawhub validates
@@ -224,7 +218,7 @@ jobs:
         run: clawhub login --token "$CLAWHUB_TOKEN" --no-browser
 
       - name: Dry-run ClawHub publish
-        working-directory: plugin
+        working-directory: plugins/openclaw
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           TAG: ${{ needs.validate.outputs.tag }}
@@ -237,7 +231,7 @@ jobs:
             --source-repo pinchtab/pinchtab \
             --source-commit "$(git rev-parse HEAD)" \
             --source-ref "$TAG" \
-            --source-path plugin \
+            --source-path plugins/openclaw \
             --dry-run
 
   approval:

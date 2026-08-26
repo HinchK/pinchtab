@@ -67,6 +67,39 @@ The MCP server communicates over stdio using JSON-RPC, which is the standard MCP
 }
 ```
 
+### Grok Build
+
+After PinchTab is listed in the official xAI marketplace, install the plugin with:
+
+```bash
+grok plugin install pinchtab --trust
+```
+
+Until then, or to install from the PinchTab repository marketplace:
+
+```bash
+grok plugin marketplace add pinchtab/pinchtab
+grok plugin install pinchtab --trust
+```
+
+You can also install the plugin directory directly from GitHub:
+
+```bash
+grok plugin install pinchtab/pinchtab#plugins/grok --trust
+```
+
+From the root of a local checkout, use `grok plugin install ./plugins/grok --trust`. `--trust` is required before MCP starts. The plugin does not install the `pinchtab` binary; install PinchTab separately and run `pinchtab server` or the local daemon.
+
+To wire MCP yourself instead of the plugin, add to `~/.grok/config.toml`:
+
+```toml
+[mcp_servers.pinchtab]
+command = "pinchtab"
+args = ["mcp"]
+```
+
+For first use, verification, domain authorization, and troubleshooting, see the [Grok plugin install and usage guide](../plugins/grok/README.md).
+
 ## Environment
 
 | Variable | Description |

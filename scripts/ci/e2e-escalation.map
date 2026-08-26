@@ -14,6 +14,7 @@
 ^scripts/docker-.*smoke\.sh$                               smoke
 ^tests/tools/docker/chrome-cft-smoke\.Dockerfile$          smoke
 ^\.github/workflows/(ci-smoke|reusable-smoke)\.yml$        smoke
+^(plugins/|\.grok-plugin/)                                smoke
 
 ^internal/audit/                                           api-extended cli-extended
 ^pkg/pinchtabaudit/                                        api-extended cli-extended

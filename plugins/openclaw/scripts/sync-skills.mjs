@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const pluginDir = resolve(scriptDir, '..');
-const sourceDir = resolve(pluginDir, '..', 'skills', 'pinchtab');
+const sourceDir = resolve(pluginDir, '..', '..', 'skills', 'pinchtab');
 const destinationDir = resolve(pluginDir, 'skills', 'pinchtab');
 
 if (!existsSync(sourceDir)) {

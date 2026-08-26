@@ -28,7 +28,7 @@ COMMANDS=(
   "smoke-browsers:💨:e2e smoke across all 3 browsers (browser-sensitive only for cloak/ghost-chrome)"
   "test unit:🔬:Go unit tests"
   "test dashboard:🔬:Dashboard unit tests"
-  "test plugin:🔬:Plugin unit tests"
+  "test plugin:🔬:OpenClaw plugin unit tests"
   "e2e:🐳:E2E suites (add --browser=chrome|cloak|ghost-chrome to swap browser; default chrome)"
   "  basic:🐳:Basic suite (api + cli + infra)"
   "  extended:🐳:Extended suite (all extended)"
@@ -60,7 +60,7 @@ COMMANDS=(
   "check go:🧪:Go only"
   "check dashboard:🧪:Dashboard only"
   "check npm:🧪:npm package only"
-  "check plugin:🧪:Plugin only"
+  "check plugin:🧪:OpenClaw + Grok plugin checks"
   "check security:🧪:Gosec security scan"
   "check docs:🧪:Validate docs JSON"
   "binary:📦:Build release-style binary into dist/"
@@ -323,7 +323,7 @@ run_command() {
     "test plugin")
       echo "  ${ACCENT}${BOLD}🔬 Plugin tests${NC}"
       echo ""
-      cd plugin && exec npx tsx --test *.test.ts
+      cd plugins/openclaw && exec npx tsx --test *.test.ts
       ;;
     "unit")
       echo "  ${ACCENT}${BOLD}🔬 Unit tests${NC}"

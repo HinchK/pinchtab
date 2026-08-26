@@ -2,19 +2,20 @@ name: CI / Plugin
 
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: 'Git ref to check. Defaults to the workflow ref.'
-        required: false
-        default: ''
   push:
     branches: [main]
     paths:
-      - 'plugin/**'
+      - 'plugins/**'
+      - 'skills/pinchtab/**'
+      - 'skills/pinchtab-mcp/**'
+      - '.grok-plugin/**'
       - '.github/workflows/*plugin*'
   pull_request:
     paths:
-      - 'plugin/**'
+      - 'plugins/**'
+      - 'skills/pinchtab/**'
+      - 'skills/pinchtab-mcp/**'
+      - '.grok-plugin/**'
       - '.github/workflows/*plugin*'
 
 permissions:
@@ -23,5 +24,3 @@ permissions:
 jobs:
   plugin:
     uses: ./.github/workflows/reusable-plugin.yml
-    with:
-      ref: ${{ inputs.ref || github.sha }}

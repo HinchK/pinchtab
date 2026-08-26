@@ -74,6 +74,11 @@ func TestEscalationFollowsProductPathsAndTestPaths(t *testing.T) {
 			want:    []string{"run_smoke"},
 		},
 		{
+			name:    "plugin implementation and packaging",
+			changed: []string{"plugins/openclaw/tools/browser.ts", "plugins/grok/.mcp.json", ".grok-plugin/marketplace.json"},
+			want:    []string{"run_smoke"},
+		},
+		{
 			name:    "basic scenario churn only",
 			changed: []string{"tests/e2e/scenarios/api/tabs-basic.sh", "tests/e2e/scenarios/infra/network-basic.sh"},
 			want:    nil,
@@ -97,6 +102,31 @@ func TestEscalationFollowsProductPathsAndTestPaths(t *testing.T) {
 				t.Errorf("%s escalated %v, want %v", strings.Join(tc.changed, ", "), got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPluginPathsReachTheE2EWorkflow(t *testing.T) {
+	root := repoRoot(t)
+	var workflow struct {
+		On map[string]struct {
+			PathsIgnore []string `yaml:"paths-ignore"`
+		} `yaml:"on"`
+	}
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, root, escalationWorkflow)), &workflow); err != nil {
+		t.Fatalf("cannot parse %s: %v", escalationWorkflow, err)
+	}
+
+	for _, event := range []string{"pull_request", "push"} {
+		trigger, ok := workflow.On[event]
+		if !ok {
+			t.Errorf("%s has no %s trigger", escalationWorkflow, event)
+			continue
+		}
+		for _, ignored := range trigger.PathsIgnore {
+			if ignored == "plugins/**" || ignored == ".grok-plugin/**" {
+				t.Errorf("%s ignores %s on %s, so plugin changes cannot reach smoke coverage", escalationWorkflow, ignored, event)
+			}
+		}
 	}
 }
 

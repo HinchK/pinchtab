@@ -60,7 +60,7 @@ jobs:
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Update plugin version
-        working-directory: plugin
+        working-directory: plugins/openclaw
         env:
           VERSION: ${{ steps.version.outputs.value }}
         run: |
@@ -79,11 +79,11 @@ jobs:
           fi
 
       - name: Install plugin deps
-        working-directory: plugin
+        working-directory: plugins/openclaw
         run: npm install --ignore-scripts --no-package-lock
 
       - name: Publish to npm
-        working-directory: plugin
+        working-directory: plugins/openclaw
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -106,7 +106,7 @@ jobs:
           SOURCE_REF="${SOURCE_REF#refs/heads/}"
           SOURCE_REF="${SOURCE_REF#refs/remotes/}"
 
-          clawhub package publish ./plugin \
+          clawhub package publish ./plugins/openclaw \
             --family code-plugin \
             --version "$VERSION" \
             --changelog "Release v$VERSION" \
@@ -114,7 +114,7 @@ jobs:
             --source-repo pinchtab/pinchtab \
             --source-commit "$(git rev-parse HEAD)" \
             --source-ref "$SOURCE_REF" \
-            --source-path plugin
+            --source-path plugins/openclaw
 
       - name: Summary
         env:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Produce a ClawHub-ready tarball of plugin/ for manual upload at
+# Produce a ClawHub-ready tarball of plugins/openclaw/ for manual upload at
 # https://clawhub.ai/publish-plugin.
 #
 # Usage:
@@ -15,7 +15,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-}"
-PLUGIN_DIR="$(pwd)/plugin"
+PLUGIN_DIR="$(pwd)/plugins/openclaw"
 OUT_DIR="$(pwd)/dist/plugin-pack"
 mkdir -p "$OUT_DIR"
 

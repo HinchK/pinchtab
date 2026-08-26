@@ -162,7 +162,7 @@ tag, and a `chmod +x` or a retargeted link does not slip through unnoticed.
 `.dockerignore` decides what counts as context, and the digest reads it the way docker
 does: patterns match the context-root-relative path, so `node_modules/` excludes the root
 one and **not** `npm/node_modules` — each nested tree needs its own line. That is why the
-file lists `dashboard/node_modules/`, `npm/node_modules/` and `plugin/node_modules/`
+file lists `dashboard/node_modules/`, `npm/node_modules/` and `plugins/openclaw/node_modules/`
 separately. Keeping those trees out is worth doing for its own sake: they are not build
 inputs for the Go binary, and every file in the context is a file docker hashes for its
 own `COPY` layer. `.alp/` is excluded for the same reason — it is rewritten every few
