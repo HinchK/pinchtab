@@ -10,7 +10,7 @@ This is the release checklist for the GitHub tag-driven release pipeline.
 
 ## What the release workflow does
 
-Pushing a tag like `v0.7.0` triggers [release.yml](/Users/luigi/dev/prj/giago/pt-bosch/.github/workflows/release.yml), which:
+Pushing a tag like `v0.7.0` triggers [release.yml](workflows/release.yml), which:
 
 1. Builds release binaries and creates the GitHub release via GoReleaser.
 2. Publishes the npm package.

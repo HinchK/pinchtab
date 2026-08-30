@@ -18,7 +18,7 @@
       <a href="https://github.com/pinchtab/pinchtab/releases/latest"><img src="https://img.shields.io/github/v/release/pinchtab/pinchtab?style=flat-square&color=FFD700" alt="Release"/></a><br/>
       <a href="https://github.com/pinchtab/pinchtab/actions/workflows/ci-go.yml"><img src="https://img.shields.io/github/actions/workflow/status/pinchtab/pinchtab/ci-go.yml?branch=main&style=flat-square&label=Go%20CI" alt="Go CI"/></a><br/>
       <img src="https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go 1.25+"/><br/>
-      <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square" alt="License"/></a>
+      <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License"/></a>
     </td>
   </tr>
 </table>
@@ -417,7 +417,7 @@ curl -s -X POST http://localhost:9867/instances/start \
 curl http://localhost:9867/instances
 ```
 
-See [chrome-files.md](chrome-files.md) for technical details on how PinchTab manages Chrome user data directories and ensures isolation between parallel instances.
+See [chrome-files.md](docs/implementations/chrome-files.md) for technical details on how PinchTab manages Chrome user data directories and ensures isolation between parallel instances.
 
 ---
 
