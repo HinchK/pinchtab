@@ -50,7 +50,7 @@ assert_value() {
   local actual
   actual=$(get_value "$role" "$name")
 
-  if echo "$actual" | grep -qF "$expected"; then
+  if grep -qF -- "$expected" <<<"$actual"; then
     pass_assert "$name = '$actual'"
   else
     fail_assert "$name: expected '$expected', got '$actual'"

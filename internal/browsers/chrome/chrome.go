@@ -62,13 +62,64 @@ func CommonPaths(goos string) []string {
 			primaryChromeAppMacOS,
 		}
 	case "windows":
-		return []string{
-			`C:\Program Files\Google\Chrome\Application\chrome.exe`,
-			`C:\Program Files (x86)\Google\Chrome\Application\chrome.exe`,
-		}
+		return windowsChromePaths()
 	default:
 		return nil
 	}
+}
+
+// windowsInstallRoots are the directory roots probed for a Chrome install, in
+// preference order. The values come from the environment so a non-C: system
+// drive or a redirected profile still resolves; the literals are the documented
+// defaults and only apply when the variable is unset (which is the case when
+// CommonPaths("windows") is called from a test on another OS).
+func windowsInstallRoots() []string {
+	roots := []string{
+		envOr("ProgramFiles", `C:\Program Files`),
+		envOr("ProgramFiles(x86)", `C:\Program Files (x86)`),
+	}
+	// %LOCALAPPDATA% is where Chrome's installer puts the browser when it runs
+	// without administrator rights, which is the common case on managed machines.
+	// There is no useful default for it, so it is only probed when set.
+	if local := os.Getenv("LOCALAPPDATA"); local != "" {
+		roots = append(roots, local)
+	}
+	return roots
+}
+
+// windowsChromeRelativePaths are the per-install-root executable locations, in
+// preference order: stable Chrome first, then the dedicated automation builds,
+// then the pre-release channels.
+var windowsChromeRelativePaths = []string{
+	`Google\Chrome\Application\chrome.exe`,
+	`Google\Chrome for Testing\Application\chrome.exe`,
+	`Chromium\Application\chrome.exe`,
+	`Google\Chrome Beta\Application\chrome.exe`,
+	`Google\Chrome SxS\Application\chrome.exe`,
+}
+
+// windowsChromePaths returns the Chrome/Chromium locations probed after PATH
+// misses. Chrome's Windows installer does not add chrome.exe to PATH, so this
+// list is the only way discovery succeeds on a default install.
+func windowsChromePaths() []string {
+	roots := windowsInstallRoots()
+	paths := make([]string, 0, len(roots)*len(windowsChromeRelativePaths))
+	for _, rel := range windowsChromeRelativePaths {
+		for _, root := range roots {
+			// Joined with a literal separator rather than filepath.Join: CommonPaths
+			// takes goos as a parameter, so it must produce Windows paths even when
+			// it is called from a test running on another OS.
+			paths = append(paths, strings.TrimRight(root, `\`)+`\`+rel)
+		}
+	}
+	return paths
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
 }
 
 func existingExtensionPaths(paths []string) []string {

@@ -76,12 +76,6 @@ func (Browser) DoctorChecks(_ browsers.TargetConfig) []browsers.DoctorCheck {
 }
 
 func cloakPresenceCheck(ctx context.Context, cfg interface{}) browsers.DoctorCheckResult {
-	if runtime.GOOS == "windows" {
-		return browsers.DoctorCheckResult{
-			Status: browsers.DoctorSkip,
-			Detail: "cloakbrowser discovery not implemented on windows",
-		}
-	}
 	// An explicit browser.binary override is what the runtime launches, so resolve
 	// against it before falling back to discovery. The CloakBrowser installer drops
 	// its Chromium in a versioned dir that isn't on the static probe list, so without

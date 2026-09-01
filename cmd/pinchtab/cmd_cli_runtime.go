@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -96,9 +97,9 @@ func preflightBrowserBinary(cfg *config.RuntimeConfig) error {
 	}
 	if effective.Binary == "" {
 		return fmt.Errorf("no %s browser found on this machine.\n"+
-			"       Install one (e.g. Google Chrome for Testing, or `apt-get install -y chromium` "+
-			"on Debian/Ubuntu) or set a browser binary in your config.\n"+
-			"       Run `pinchtab doctor` for the full diagnosis", browserID)
+			"       Install one (%s) or set a browser binary in your config.\n"+
+			"       Run `pinchtab doctor` for the full diagnosis",
+			browserID, browsers.InstallHint(runtime.GOOS))
 	}
 	return nil
 }

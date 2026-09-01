@@ -98,7 +98,7 @@ assert_contains() {
   local needle="$2"
   local desc="${3:-contains '$needle'}"
 
-  if echo "$haystack" | grep -q "$needle"; then
+  if grep -q -- "$needle" <<<"$haystack"; then
     pass_assert "$desc"
   else
     fail_assert "$desc (not found)"
@@ -110,7 +110,7 @@ assert_not_contains() {
   local needle="$2"
   local desc="${3:-does not contain '$needle'}"
 
-  if echo "$haystack" | grep -q "$needle"; then
+  if grep -q -- "$needle" <<<"$haystack"; then
     fail_assert "$desc (found when should be absent)"
   else
     pass_assert "$desc"
@@ -162,7 +162,7 @@ assert_input_not_contains() {
   local value
   value=$(echo "$RESULT" | jq -r '.result // empty')
 
-  if echo "$value" | grep -qi "$forbidden"; then
+  if grep -qi -- "$forbidden" <<<"$value"; then
     fail_assert "$desc: found '$forbidden' in value '$value'"
     return 1
   fi
@@ -197,7 +197,7 @@ assert_contains_any() {
   local patterns="$2"
   local desc="${3:-contains expected pattern}"
 
-  if echo "$haystack" | grep -qE "$patterns"; then
+  if grep -qE -- "$patterns" <<<"$haystack"; then
     pass_assert "$desc"
   else
     fail_assert "$desc (no match for /$patterns/ in: $haystack)"
@@ -242,9 +242,9 @@ assert_table_page() {
   local text="$1"
   local checks=0
 
-  echo "$text" | grep -q "Alice Johnson" && ((checks++))
-  echo "$text" | grep -q "bob@example.com" && ((checks++))
-  echo "$text" | grep -q "Active" && ((checks++))
+  grep -q -- "Alice Johnson" <<<"$text" && ((checks++))
+  grep -q -- "bob@example.com" <<<"$text" && ((checks++))
+  grep -q -- "Active" <<<"$text" && ((checks++))
 
   if [ "$checks" -ge 3 ]; then
     pass_assert "table.html: found expected table data"
@@ -256,7 +256,9 @@ assert_table_page() {
 assert_index_page() {
   local snap="$1"
 
-  if echo "$snap" | jq -e '.title' | grep -q "E2E Test"; then
+  local snap_title
+  snap_title=$(jq -r '.title // empty' <<<"$snap")
+  if grep -q -- "E2E Test" <<<"$snap_title"; then
     pass_assert "index.html: correct title"
   else
     fail_assert "index.html: wrong title"
