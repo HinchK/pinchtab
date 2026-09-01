@@ -20,6 +20,9 @@ type inspectResponse struct {
 	HTML      string         `json:"html,omitempty"`
 	Styles    map[string]any `json:"styles,omitempty"`
 	Truncated bool           `json:"truncated,omitempty"`
+	// IDPIWarning carries the scanner's advisory when a threat was detected but
+	// not blocked, so a caller reading only the body still sees it.
+	IDPIWarning string `json:"idpiWarning,omitempty"`
 }
 
 type inspectPayload struct {
@@ -113,6 +116,18 @@ func (h *Handlers) handleInspect(w http.ResponseWriter, r *http.Request, kind in
 			resp.Styles = sortCSSMap(styles)
 		}
 	}
+
+	// Scan what the caller actually receives, not what was read: resp is scanned
+	// after truncation and after the ?prop= narrowing above, so the verdict
+	// always describes the bytes in the response.
+	warning, blocked := h.scanInspectContentForIDPI(w, kind, inspectScanCorpus(kind, inspectPayload{
+		HTML:   resp.HTML,
+		Styles: resp.Styles,
+	}))
+	if blocked {
+		return
+	}
+	resp.IDPIWarning = warning
 
 	h.recordResolvedURL(r, resp.URL)
 	httpx.JSON(w, 200, resp)

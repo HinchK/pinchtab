@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pinchtab/pinchtab/internal/browserprobe"
 	"github.com/pinchtab/pinchtab/internal/config"
 )
 
@@ -56,10 +57,13 @@ func checkBinaryExecutable(_ context.Context, cfg *config.RuntimeConfig) CheckRe
 		return CheckResult{Status: StatusFail, Detail: err.Error(), Err: err}
 	}
 	mode := info.Mode()
-	if mode&0o111 == 0 {
+	// Executability is platform-specific: Windows has no execute bit and every file
+	// stats as -rw-rw-rw-, so a mode check fails every configured browser.binary
+	// there. browserprobe owns the one rule discovery also uses.
+	if !browserprobe.IsExecutable(info, bin) {
 		return CheckResult{
 			Status: StatusFail,
-			Detail: fmt.Sprintf("file mode %#o has no executable bit", mode.Perm()),
+			Detail: fmt.Sprintf("file mode %#o is not executable on this platform", mode.Perm()),
 		}
 	}
 	return CheckResult{

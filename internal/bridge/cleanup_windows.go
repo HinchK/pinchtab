@@ -45,6 +45,7 @@ func findPIDsByPowerShell(needle string) []int {
 func taskkillPIDs(pids []int) int {
 	killed := 0
 	for _, pid := range pids {
+		// #nosec G204 -- pid is an int, not user-controlled string
 		cmd := exec.Command("taskkill", "/F", "/T", "/PID", strconv.Itoa(pid))
 		if cmd.Run() == nil {
 			killed++
@@ -76,6 +77,7 @@ func terminateChromeByProfileDir(profileDir string) int {
 		return 0
 	}
 	for _, pid := range pids {
+		// #nosec G204 -- pid is an int, not user-controlled string
 		cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid))
 		if err := cmd.Run(); err == nil {
 			slog.Info("cleanup: taskkill chrome process", "pid", pid)

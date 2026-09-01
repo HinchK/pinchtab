@@ -302,8 +302,15 @@ Important notes:
 - `security.allowedDomains` is the canonical config path. `security.idpi.allowedDomains` is still accepted when loading older config files, but new saves are normalized to `security.allowedDomains`
 - `strictMode = true` blocks disallowed domains and suspicious content
 - `strictMode = false` allows the request but emits warnings instead
-- `scanContent` protects `/text` and `/snapshot` style extraction paths
-- `wrapContent` adds explicit untrusted-content framing for downstream consumers
+- `scanContent` covers every endpoint that returns page-controlled content:
+  `/text`, `/snapshot`, `/capture`, `/find`, `/scrape`, `/pdf`, `/html` and `/styles`,
+  along with their `/tabs/{id}/...` forms. A page whose text `/text` refuses is
+  refused by all of them, so no single endpoint is a way around the scanner
+- `wrapContent` adds explicit untrusted-content framing for downstream consumers.
+  It applies to the text-shaped responses (`/text`, `/snapshot`, `/capture`), not to
+  `/html` or `/styles`: wrapping raw markup would leave it unparseable for callers
+  that hand it to an HTML parser. Those two are scanned and blocked or warned, and
+  carry the advisory on `X-IDPI-Warning` and in the response's `idpiWarning` field
 - widening navigation to non-local or non-trusted sites is still a security-reducing choice; IDPI lowers risk, but it does not make hostile pages safe or remove browser attack surface
 
 For navigation trust overrides:

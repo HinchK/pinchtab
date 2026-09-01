@@ -63,12 +63,6 @@ func chromePresenceCheck(ctx context.Context, cfg interface{}) browsers.DoctorCh
 	}
 	overridden := override != ""
 
-	if runtime.GOOS == "windows" {
-		return browsers.DoctorCheckResult{
-			Status: browsers.DoctorSkip,
-			Detail: "chrome discovery not implemented on windows",
-		}
-	}
 	found := override
 	if found == "" {
 		d := browserprobe.DiscoverBinary(BinaryNames(), CommonPaths(runtime.GOOS))
@@ -76,8 +70,8 @@ func chromePresenceCheck(ctx context.Context, cfg interface{}) browsers.DoctorCh
 		if found == "" {
 			return browsers.DoctorCheckResult{
 				Status: browsers.DoctorFail,
-				Detail: "no chrome/chromium found. Install Chrome/Chromium (e.g. Google Chrome " +
-					"for Testing, or `apt-get install -y chromium` on Debian/Ubuntu) or set " +
+				Detail: "no chrome/chromium found. Install Chrome/Chromium (" +
+					browsers.InstallHint(runtime.GOOS) + ") or set " +
 					"browser.binary to an existing build. Probed: " + strings.Join(d.Probed, ", "),
 			}
 		}

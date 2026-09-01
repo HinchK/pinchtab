@@ -22,6 +22,12 @@ import (
 const FallbackChromeVersion = "144.0.7559.133"
 
 func RunVersion(ctx context.Context, binary string) (string, error) {
+	// Some platforms cannot answer this by execution; prefer the install layout
+	// where one is available. See versionFromInstallLayout.
+	if v := versionFromInstallLayout(binary); v != "" {
+		return v, nil
+	}
+
 	cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	out, err := exec.CommandContext(cctx, binary, "--version").CombinedOutput()
