@@ -165,7 +165,13 @@ func TestBinaryExecutable_NotExecutable(t *testing.T) {
 
 func TestBinaryExecutable_Executable(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "exec")
+	// Windows decides executability by extension, not mode bits, so the stub needs
+	// a name the platform would actually run.
+	name := "exec"
+	if runtime.GOOS == "windows" {
+		name = "exec.exe"
+	}
+	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}

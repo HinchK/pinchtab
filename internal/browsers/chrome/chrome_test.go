@@ -580,7 +580,8 @@ func TestChrome_ValidateTarget(t *testing.T) {
 // chrome/chromium found" FAIL while the binary_* checks pass right below it.
 func TestChromePresentHonorsBrowserBinaryOverride(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("chrome_present is skipped on windows")
+		t.Skip("the override stub is a shell script; the windows path is covered by " +
+			"TestChromePresent_ProducesAVerdictOnWindows in internal/doctor")
 	}
 	dir := t.TempDir()
 	fake := filepath.Join(dir, "fakechrome")

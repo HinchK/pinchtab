@@ -27,7 +27,7 @@ func DiscoverBinary(names, paths []string) BinaryDiscovery {
 		if err != nil || info.IsDir() {
 			continue
 		}
-		if info.Mode()&0o111 == 0 {
+		if !IsExecutable(info, p) {
 			continue
 		}
 		return BinaryDiscovery{Found: p, Probed: probed}
