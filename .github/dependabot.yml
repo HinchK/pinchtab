@@ -80,3 +80,8 @@ updates:
       openclaw-plugin:
         patterns:
           - "*"
+    # @types/node majors follow the runtime pinned in .nvmrc, not Dependabot.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
