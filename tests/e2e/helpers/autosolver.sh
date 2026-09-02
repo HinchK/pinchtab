@@ -278,7 +278,7 @@ autosolver_title_has_challenge() {
 
   local pattern
   for pattern in "${AUTOSOLVER_CHALLENGE_PATTERNS[@]}"; do
-    if printf '%s' "$title_lower" | grep -q "$pattern"; then
+    if grep -q -- "$pattern" <<<"$title_lower"; then
       return 0
     fi
   done

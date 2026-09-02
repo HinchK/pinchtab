@@ -212,13 +212,20 @@ func TestChromePresent_FailWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestChromePresent_SkipOnWindows(t *testing.T) {
+// Chrome discovery used to short-circuit to StatusSkip on Windows, so `pinchtab
+// doctor` answered "not implemented on windows" and told the user nothing on the
+// one platform where discovery was actually broken. It works now, so the check
+// must reach a real verdict rather than opting out.
+func TestChromePresent_ProducesAVerdictOnWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("chrome provider skip-on-windows requires actual windows")
+		t.Skip("windows discovery behaviour requires actual windows")
 	}
 	r := runChromePresent(t)
-	if r.Status != StatusSkip {
-		t.Fatalf("status = %v want skip", r.Status)
+	if r.Status == StatusSkip {
+		t.Fatalf("chrome_present skipped on windows; want a real verdict. detail=%q", r.Detail)
+	}
+	if strings.Contains(r.Detail, "not implemented") {
+		t.Fatalf("detail still claims discovery is unimplemented: %q", r.Detail)
 	}
 }
 

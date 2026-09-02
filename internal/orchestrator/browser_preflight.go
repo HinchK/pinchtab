@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/pinchtab/pinchtab/internal/browsers"
@@ -46,7 +47,8 @@ func (o *Orchestrator) BrowserUnavailableReason(r *http.Request) (string, bool) 
 	}
 	if effective.Binary == "" {
 		return fmt.Sprintf("no %s browser found on this host — install Chrome/Chromium "+
-			"(e.g. `apt-get install -y chromium`) or set a browser binary in config (run `pinchtab doctor`)", provider), true
+			"(%s) or set a browser binary in config (run `pinchtab doctor`)",
+			provider, browsers.InstallHint(runtime.GOOS)), true
 	}
 	return "", false
 }

@@ -373,7 +373,7 @@ assert_instance_list_absent() {
 
 assert_instance_id_prefix() {
   local instance_id="$1"
-  if echo "$instance_id" | grep -q "^inst_"; then
+  if grep -q -- "^inst_" <<<"$instance_id"; then
     pass_assert "instance ID has inst_ prefix: $instance_id"
   else
     fail_assert "bad ID format: $instance_id"
