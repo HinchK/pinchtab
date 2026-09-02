@@ -238,7 +238,7 @@ func (o *Orchestrator) LaunchWithOptions(name, port string, headless bool, opts 
 	o.mu.Unlock()
 	reservedPorts = nil
 
-	go o.monitor(inst)
+	o.startMonitor(inst)
 
 	return &snapshot, nil
 }
