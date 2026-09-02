@@ -92,10 +92,29 @@ if [ -n "$staged_web" ]; then
 fi
 
 # ============================================
+# Workflow checks (actionlint)
+# ============================================
+staged_wf=$(git diff --cached --name-only --diff-filter=ACM | grep '^\.github/workflows/.*\.ya\?ml$' || true)
+if [ -n "$staged_wf" ]; then
+  echo "⚙️  Checking workflow files..."
+
+  if command -v actionlint &>/dev/null; then
+    if ! actionlint -shellcheck= $staged_wf; then
+      echo "❌ actionlint: issues found"
+      exit 1
+    fi
+  else
+    echo "⚠️  actionlint not installed, skipping (brew install actionlint)"
+  fi
+
+  echo "✅ Workflow checks passed"
+fi
+
+# ============================================
 # Summary
 # ============================================
-if [ -z "$staged_go" ] && [ -z "$staged_web" ]; then
-  echo "⏭️  No Go or dashboard files staged, skipping checks"
+if [ -z "$staged_go" ] && [ -z "$staged_web" ] && [ -z "$staged_wf" ]; then
+  echo "⏭️  No Go, dashboard, or workflow files staged, skipping checks"
 fi
 
 echo "✅ All pre-commit checks passed"
