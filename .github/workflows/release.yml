@@ -43,8 +43,6 @@ jobs:
   dashboard-checks:
     needs: validate
     uses: ./.github/workflows/reusable-dashboard.yml
-    with:
-      ref: ${{ needs.validate.outputs.sha }}
 
   docs-checks:
     needs: validate

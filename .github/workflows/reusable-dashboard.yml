@@ -2,11 +2,6 @@ name: Reusable / Dashboard
 
 on:
   workflow_call:
-    inputs:
-      ref:
-        required: true
-        type: string
-
 
 permissions:
   contents: read
@@ -21,8 +16,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v7
@@ -64,8 +57,6 @@ jobs:
     needs: check
     steps:
       - uses: actions/checkout@v7
-        with:
-          ref: ${{ inputs.ref }}
 
       - name: Setup Go
         uses: actions/setup-go@v7
