@@ -1,0 +1,72 @@
+# Dependabot SECURITY updates already run on this repo without configuration —
+# that is what the js-yaml and brace-expansion PRs against /npm were. This file
+# adds scheduled VERSION updates, which need a config to exist at all, and which
+# the Go module graph has never had: every Dependabot PR opened on this
+# repository to date targets a JavaScript manifest.
+#
+# Updates are grouped so a quiet week produces one PR per ecosystem rather than
+# a dozen.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      go-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    # chromedp and cdproto track Chrome's protocol and move together; a major
+    # bump there is a behaviour change that wants a human, not an auto-PR.
+    ignore:
+      - dependency-name: github.com/chromedp/*
+        update-types:
+          - version-update:semver-major
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(ci)"
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /npm
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      npm-package:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /dashboard
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      dashboard:
+        patterns:
+          - "*"
+
+  - package-ecosystem: npm
+    directory: /plugins/openclaw
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      openclaw-plugin:
+        patterns:
+          - "*"
