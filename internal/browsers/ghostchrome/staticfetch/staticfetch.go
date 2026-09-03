@@ -238,8 +238,7 @@ func (l *Browser) Type(_ context.Context, tabID, ref, text string) error {
 		return nil
 	}
 
-	el.SetAttribute("value", text)
-	return nil
+	return el.SetAttribute("value", text)
 }
 
 func (l *Browser) TabURL(tabID string) (string, bool) {

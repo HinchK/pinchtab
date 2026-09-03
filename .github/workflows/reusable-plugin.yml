@@ -15,7 +15,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Install plugin dependencies
@@ -50,7 +50,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Check Grok plugin
@@ -64,7 +64,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version-file: .nvmrc
           package-manager-cache: false
 
       - name: Install plugin dependencies
